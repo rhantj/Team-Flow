@@ -1,10 +1,12 @@
 name: Auto PR
 
 # 팀원이 main/master가 아닌 브랜치에 push하면
-# 1) 해당 브랜치의 PR이 없을 경우 자동으로 생성
-# 2) 브랜치가 base(main)보다 뒤처져 있으면 PR에 경고 코멘트 등록
-#    (병합 전에 main을 pull/rebase 하도록 안내)
-# 3) PR이 새로 생성된 경우, 디스코드 웹훅으로 알림 전송
+# 1) 해당 브랜치의 PR이 없을 경우 자동으로 생성 (GitHub 클라우드 러너)
+# 2) PR이 새로 생성된 경우, 디스코드 웹훅으로 알림 전송
+# 3) 브랜치가 base(main)보다 뒤처져 있으면 PR에 경고 코멘트 등록
+# 4) 머지 충돌 / 테스트·린트 실패 여부를 확인 (클라우드 러너)
+# 5) Claude 위험 분석은 셀프호스티드 러너(로컬 Claude Code CLI)에서 실행
+# 6) 4)+5) 중 하나라도 문제가 있으면 "pr-변경사항" 채널 웹훅으로 알림
 
 on:
   push:
@@ -19,6 +21,16 @@ permissions:
 jobs:
   auto-pr:
     runs-on: ubuntu-latest
+    outputs:
+      pr_number: ${{ steps.ensure_pr.outputs.pr_number }}
+      pr_title: ${{ steps.ensure_pr.outputs.pr_title }}
+      pr_url: ${{ steps.ensure_pr.outputs.pr_url }}
+      pr_author: ${{ steps.ensure_pr.outputs.pr_author }}
+      pr_author_name: ${{ steps.ensure_pr.outputs.pr_author_name }}
+      pr_author_email: ${{ steps.ensure_pr.outputs.pr_author_email }}
+      conflict: ${{ steps.conflict_check.outputs.conflict }}
+      tests_ran: ${{ steps.run_tests.outputs.tests_ran }}
+      tests_failed: ${{ steps.run_tests.outputs.tests_failed }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,12 +51,14 @@ jobs:
 
           if [ -z "$PR_NUMBER" ]; then
             echo "No open PR found for $BRANCH -> creating one."
+            AUTHOR_NAME_TMP=$(git log -1 --pretty=format:'%an' 2>/dev/null || echo "")
+            AUTHOR_EMAIL_TMP=$(git log -1 --pretty=format:'%ae' 2>/dev/null || echo "")
             gh pr create \
               --repo "$GITHUB_REPOSITORY" \
               --base "$BASE_BRANCH" \
               --head "$BRANCH" \
               --title "$BRANCH" \
-              --body "자동 생성된 PR입니다." || true
+              --body "자동 생성된 PR입니다. (push: @${GITHUB_ACTOR} / ${AUTHOR_NAME_TMP} <${AUTHOR_EMAIL_TMP}>)" || true
             PR_NUMBER=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base "$BASE_BRANCH" --state open --json number --jq '.[0].number // empty')
             NEWLY_CREATED=true
           else
@@ -54,12 +68,31 @@ jobs:
           echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
           echo "newly_created=$NEWLY_CREATED" >> "$GITHUB_OUTPUT"
 
+          if [ -n "$PR_NUMBER" ]; then
+            PR_JSON=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json title,url)
+            echo "pr_title=$(echo "$PR_JSON" | jq -r '.title')" >> "$GITHUB_OUTPUT"
+            echo "pr_url=$(echo "$PR_JSON" | jq -r '.url')" >> "$GITHUB_OUTPUT"
+            # PR을 실제로 "생성"하는 건 github-actions 봇이라 author.login은 항상
+            # 봇으로 나온다. 실제로 push한 사람은 GITHUB_ACTOR에 들어있으므로 이걸 쓴다.
+            echo "pr_author=$GITHUB_ACTOR" >> "$GITHUB_OUTPUT"
+
+            # push된 마지막 커밋의 작성자 이름/이메일 (로컬 git config에 설정된 값 기준).
+            # GitHub에서 "이메일 비공개" 설정을 해둔 사람은 noreply 형태 주소로 나온다.
+            PR_AUTHOR_NAME=$(git log -1 --pretty=format:'%an' 2>/dev/null || echo "")
+            PR_AUTHOR_EMAIL=$(git log -1 --pretty=format:'%ae' 2>/dev/null || echo "")
+            echo "pr_author_name=$PR_AUTHOR_NAME" >> "$GITHUB_OUTPUT"
+            echo "pr_author_email=$PR_AUTHOR_EMAIL" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Notify Discord on new PR
         if: steps.ensure_pr.outputs.newly_created == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          PR_NUMBER: ${{ steps.ensure_pr.outputs.pr_number }}
+          PR_TITLE: ${{ steps.ensure_pr.outputs.pr_title }}
+          PR_URL: ${{ steps.ensure_pr.outputs.pr_url }}
+          PR_AUTHOR: ${{ steps.ensure_pr.outputs.pr_author }}
+          PR_AUTHOR_NAME: ${{ steps.ensure_pr.outputs.pr_author_name }}
+          PR_AUTHOR_EMAIL: ${{ steps.ensure_pr.outputs.pr_author_email }}
         run: |
           set -e
 
@@ -68,14 +101,9 @@ jobs:
             exit 0
           fi
 
-          PR_JSON=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json title,url,author)
-          PR_TITLE=$(echo "$PR_JSON" | jq -r '.title')
-          PR_URL=$(echo "$PR_JSON" | jq -r '.url')
-          PR_AUTHOR=$(echo "$PR_JSON" | jq -r '.author.login')
-
           CONTENT="🆕 **새 PR이 자동 생성되었습니다**
           제목: ${PR_TITLE}
-          작성자: ${PR_AUTHOR}
+          작성자: @${PR_AUTHOR} / ${PR_AUTHOR_NAME} <${PR_AUTHOR_EMAIL}>
           링크: ${PR_URL}"
 
           PAYLOAD=$(jq -n --arg content "$CONTENT" '{content: $content}')
@@ -101,3 +129,116 @@ jobs:
           else
             echo "브랜치가 $BASE_BRANCH와 동일하거나 앞서 있습니다."
           fi
+
+      - name: Check merge conflict status
+        id: conflict_check
+        if: steps.ensure_pr.outputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.ensure_pr.outputs.pr_number }}
+        run: |
+          set -e
+          MERGEABLE="UNKNOWN"
+          for i in 1 2 3 4 5; do
+            MERGEABLE=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json mergeable --jq '.mergeable')
+            if [ "$MERGEABLE" != "UNKNOWN" ]; then
+              break
+            fi
+            sleep 3
+          done
+          echo "PR mergeable status: $MERGEABLE"
+          if [ "$MERGEABLE" = "CONFLICTING" ]; then
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 프로젝트에 package.json / requirements.txt / pyproject.toml이 있으면
+      # 자동으로 감지해서 린트·테스트를 실행합니다. 팀의 실제 빌드 명령이 다르면
+      # 이 단계를 프로젝트에 맞게 수정하세요.
+      - name: Run tests/lint if present
+        id: run_tests
+        if: steps.ensure_pr.outputs.pr_number != ''
+        run: |
+          set +e
+          RAN=false
+          FAILED=false
+          LOG_FILE="test_output.log"
+          : > "$LOG_FILE"
+
+          if [ -f package.json ]; then
+            RAN=true
+            echo "Node 프로젝트 감지 -> 의존성 설치 후 lint/test 실행" | tee -a "$LOG_FILE"
+            npm ci >> "$LOG_FILE" 2>&1 || FAILED=true
+            npm run lint --if-present >> "$LOG_FILE" 2>&1 || FAILED=true
+            npm test --if-present >> "$LOG_FILE" 2>&1 || FAILED=true
+          elif [ -f requirements.txt ] || [ -f pyproject.toml ]; then
+            RAN=true
+            echo "Python 프로젝트 감지 -> 의존성 설치 후 테스트 실행" | tee -a "$LOG_FILE"
+            if [ -f requirements.txt ]; then
+              pip install --break-system-packages -q -r requirements.txt >> "$LOG_FILE" 2>&1
+            fi
+            if [ -d tests ] || [ -f pytest.ini ]; then
+              pip install --break-system-packages -q pytest >> "$LOG_FILE" 2>&1
+              python3 -m pytest >> "$LOG_FILE" 2>&1 || FAILED=true
+            fi
+          else
+            echo "테스트/린트 설정을 찾지 못해 건너뜁니다." | tee -a "$LOG_FILE"
+          fi
+
+          echo "tests_ran=$RAN" >> "$GITHUB_OUTPUT"
+          echo "tests_failed=$FAILED" >> "$GITHUB_OUTPUT"
+
+  claude-review:
+    needs: auto-pr
+    if: needs.auto-pr.outputs.pr_number != ''
+    # 이 job만 셀프호스티드 러너(팀원의 PC/서버)에서 실행됩니다.
+    # 해당 러너에 Claude Code CLI가 설치 + 로그인되어 있어야 합니다.
+    # 러너 설정 방법은 SETUP.md의 "셀프호스티드 러너" 항목 참고.
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate diff for risk analysis
+        env:
+          BASE_BRANCH: main
+        run: |
+          set -e
+          git fetch origin "$BASE_BRANCH"
+          git diff "origin/$BASE_BRANCH"...HEAD > diff.txt
+
+      - name: Check PR issues (conflict / tests / Claude risk analysis)
+        id: check_issues
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DIFF_FILE: diff.txt
+          CONFLICT: ${{ needs.auto-pr.outputs.conflict }}
+          TESTS_RAN: ${{ needs.auto-pr.outputs.tests_ran }}
+          TESTS_FAILED: ${{ needs.auto-pr.outputs.tests_failed }}
+          TESTS_LOG_FILE: test_output.log
+          PR_TITLE: ${{ needs.auto-pr.outputs.pr_title }}
+          PR_URL: ${{ needs.auto-pr.outputs.pr_url }}
+          PR_AUTHOR: ${{ needs.auto-pr.outputs.pr_author }}
+          PR_AUTHOR_NAME: ${{ needs.auto-pr.outputs.pr_author_name }}
+          PR_AUTHOR_EMAIL: ${{ needs.auto-pr.outputs.pr_author_email }}
+          BRANCH_NAME: ${{ github.ref_name }}
+        run: |
+          set -e
+          HAS_ISSUE=$(python3 scripts/check_pr_issues.py)
+          echo "has_issue=$HAS_ISSUE" >> "$GITHUB_OUTPUT"
+
+      - name: Notify Discord on PR issues
+        if: steps.check_issues.outputs.has_issue == 'true'
+        env:
+          DISCORD_PR_CHANGES_WEBHOOK_URL: ${{ secrets.DISCORD_PR_CHANGES_WEBHOOK_URL }}
+        run: |
+          set -e
+          if [ -z "$DISCORD_PR_CHANGES_WEBHOOK_URL" ]; then
+            echo "DISCORD_PR_CHANGES_WEBHOOK_URL 시크릿이 없어 알림을 건너뜁니다."
+            exit 0
+          fi
+          PAYLOAD=$(jq -n --rawfile content issue_message.md '{content: ($content[0:1900])}')
+          curl -sf -H "Content-Type: application/json" -d "$PAYLOAD" "$DISCORD_PR_CHANGES_WEBHOOK_URL"

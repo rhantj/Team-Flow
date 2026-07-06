@@ -223,3 +223,8 @@ __pycache__/
 *.pyc
 bot.py
 actions-runner
+
+# auto-pr.yml/claude-review job이 실행 중 생성하는 임시 파일
+diff.txt
+test_output.log
+issue_message.md

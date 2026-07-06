@@ -169,12 +169,18 @@ def main() -> None:
     pr_title = os.environ.get("PR_TITLE", "")
     pr_url = os.environ.get("PR_URL", "")
     pr_author = os.environ.get("PR_AUTHOR", "")
+    pr_author_name = os.environ.get("PR_AUTHOR_NAME", "")
+    pr_author_email = os.environ.get("PR_AUTHOR_EMAIL", "")
     branch_name = os.environ.get("BRANCH_NAME", "")
+
+    author_line = f"브랜치: `{branch_name}` · 작성자: @{pr_author}"
+    if pr_author_name or pr_author_email:
+        author_line += f" / {pr_author_name} <{pr_author_email}>"
 
     lines = [
         "🚨 **PR에서 확인이 필요한 항목이 발견되었습니다**",
         f"제목: {pr_title}",
-        f"브랜치: `{branch_name}` · 작성자: @{pr_author}",
+        author_line,
         f"링크: {pr_url}",
         "",
     ]
