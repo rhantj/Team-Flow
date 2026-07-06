@@ -4,6 +4,7 @@ name: Auto PR
 # 1) 해당 브랜치의 PR이 없을 경우 자동으로 생성
 # 2) 브랜치가 base(main)보다 뒤처져 있으면 PR에 경고 코멘트 등록
 #    (병합 전에 main을 pull/rebase 하도록 안내)
+# 3) PR이 새로 생성된 경우, 디스코드 봇을 통해 알림 전송
 
 on:
   push:
@@ -34,6 +35,7 @@ jobs:
           BRANCH="${GITHUB_REF#refs/heads/}"
 
           PR_NUMBER=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base "$BASE_BRANCH" --state open --json number --jq '.[0].number // empty')
+          NEWLY_CREATED=false
 
           if [ -z "$PR_NUMBER" ]; then
             echo "No open PR found for $BRANCH -> creating one."
@@ -44,11 +46,46 @@ jobs:
               --title "$BRANCH" \
               --body "자동 생성된 PR입니다." || true
             PR_NUMBER=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base "$BASE_BRANCH" --state open --json number --jq '.[0].number // empty')
+            NEWLY_CREATED=true
           else
             echo "PR #$PR_NUMBER already exists for $BRANCH."
           fi
 
           echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "newly_created=$NEWLY_CREATED" >> "$GITHUB_OUTPUT"
+
+      - name: Notify Discord on new PR
+        if: steps.ensure_pr.outputs.newly_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
+          PR_NUMBER: ${{ steps.ensure_pr.outputs.pr_number }}
+        run: |
+          set -e
+
+          if [ -z "$DISCORD_BOT_TOKEN" ] || [ -z "$DISCORD_CHANNEL_ID" ]; then
+            echo "DISCORD_BOT_TOKEN 또는 DISCORD_CHANNEL_ID 시크릿이 설정되지 않아 디스코드 알림을 건너뜁니다."
+            exit 0
+          fi
+
+          PR_JSON=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json title,url,author)
+          PR_TITLE=$(echo "$PR_JSON" | jq -r '.title')
+          PR_URL=$(echo "$PR_JSON" | jq -r '.url')
+          PR_AUTHOR=$(echo "$PR_JSON" | jq -r '.author.login')
+
+          CONTENT="🆕 **새 PR이 자동 생성되었습니다**
+          제목: ${PR_TITLE}
+          작성자: ${PR_AUTHOR}
+          링크: ${PR_URL}"
+
+          PAYLOAD=$(jq -n --arg content "$CONTENT" '{content: $content}')
+
+          curl -sf \
+            -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "https://discord.com/api/v10/channels/$DISCORD_CHANNEL_ID/messages"
 
       - name: Check branch is up to date with base
         if: steps.ensure_pr.outputs.pr_number != ''
