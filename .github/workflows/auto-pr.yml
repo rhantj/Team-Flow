@@ -60,7 +60,11 @@ jobs:
               --title "$BRANCH" \
               --body "자동 생성된 PR입니다. (push: @${GITHUB_ACTOR} / ${AUTHOR_NAME_TMP} <${AUTHOR_EMAIL_TMP}>)" || true
             PR_NUMBER=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base "$BASE_BRANCH" --state open --json number --jq '.[0].number // empty')
-            NEWLY_CREATED=true
+            if [ -n "$PR_NUMBER" ]; then
+              NEWLY_CREATED=true
+            else
+              echo "PR 생성 시도 후에도 PR_NUMBER를 확인할 수 없습니다. 생성이 실패했을 수 있습니다."
+            fi
           else
             echo "PR #$PR_NUMBER already exists for $BRANCH."
           fi
@@ -85,14 +89,12 @@ jobs:
           fi
 
       - name: Notify Discord on new PR
-        if: steps.ensure_pr.outputs.newly_created == 'true'
+        if: steps.ensure_pr.outputs.newly_created == 'true' && steps.ensure_pr.outputs.pr_number != ''
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           PR_TITLE: ${{ steps.ensure_pr.outputs.pr_title }}
           PR_URL: ${{ steps.ensure_pr.outputs.pr_url }}
           PR_AUTHOR: ${{ steps.ensure_pr.outputs.pr_author }}
-          PR_AUTHOR_NAME: ${{ steps.ensure_pr.outputs.pr_author_name }}
-          PR_AUTHOR_EMAIL: ${{ steps.ensure_pr.outputs.pr_author_email }}
         run: |
           set -e
 
@@ -101,9 +103,11 @@ jobs:
             exit 0
           fi
 
+          # 개인정보 보호를 위해 디스코드에는 GitHub 아이디만 노출한다.
+          # 실명/이메일은 PR 본문(GitHub, 저장소 협업자만 열람 가능)에만 남는다.
           CONTENT="🆕 **새 PR이 자동 생성되었습니다**
           제목: ${PR_TITLE}
-          작성자: @${PR_AUTHOR} / ${PR_AUTHOR_NAME} <${PR_AUTHOR_EMAIL}>
+          작성자: @${PR_AUTHOR}
           링크: ${PR_URL}"
 
           PAYLOAD=$(jq -n --arg content "$CONTENT" '{content: $content}')
@@ -222,8 +226,6 @@ jobs:
           PR_TITLE: ${{ needs.auto-pr.outputs.pr_title }}
           PR_URL: ${{ needs.auto-pr.outputs.pr_url }}
           PR_AUTHOR: ${{ needs.auto-pr.outputs.pr_author }}
-          PR_AUTHOR_NAME: ${{ needs.auto-pr.outputs.pr_author_name }}
-          PR_AUTHOR_EMAIL: ${{ needs.auto-pr.outputs.pr_author_email }}
           BRANCH_NAME: ${{ github.ref_name }}
         run: |
           set -e

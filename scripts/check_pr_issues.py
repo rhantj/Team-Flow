@@ -169,13 +169,11 @@ def main() -> None:
     pr_title = os.environ.get("PR_TITLE", "")
     pr_url = os.environ.get("PR_URL", "")
     pr_author = os.environ.get("PR_AUTHOR", "")
-    pr_author_name = os.environ.get("PR_AUTHOR_NAME", "")
-    pr_author_email = os.environ.get("PR_AUTHOR_EMAIL", "")
     branch_name = os.environ.get("BRANCH_NAME", "")
 
+    # 개인정보 보호를 위해 디스코드에는 GitHub 아이디만 노출한다.
+    # 실명/이메일은 PR 본문(GitHub, 저장소 협업자만 열람 가능)에만 남는다.
     author_line = f"브랜치: `{branch_name}` · 작성자: @{pr_author}"
-    if pr_author_name or pr_author_email:
-        author_line += f" / {pr_author_name} <{pr_author_email}>"
 
     lines = [
         "🚨 **PR에서 확인이 필요한 항목이 발견되었습니다**",
