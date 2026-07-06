@@ -4,7 +4,7 @@ name: Auto PR
 # 1) 해당 브랜치의 PR이 없을 경우 자동으로 생성
 # 2) 브랜치가 base(main)보다 뒤처져 있으면 PR에 경고 코멘트 등록
 #    (병합 전에 main을 pull/rebase 하도록 안내)
-# 3) PR이 새로 생성된 경우, 디스코드 봇을 통해 알림 전송
+# 3) PR이 새로 생성된 경우, 디스코드 웹훅으로 알림 전송
 
 on:
   push:
@@ -58,14 +58,13 @@ jobs:
         if: steps.ensure_pr.outputs.newly_created == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           PR_NUMBER: ${{ steps.ensure_pr.outputs.pr_number }}
         run: |
           set -e
 
-          if [ -z "$DISCORD_BOT_TOKEN" ] || [ -z "$DISCORD_CHANNEL_ID" ]; then
-            echo "DISCORD_BOT_TOKEN 또는 DISCORD_CHANNEL_ID 시크릿이 설정되지 않아 디스코드 알림을 건너뜁니다."
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "DISCORD_WEBHOOK_URL 시크릿이 설정되지 않아 디스코드 알림을 건너뜁니다."
             exit 0
           fi
 
@@ -81,11 +80,7 @@ jobs:
 
           PAYLOAD=$(jq -n --arg content "$CONTENT" '{content: $content}')
 
-          curl -sf \
-            -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD" \
-            "https://discord.com/api/v10/channels/$DISCORD_CHANNEL_ID/messages"
+          curl -sf -H "Content-Type: application/json" -d "$PAYLOAD" "$DISCORD_WEBHOOK_URL"
 
       - name: Check branch is up to date with base
         if: steps.ensure_pr.outputs.pr_number != ''

@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+discord-bot/.env
+__pycache__/
+*.pyc
+bot.py
