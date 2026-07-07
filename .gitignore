@@ -223,8 +223,13 @@ __pycache__/
 *.pyc
 bot.py
 actions-runner
+.claude
 
 # auto-pr.yml/claude-review job이 실행 중 생성하는 임시 파일
 diff.txt
 test_output.log
 issue_message.md
+
+# start.sh가 러너를 백그라운드로 띄울 때 남기는 로그
+start.sh
+stop.sh
