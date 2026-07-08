@@ -116,7 +116,7 @@ def main() -> None:
 
     # 1) 라벨로 아직 완료되지 않은 기존 이슈 검색
     jql = f'project = "{project_key}" AND labels = "{label}" AND statusCategory != Done'
-    search_path = f"/rest/api/3/search?jql={urllib.parse.quote(jql)}&fields=key&maxResults=1"
+    search_path = f"/rest/api/3/search/jql?jql={urllib.parse.quote(jql)}&fields=key&maxResults=1"
     try:
         found = api_request(base_url, search_path, auth)
         existing = (found.get("issues") or [None])[0]
