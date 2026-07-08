@@ -81,6 +81,10 @@ def main() -> None:
     base_url = env("JIRA_BASE_URL")
     email = env("JIRA_EMAIL")
     token = env("JIRA_API_TOKEN")
+
+    # 시크릿에 스킴이 빠져 있어도 동작하도록 https:// 보정
+    if base_url and not base_url.startswith(("http://", "https://")):
+        base_url = f"https://{base_url}"
     project = env("JIRA_PROJECT", "work-flow")
     issue_type = env("JIRA_ISSUE_TYPE", "Task")
 
