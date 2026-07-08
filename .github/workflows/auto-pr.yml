@@ -17,7 +17,6 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  issues: write
 
 jobs:
   auto-pr:
@@ -246,43 +245,18 @@ jobs:
           PAYLOAD=$(jq -n --rawfile content issue_message.md '{content: ($content[0:1900])}')
           curl -sf -H "Content-Type: application/json" -d "$PAYLOAD" "$DISCORD_PR_CHANGES_WEBHOOK_URL"
 
-      # 문제가 발견되면 GitHub Issue로도 등록한다.
-      # 같은 PR에 대해 push마다 이슈가 중복 생성되지 않도록, 본문 마커로
-      # 기존 열린 이슈를 찾아 있으면 갱신(코멘트+본문), 없으면 새로 생성한다.
-      - name: Create or update GitHub issue on PR issues
+      # 문제가 발견되면 Jira(WF 프로젝트)에 이슈로 등록한다.
+      # 같은 PR에 push가 반복돼도 중복되지 않도록 PR 번호 라벨로
+      # 기존 열린 이슈를 찾아 있으면 코멘트만, 없으면 새로 생성한다.
+      - name: Create Jira issue on PR issues
         if: steps.check_issues.outputs.has_issue == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_PROJECT: work-flow
           PR_NUMBER: ${{ needs.auto-pr.outputs.pr_number }}
           PR_TITLE: ${{ needs.auto-pr.outputs.pr_title }}
           PR_URL: ${{ needs.auto-pr.outputs.pr_url }}
           BRANCH_NAME: ${{ github.ref_name }}
-        run: |
-          set -e
-          MARKER="<!-- auto-pr-issue:PR-${PR_NUMBER} -->"
-          TITLE="🚨 PR 점검 필요: #${PR_NUMBER} ${PR_TITLE}"
-
-          # 마커로 기존 열린 이슈 검색 (본문에 마커가 있는 이슈만 매칭)
-          EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
-            --search "in:body \"${MARKER}\"" --json number --jq '.[0].number // empty')
-
-          BODY_FILE=issue_body.md
-          {
-            echo "$MARKER"
-            echo ""
-            cat issue_message.md
-            echo ""
-            echo "---"
-            echo "관련 PR: ${PR_URL}"
-          } > "$BODY_FILE"
-
-          if [ -n "$EXISTING" ]; then
-            echo "기존 이슈 #$EXISTING 갱신"
-            gh issue edit "$EXISTING" --repo "$GITHUB_REPOSITORY" --body-file "$BODY_FILE"
-            gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" \
-              --body "🔄 최신 push에서도 점검 필요 항목이 감지되어 내용을 갱신했습니다. (${PR_URL})"
-          else
-            echo "새 이슈 생성"
-            gh issue create --repo "$GITHUB_REPOSITORY" \
-              --title "$TITLE" --body-file "$BODY_FILE"
-          fi
+        run: python3 scripts/create_jira_issue.py
