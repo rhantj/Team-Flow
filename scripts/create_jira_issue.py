@@ -60,9 +60,12 @@ def resolve_project_key(base_url: str, auth: str, project: str) -> str:
     for p in result.get("values", []):
         if project.lower() in (p.get("name", "").lower(), p.get("key", "").lower()):
             return p["key"]
-    # 정확히 일치하는 게 없으면 첫 결과, 그것도 없으면 입력값을 그대로 사용
-    values = result.get("values", [])
-    return values[0]["key"] if values else project
+    # 이름/키가 정확히 일치하는 프로젝트가 없으면, 엉뚱한 프로젝트에
+    # 이슈가 생성되지 않도록 추정하지 않고 명확히 실패시킨다.
+    candidates = ", ".join(f'{p.get("name")}({p.get("key")})' for p in result.get("values", []))
+    raise ValueError(
+        f"'{project}'와 일치하는 Jira 프로젝트를 찾지 못했습니다. 검색 결과: [{candidates or '없음'}]"
+    )
 
 
 def adf_doc(intro: str, body_text: str) -> dict:
