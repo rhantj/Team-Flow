@@ -272,6 +272,7 @@ jobs:
 
       - name: Notify Slack on PR issues
         if: steps.check_issues.outputs.has_issue == 'true'
+        continue-on-error: true
         env:
           SLACK_ISSUE_WEBHOOK_URL: ${{ secrets.SLACK_ISSUE_WEBHOOK_URL }}
           PR_AUTHOR_NAME: ${{ needs.auto-pr.outputs.pr_author_name }}

@@ -14,3 +14,4 @@ case "$name" in
   *) id="" ;;
 esac
 [ -n "$id" ] && printf '<@%s>' "$id"
+exit 0
