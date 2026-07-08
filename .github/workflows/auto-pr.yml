@@ -121,7 +121,6 @@ jobs:
           PR_TITLE: ${{ steps.ensure_pr.outputs.pr_title }}
           PR_URL: ${{ steps.ensure_pr.outputs.pr_url }}
           PR_AUTHOR: ${{ steps.ensure_pr.outputs.pr_author }}
-          PR_AUTHOR_NAME: ${{ steps.ensure_pr.outputs.pr_author_name }}
         run: |
           set -e
           if [ -z "$SLACK_PR_WEBHOOK_URL" ]; then
@@ -130,7 +129,7 @@ jobs:
           fi
 
           # 작성자를 슬랙에서 멘션(매핑에 있으면). 채널에는 GitHub 아이디만 표기.
-          MENTION=$(bash scripts/slack_mention.sh "$PR_AUTHOR_NAME")
+          MENTION=$(bash scripts/slack_mention.sh "$PR_AUTHOR")
           TEXT="🆕 *새 PR이 자동 생성되었습니다* ${MENTION}
           제목: ${PR_TITLE}
           작성자: @${PR_AUTHOR}
@@ -275,14 +274,14 @@ jobs:
         continue-on-error: true
         env:
           SLACK_ISSUE_WEBHOOK_URL: ${{ secrets.SLACK_ISSUE_WEBHOOK_URL }}
-          PR_AUTHOR_NAME: ${{ needs.auto-pr.outputs.pr_author_name }}
+          PR_AUTHOR: ${{ needs.auto-pr.outputs.pr_author }}
         run: |
           set -e
           if [ -z "$SLACK_ISSUE_WEBHOOK_URL" ]; then
             echo "SLACK_ISSUE_WEBHOOK_URL 시크릿이 없어 슬랙 알림을 건너뜁니다."
             exit 0
           fi
-          MENTION=$(bash scripts/slack_mention.sh "$PR_AUTHOR_NAME")
+          MENTION=$(bash scripts/slack_mention.sh "$PR_AUTHOR")
           CONTENT=$(cat issue_message.md)
           TEXT="${MENTION} ${CONTENT}"
           PAYLOAD=$(jq -n --arg text "$TEXT" '{text: ($text[0:2900])}')
