@@ -121,6 +121,7 @@ jobs:
           PR_TITLE: ${{ steps.ensure_pr.outputs.pr_title }}
           PR_URL: ${{ steps.ensure_pr.outputs.pr_url }}
           PR_AUTHOR: ${{ steps.ensure_pr.outputs.pr_author }}
+          PR_AUTHOR_NAME: ${{ steps.ensure_pr.outputs.pr_author_name }}
         run: |
           set -e
           if [ -z "$SLACK_PR_WEBHOOK_URL" ]; then
@@ -128,8 +129,9 @@ jobs:
             exit 0
           fi
 
-          # 개인정보 보호를 위해 슬랙에도 GitHub 아이디만 노출한다.
-          TEXT="🆕 *새 PR이 자동 생성되었습니다*
+          # 작성자를 슬랙에서 멘션(매핑에 있으면). 채널에는 GitHub 아이디만 표기.
+          MENTION=$(bash scripts/slack_mention.sh "$PR_AUTHOR_NAME")
+          TEXT="🆕 *새 PR이 자동 생성되었습니다* ${MENTION}
           제목: ${PR_TITLE}
           작성자: @${PR_AUTHOR}
           링크: ${PR_URL}"
@@ -272,13 +274,17 @@ jobs:
         if: steps.check_issues.outputs.has_issue == 'true'
         env:
           SLACK_ISSUE_WEBHOOK_URL: ${{ secrets.SLACK_ISSUE_WEBHOOK_URL }}
+          PR_AUTHOR_NAME: ${{ needs.auto-pr.outputs.pr_author_name }}
         run: |
           set -e
           if [ -z "$SLACK_ISSUE_WEBHOOK_URL" ]; then
             echo "SLACK_ISSUE_WEBHOOK_URL 시크릿이 없어 슬랙 알림을 건너뜁니다."
             exit 0
           fi
-          PAYLOAD=$(jq -n --rawfile content issue_message.md '{text: ($content[0:2900])}')
+          MENTION=$(bash scripts/slack_mention.sh "$PR_AUTHOR_NAME")
+          CONTENT=$(cat issue_message.md)
+          TEXT="${MENTION} ${CONTENT}"
+          PAYLOAD=$(jq -n --arg text "$TEXT" '{text: ($text[0:2900])}')
           curl -sf -H "Content-Type: application/json" -d "$PAYLOAD" "$SLACK_ISSUE_WEBHOOK_URL"
 
       # 문제가 발견되면 Jira(WF 프로젝트)에 이슈로 등록한다.
