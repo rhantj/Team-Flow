@@ -19,13 +19,13 @@
 
 | 오너 | ML | DL | LLM |
 | --- | --- | --- | --- |
-| FS-1 인증/프로젝트 | - | - | - |
-| FS-2 회의록/To-Do | 역할 추천(KNN, P1) | STT(Whisper), 문장 분류(KoBERT, P1) | 회의 요약·To-Do 추출(Function Calling) |
-| FS-3 대시보드 | 지연 위험도·업무 편중(LightGBM) | 회의 감정/위험 신호(BERT, P2) | AI 추천 액션 문장 생성 |
-| FS-4 Assistant | - | - | RAG 답변(Embedding + LLM) |
-| FS-5 산출물 | - | - | 산출물 초안 생성(+RAG 옵션) |
-| FS-6 업무보드/GitHub | - | 업무 우선순위 분류(BERT, P1) | - |
-| FS-7 기여도/심사 | 이상치 탐지(Isolation Forest, P1) | - | 기여도 근거 요약 |
+| FS-1 인증/프로젝트 | - | - | - | 곽진아
+| FS-2 회의록/To-Do | 역할 추천(KNN, P1) | STT(Whisper), 문장 분류(KoBERT, P1) | 회의 요약·To-Do 추출(Function Calling) | 박지수
+| FS-3 대시보드 | 지연 위험도·업무 편중(LightGBM) | 회의 감정/위험 신호(BERT, P2) | AI 추천 액션 문장 생성 | 유소은
+| FS-4 Assistant | - | - | RAG 답변(Embedding + LLM) | 박상준
+| FS-5 산출물 | - | - | 산출물 초안 생성(+RAG 옵션) | 고무서
+| FS-6 업무보드/GitHub | - | 업무 우선순위 분류(BERT, P1) | - | 허영주
+| FS-7 기여도/심사 | 이상치 탐지(Isolation Forest, P1) | - | 기여도 근거 요약 | 이은주
 
 > 표기: ML=scikit-learn/LightGBM 계열, DL=PyTorch/Transformers/Whisper, LLM=OpenAI 호환 API+RAG. "-"는 해당 기술 미사용.
 
