@@ -233,3 +233,5 @@ issue_message.md
 # start.sh가 러너를 백그라운드로 띄울 때 남기는 로그
 start.sh
 stop.sh
+
+.serena
