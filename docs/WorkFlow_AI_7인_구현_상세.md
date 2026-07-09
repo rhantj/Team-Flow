@@ -246,7 +246,7 @@
 - 칸반 보드(드래그로 상태 이동)
 - 업무 생성 모달(카테고리 선택 → 공통+카테고리 전용 필드)
 - 업무 상세 우측 패널(체크리스트 포함)
-- GitHub 활동 패널(커밋/PR/Issue, 충돌·리뷰 대기 표시)
+- GitHub 활동 패널(충돌·리뷰 대기 표시)
 
 ### Backend API
 - `GET/POST /api/v1/projects/{id}/tasks` `PATCH /api/v1/tasks/{id}`

@@ -15,7 +15,7 @@
 | FS-3 | 대시보드/ML 위험도 | 진행률, 마감 임박, 지연 위험도 예측, 업무 편중 점수 |
 | FS-4 | AI Assistant/RAG | 프로젝트 Q&A, embedding, vector search, 출처 표시 |
 | FS-5 | 산출물 생성 | 발표자료, 보고서, README, 제안서, 실험 보고서 |
-| FS-6 | 업무 보드/GitHub | 카테고리별 업무 UI, GitHub 커밋/PR 연동 |
+| FS-6 | 업무 보드/GitHub | 카테고리별 업무 UI, GitHub 커밋/푸시 연동|
 | FS-7 | 심사자/기여도/QA | 기여도 리포트, AI 평가 근거, 평가 점수, 테스트 |
 
 ## 3. 기능 우선순위
