@@ -37,7 +37,7 @@
 | 구성 | 기술 |
 | --- | --- |
 | Frontend | React |
-| Backend | Spring Boot (인증/권한/API), Python (AI 추론) |
+| Backend | Spring Boot (인증/권한/API), AI Backend (FastAPI 추론) |
 | AI/ML | LLM, RAG, Whisper(STT), KoBERT/KLUE-BERT, scikit-learn, LightGBM |
 | Database | MySQL/PostgreSQL, Vector DB |
 | Infra | Redis/Queue (비동기 처리), GitHub API |
@@ -51,4 +51,5 @@
 ## 문서
 
 - [PRD](docs/WorkFlow_AI_PRD.md) — 기능 범위, 요구사항, 권한, AI 적용 범위
+- [API 명세서](docs/WorkFlow_AI_API_명세서.md) — REST 경로, 응답 형식, 권한, AI 백엔드 계약
 - [기획서 작성 가이드](docs/WorkFlow_AI_기획서_작성가이드.md) — 항목별 작성 가이드

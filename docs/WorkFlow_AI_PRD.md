@@ -59,7 +59,7 @@ WorkFlow AI는 팀 프로젝트의 회의, 업무, 개발 기록, 산출물, 평
 | FR-01 | 인증/권한 | 회원가입, 로그인, 팀장/팀원/심사자 권한 | Spring Boot, JWT, RBAC |
 | FR-02 | 프로젝트 관리 | 프로젝트 생성, 팀원 초대, 마감일 설정 | Spring Boot, DB |
 | FR-03 | 업무 보드 | 상태별 칸반, 카테고리별 상세 UI, 담당자/마감일 관리 | React, Spring Boot |
-| FR-04 | 회의록 문서 업로드 | 문서 업로드, 텍스트 추출, AI 분석 | LLM, File Parser |
+| FR-04 | 회의록 업로드 | 문서 업로드, 텍스트 추출, AI 분석 | LLM, File Parser |
 | FR-05 | To-Do 자동 생성 | 회의록 기반 업무 추출, 담당자 후보, 미배정 처리 | LLM, Function Calling |
 | FR-06 | 대시보드 | 전체 진행률, 마감 임박, 업무량, 최근 활동 | DB Aggregation, Chart UI |
 | FR-07 | ML 지연 위험도 | 업무 데이터 기반 정상/주의/위험 예측 | scikit-learn, LightGBM |
@@ -134,9 +134,9 @@ WorkFlow AI는 팀 프로젝트의 회의, 업무, 개발 기록, 산출물, 평
 
 | 구성 | 역할 |
 | --- | --- |
-| React Frontend | 대시보드, 업무보드, 회의록, 산출물, 마이페이지 UI |
-| Spring Boot Backend | 인증, 권한, 프로젝트, 업무, 대시보드, 평가 데이터 API |
-| Python AI Backend | LLM, RAG, STT, ML/DL 모델 추론 |
+| Frontend | 대시보드, 업무 보드, 회의록, 산출물, 마이페이지 UI |
+| Backend | 인증, 권한, 프로젝트, 업무, 대시보드, 평가 데이터 API |
+| AI Backend | LLM, RAG, STT, ML/DL 모델 추론 |
 | MySQL/PostgreSQL | 서비스 핵심 데이터 저장 |
 | Vector DB | 문서/회의록 chunk embedding 저장 |
 | Redis/Queue | AI 분석, 파일 처리, GitHub 동기화 비동기 처리 |
@@ -166,7 +166,7 @@ WorkFlow AI는 팀 프로젝트의 회의, 업무, 개발 기록, 산출물, 평
 | ID | 완료 기준 |
 | --- | --- |
 | AC-01 | 역할별 로그인 후 접근 가능한 화면이 다르게 표시된다. |
-| AC-02 | 회의록 문서 업로드 후 AI 요약과 To-Do 후보가 생성된다. |
+| AC-02 | 회의록 업로드 후 AI 요약과 To-Do 후보가 생성된다. |
 | AC-03 | 미배정 업무를 팀장이 직접 배정하고 업무 보드에 등록할 수 있다. |
 | AC-04 | 업무 보드 상태 변경이 대시보드 진행률에 반영된다. |
 | AC-05 | ML 지연 위험도와 업무 편중 점수가 화면에 표시된다. |
@@ -174,4 +174,3 @@ WorkFlow AI는 팀 프로젝트의 회의, 업무, 개발 기록, 산출물, 평
 | AC-07 | 산출물 생성에서 최소 발표자료, 보고서, README 초안이 생성된다. |
 | AC-08 | 심사자만 개인별 기여도 리포트와 AI 평가 근거를 볼 수 있다. |
 | AC-09 | 최종 발표에서 회의록 업로드부터 평가 근거 확인까지 한 흐름으로 시연 가능하다. |
-

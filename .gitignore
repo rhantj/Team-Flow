@@ -156,6 +156,12 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+node_modules/
+App/pnpm-lock.yaml
+AGENTS.md
+
+# macOS
+.DS_Store
 
 # Spyder project settings
 .spyderproject
