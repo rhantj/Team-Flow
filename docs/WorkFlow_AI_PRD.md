@@ -76,7 +76,7 @@ WorkFlow AI는 팀 프로젝트의 회의, 업무, 개발 기록, 산출물, 평
 | FR-13 | 음성 STT | 녹음파일을 회의록 텍스트로 변환 | Whisper, Deep Learning |
 | FR-14 | 회의록 문장 분류 | 결정사항/할 일/위험요소/일반 문장 분류 | KoBERT/KLUE-BERT |
 | FR-15 | 업무 우선순위 분류 | 제목/설명 기반 우선순위 자동 추천 | BERT Text Classification |
-| FR-16 | GitHub 연동 | 저장소 연결, 커밋/브랜치/PR 조회, 소스트리 형태의 커밋 그래프·diff 뷰어 |
+| FR-16 | GitHub 연동 | 저장소 연결, 커밋/브랜치 조회, 소스트리 형태의 커밋 그래프·diff 뷰어 | GitHub REST/GraphQL API, Webhook |
 | FR-17 | 기여도 이상치 탐지 | 지나치게 낮거나 높은 기여 패턴 탐지 | Isolation Forest |
 | FR-18 | 역할 추천 | 회의록 기반 미배정 업무 담당자 추천 | KNN/Clustering |
 | FR-19 | 평가 점수 공개 | 심사자 점수 입력, 공개/비공개 설정 | Audit Log, RBAC |
@@ -140,7 +140,7 @@ WorkFlow AI는 팀 프로젝트의 회의, 업무, 개발 기록, 산출물, 평
 | MySQL/PostgreSQL | 서비스 핵심 데이터 저장 |
 | Vector DB | 문서/회의록 chunk embedding 저장 |
 | Redis/Queue | AI 분석, 파일 처리, GitHub 동기화 비동기 처리 |
-| GitHub API | 커밋, PR, Issue 수집 |
+| GitHub API | 커밋, 브랜치, Issue 수집 |
 
 ## 10. 데이터 모델 초안
 
