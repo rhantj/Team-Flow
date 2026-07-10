@@ -2,6 +2,22 @@
 
 아래 명령은 모두 저장소 루트(이 파일이 있는 위치)에서 실행한다.
 
+## 0. 백엔드 기준 버전
+
+- **Spring Boot**: 3.5.16
+- **Java**: 21 LTS (`backend-spring/pom.xml`의 `java.version`, Dockerfile 베이스 이미지 모두 21로 통일)
+- **빌드 도구**: Maven (`backend-spring/mvnw` Maven Wrapper 포함, 버전 3.9.9 고정)
+- **Railway 배포**: `backend-spring/Dockerfile`도 Java 21 이미지(`maven:3.9-eclipse-temurin-21`, `eclipse-temurin:21-jre`) 사용
+
+로컬에 Maven Wrapper로 빌드하려면:
+
+```bash
+cd backend-spring
+./mvnw clean package
+```
+
+저장소 루트 스크립트(`scripts/build_spring_backend.sh`, `scripts/run_spring_backend.sh`)를 쓰는 기존 방식도 그대로 동작한다 (`.tools/apache-maven-3.9.9` 우선 사용, 없으면 시스템 `mvn` 사용).
+
 ## 1. AI FastAPI 서버
 
 ```bash
