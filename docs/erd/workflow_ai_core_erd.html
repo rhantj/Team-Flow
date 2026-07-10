@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>WorkFlow AI - 핵심 ERD (MySQL)</title>
+<style>
+body{background:#fff;margin:0;padding:24px;}
+@media (prefers-color-scheme: dark){ body{background:#15181c;} }
+</style>
+</head>
+<body>
+<div style="--bg:#fff;--surface:#f6f7f9;--border:#d7dbe0;--text:#1c2128;--dim:#6b7280;--pk:#b45309;--fk:#2563eb;--line:#8a94a3;--head:#eef1f5;--badge:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:var(--text);">
+<style>
+@media (prefers-color-scheme: dark) {
+  div[style*="--bg"] { --bg:#15181c; --surface:#1e2228; --border:#333944; --text:#e6e9ee; --dim:#9aa4b2; --pk:#f0b429; --fk:#60a5fa; --line:#8b93a1; --head:#242933; --badge:#242933; }
+}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);}
+.erd-title{font-size:15px;font-weight:700;margin:0 0 4px;}
+.erd-sub{font-size:12.5px;color:var(--dim);margin:0 0 12px;}
+.tbl-box{fill:var(--surface);stroke:var(--border);stroke-width:1.2;}
+.tbl-head{fill:var(--head);stroke:var(--border);stroke-width:1.2;}
+.tbl-name{font-size:13px;font-weight:700;fill:var(--text);}
+.col-name{font-size:11.5px;fill:var(--text);}
+.col-type{font-size:10.5px;fill:var(--dim);}
+.pk{fill:var(--pk);font-weight:700;font-size:10px;}
+.fk{fill:var(--fk);font-weight:700;font-size:10px;}
+.rel-line{stroke:var(--line);stroke-width:1.3;fill:none;stroke-linejoin:round;}
+.cf-circle{fill:var(--badge);stroke:var(--line);stroke-width:1.2;}
+.legend{font-size:11px;fill:var(--dim);}
+.legend-note{font-size:12px;color:var(--dim);margin:6px 0 0;}
+section{margin-bottom:28px;}
+.tbl-summary{width:100%;border-collapse:collapse;font-size:13px;}
+.tbl-summary th,.tbl-summary td{border:1px solid var(--border);padding:8px 12px;text-align:left;vertical-align:top;}
+.tbl-summary thead th{background:var(--head);font-weight:700;}
+.tbl-summary tbody tr:nth-child(even){background:var(--surface);}
+.tbl-summary code{font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 5px;}
+.tbl-summary .pk-cell{color:var(--pk);font-weight:700;}
+.tbl-summary .fk-cell{color:var(--fk);}
+.tbl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;}
+.tbl-card{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--surface);}
+.tbl-card h4{margin:0;padding:8px 12px;background:var(--head);font-size:13px;font-weight:700;border-bottom:1px solid var(--border);}
+.tbl-card table{width:100%;border-collapse:collapse;font-size:12px;}
+.tbl-card td{padding:5px 10px;border-top:1px solid var(--border);vertical-align:top;}
+.tbl-card td.col-k{width:34px;font-weight:700;}
+.tbl-card td.col-k.k-pk{color:var(--pk);}
+.tbl-card td.col-k.k-fk{color:var(--fk);}
+.tbl-card td.col-nm{white-space:nowrap;}
+.tbl-card td.col-tp{color:var(--dim);white-space:nowrap;}
+.tbl-card td.col-ds{color:var(--dim);}
+</style>
+
+<h2 class="sr-only">WorkFlow AI 데이터베이스(MySQL 기준)의 핵심 9개 테이블에 대한 논리 ERD와 물리 ERD를 직각 연결선과 크로우풋 표준 카디널리티 표기로 보여준다.</h2>
+
+<section>
+<p class="erd-title">논리 ERD (Logical) — 핵심 엔터티 관계</p>
+<p class="erd-sub">타입 생략, 주요 속성만 표시 · 직각 연결선 + 표준 크로우풋 카디널리티</p>
+<svg viewBox="0 0 1160 680" width="100%" role="img" aria-label="논리 ERD, 직각선과 크로우풋 카디널리티 표기">
+<title>논리 ERD</title>
+
+<!-- relation paths (orthogonal) -->
+<g>
+<path class="rel-line" d="M360,100 L390,100 L390,80 L420,80"/>
+<path class="rel-line" d="M740,80 L770,80 L770,100 L800,100"/>
+<path class="rel-line" d="M960,160 L960,360"/>
+<path class="rel-line" d="M880,160 L880,260 L580,260 L580,360"/>
+<path class="rel-line" d="M740,400 L770,400 L770,430 L800,430"/>
+<path class="rel-line" d="M200,160 L200,360"/>
+<path class="rel-line" d="M300,160 L300,190 L880,190 L880,360"/>
+<path class="rel-line" d="M840,40 L840,10 L10,10 L10,600 L40,600"/>
+<path class="rel-line" d="M1120,70 L1150,70 L1150,580 L740,580"/>
+<path class="rel-line" d="M740,610 L800,610"/>
+<path class="rel-line" d="M810,160 L810,280 L280,280 L280,360"/>
+</g>
+
+<!-- cardinality glyphs -->
+<g>
+<!-- R1 USERS(1)-PM(N) -->
+<g transform="translate(360,100) rotate(180)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(420,80) rotate(0)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<!-- R2 PM(N)-PROJECTS(1) -->
+<g transform="translate(740,80) rotate(180)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<g transform="translate(800,100) rotate(0)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<!-- R3 PROJECTS(1)-TASKS(N) -->
+<g transform="translate(960,160) rotate(270)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(960,360) rotate(90)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<!-- R4 PROJECTS(1)-MILESTONES(N) -->
+<g transform="translate(880,160) rotate(270)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(580,360) rotate(90)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<!-- R5 MILESTONES(0..1)-TASKS(N) : nullable milestone_id -->
+<g transform="translate(740,400) rotate(180)"><circle class="cf-circle" cx="-16" cy="0" r="4"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(800,430) rotate(0)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<!-- R6 USERS(1)-EVAL(N) -->
+<g transform="translate(200,160) rotate(270)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(200,360) rotate(90)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<!-- R7 USERS(0..1)-TASKS(N) : nullable assignee_id -->
+<g transform="translate(300,160) rotate(270)"><circle class="cf-circle" cx="-16" cy="0" r="4"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(880,360) rotate(90)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<!-- R8 PROJECTS(1)-DELIVERABLES(N) -->
+<g transform="translate(840,40) rotate(90)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(40,600) rotate(0)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<!-- R9 PROJECTS(1)-MEETINGS(N) -->
+<g transform="translate(1120,70) rotate(180)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(740,580) rotate(180)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<!-- R10 MEETINGS(1)-MEETING_ANALYSIS(1) identifying -->
+<g transform="translate(740,610) rotate(180)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(800,610) rotate(0)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<!-- R11 PROJECTS(1)-EVAL(N) -->
+<g transform="translate(810,160) rotate(270)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(280,360) rotate(90)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+</g>
+
+<!-- USERS -->
+<g transform="translate(40,40)">
+<rect class="tbl-box" width="320" height="120" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">USERS (사용자)</text>
+<text class="pk" x="12" y="45">PK</text><text class="col-name" x="38" y="45">id</text>
+<text class="col-name" x="38" y="65">email</text>
+<text class="col-name" x="38" y="85">name</text>
+<text class="col-name" x="38" y="105">provider / provider_id</text>
+</g>
+
+<!-- PROJECT_MEMBERS -->
+<g transform="translate(420,40)">
+<rect class="tbl-box" width="320" height="80" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">PROJECT_MEMBERS (참여)</text>
+<text class="pk" x="12" y="45">PK</text><text class="col-name" x="38" y="45">id</text>
+<text class="fk" x="12" y="65">FK</text><text class="col-name" x="38" y="65">project_id / user_id</text>
+</g>
+
+<!-- PROJECTS -->
+<g transform="translate(800,40)">
+<rect class="tbl-box" width="320" height="120" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">PROJECTS (프로젝트)</text>
+<text class="pk" x="12" y="45">PK</text><text class="col-name" x="38" y="45">id</text>
+<text class="col-name" x="38" y="65">title / type</text>
+<text class="col-name" x="38" y="85">deadline</text>
+<text class="col-name" x="38" y="105">description</text>
+</g>
+
+<!-- EVALUATION_SCORES -->
+<g transform="translate(40,360)">
+<rect class="tbl-box" width="320" height="100" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">EVALUATION_SCORES (평가)</text>
+<text class="pk" x="12" y="45">PK</text><text class="col-name" x="38" y="45">id</text>
+<text class="fk" x="12" y="65">FK</text><text class="col-name" x="38" y="65">project_id / user_id</text>
+<text class="col-name" x="38" y="85">score / is_public</text>
+</g>
+
+<!-- MILESTONES -->
+<g transform="translate(420,360)">
+<rect class="tbl-box" width="320" height="80" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">MILESTONES (마일스톤)</text>
+<text class="pk" x="12" y="45">PK</text><text class="col-name" x="38" y="45">id</text>
+<text class="fk" x="12" y="65">FK</text><text class="col-name" x="38" y="65">project_id · title / due_date</text>
+</g>
+
+<!-- TASKS -->
+<g transform="translate(800,360)">
+<rect class="tbl-box" width="320" height="140" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">TASKS (업무)</text>
+<text class="pk" x="12" y="45">PK</text><text class="col-name" x="38" y="45">id</text>
+<text class="fk" x="12" y="65">FK</text><text class="col-name" x="38" y="65">project_id / milestone_id / assignee_id</text>
+<text class="col-name" x="38" y="85">title / category / status</text>
+<text class="col-name" x="38" y="105">due_date / priority</text>
+</g>
+
+<!-- DELIVERABLES -->
+<g transform="translate(40,560)">
+<rect class="tbl-box" width="320" height="80" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">DELIVERABLES (산출물)</text>
+<text class="pk" x="12" y="45">PK</text><text class="col-name" x="38" y="45">id</text>
+<text class="fk" x="12" y="65">FK</text><text class="col-name" x="38" y="65">project_id · type / title / status</text>
+</g>
+
+<!-- MEETINGS -->
+<g transform="translate(420,560)">
+<rect class="tbl-box" width="320" height="80" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">MEETINGS (회의록)</text>
+<text class="pk" x="12" y="45">PK</text><text class="col-name" x="38" y="45">id</text>
+<text class="fk" x="12" y="65">FK</text><text class="col-name" x="38" y="65">project_id · file_type / analysis_status</text>
+</g>
+
+<!-- MEETING_ANALYSIS -->
+<g transform="translate(800,560)">
+<rect class="tbl-box" width="320" height="80" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">MEETING_ANALYSIS (AI 분석)</text>
+<text class="pk fk" x="12" y="45">PK/FK</text><text class="col-name" x="70" y="45">meeting_id</text>
+<text class="col-name" x="38" y="65">summary / decisions / risks / action_items</text>
+</g>
+
+</svg>
+</section>
+
+<section>
+<p class="erd-title">물리 ERD (Physical) — 컬럼·타입·키·카디널리티</p>
+<p class="erd-sub">MySQL 8.x 기준 테이블/컬럼/타입 · PK(주황)·FK(파랑) · 직각 연결선 + 표준 크로우풋 카디널리티</p>
+<svg viewBox="0 0 1160 1120" width="100%" role="img" aria-label="물리 ERD, 직각선과 크로우풋 카디널리티 표기">
+<title>물리 ERD</title>
+
+<g>
+<path class="rel-line" d="M360,129 L390,129 L390,109 L420,109"/>
+<path class="rel-line" d="M740,109 L770,109 L770,129 L800,129"/>
+<path class="rel-line" d="M960,218 L960,420"/>
+<path class="rel-line" d="M880,218 L880,319 L580,319 L580,420"/>
+<path class="rel-line" d="M740,479 L770,479 L770,549 L800,549"/>
+<path class="rel-line" d="M200,218 L200,420"/>
+<path class="rel-line" d="M300,218 L300,250 L880,250 L880,420"/>
+<path class="rel-line" d="M840,40 L840,10 L10,10 L10,899 L40,899"/>
+<path class="rel-line" d="M1120,80 L1150,80 L1150,850 L740,850"/>
+<path class="rel-line" d="M740,920 L800,920"/>
+<path class="rel-line" d="M810,218 L810,340 L280,340 L280,420"/>
+</g>
+
+<g>
+<!-- R1 users(1)-project_members(N) -->
+<g transform="translate(360,129) rotate(180)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(420,109) rotate(0)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<!-- R2 project_members(N)-projects(1) -->
+<g transform="translate(740,109) rotate(180)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<g transform="translate(800,129) rotate(0)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<!-- R3 projects(1)-tasks(N) -->
+<g transform="translate(960,218) rotate(270)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(960,420) rotate(90)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<!-- R4 projects(1)-milestones(N) -->
+<g transform="translate(880,218) rotate(270)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(580,420) rotate(90)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<!-- R5 milestones(0..1)-tasks(N) : milestone_id nullable -->
+<g transform="translate(740,479) rotate(180)"><circle class="cf-circle" cx="-16" cy="0" r="4"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(800,549) rotate(0)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<!-- R6 users(1)-evaluation_scores(N) -->
+<g transform="translate(200,218) rotate(270)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(200,420) rotate(90)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<!-- R7 users(0..1)-tasks(N) : assignee_id nullable -->
+<g transform="translate(300,218) rotate(270)"><circle class="cf-circle" cx="-16" cy="0" r="4"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(880,420) rotate(90)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<!-- R8 projects(1)-deliverables(N) -->
+<g transform="translate(840,40) rotate(90)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(40,899) rotate(0)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<!-- R9 projects(1)-meetings(N) -->
+<g transform="translate(1120,80) rotate(180)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(740,850) rotate(180)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+<!-- R10 meetings(1)-meeting_analysis(1) identifying -->
+<g transform="translate(740,920) rotate(180)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(800,920) rotate(0)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<!-- R11 projects(1)-evaluation_scores(N) -->
+<g transform="translate(810,218) rotate(270)"><line class="rel-line" x1="-4" y1="-6" x2="-4" y2="6"/><line class="rel-line" x1="-9" y1="-6" x2="-9" y2="6"/></g>
+<g transform="translate(280,420) rotate(90)"><line class="rel-line" x1="0" y1="0" x2="-12" y2="-7"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="0"/><line class="rel-line" x1="0" y1="0" x2="-12" y2="7"/></g>
+</g>
+
+<!-- users -->
+<g transform="translate(40,40)">
+<rect class="tbl-box" width="320" height="178" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">users</text>
+<text class="pk" x="12" y="45">PK</text><text class="col-name" x="38" y="45">id</text><text class="col-type" x="200" y="45">BIGINT</text>
+<text class="col-name" x="38" y="65">email</text><text class="col-type" x="200" y="65">VARCHAR(255) UQ</text>
+<text class="col-name" x="38" y="85">name</text><text class="col-type" x="200" y="85">VARCHAR(100)</text>
+<text class="col-name" x="38" y="105">provider</text><text class="col-type" x="200" y="105">VARCHAR(20)</text>
+<text class="col-name" x="38" y="125">provider_id</text><text class="col-type" x="200" y="125">VARCHAR(255)</text>
+<text class="col-name" x="38" y="145">created_at</text><text class="col-type" x="200" y="145">DATETIME</text>
+<text class="col-name" x="38" y="165">updated_at</text><text class="col-type" x="200" y="165">DATETIME</text>
+</g>
+
+<!-- project_members -->
+<g transform="translate(420,40)">
+<rect class="tbl-box" width="320" height="138" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">project_members</text>
+<text class="pk" x="12" y="45">PK</text><text class="col-name" x="38" y="45">id</text><text class="col-type" x="200" y="45">BIGINT</text>
+<text class="fk" x="12" y="65">FK</text><text class="col-name" x="38" y="65">project_id</text><text class="col-type" x="200" y="65">BIGINT</text>
+<text class="fk" x="12" y="85">FK</text><text class="col-name" x="38" y="85">user_id</text><text class="col-type" x="200" y="85">BIGINT</text>
+<text class="col-name" x="38" y="105">role</text><text class="col-type" x="200" y="105">VARCHAR(20)</text>
+<text class="col-name" x="38" y="125">created_at</text><text class="col-type" x="200" y="125">DATETIME</text>
+</g>
+
+<!-- projects -->
+<g transform="translate(800,40)">
+<rect class="tbl-box" width="320" height="178" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">projects</text>
+<text class="pk" x="12" y="45">PK</text><text class="col-name" x="38" y="45">id</text><text class="col-type" x="200" y="45">BIGINT</text>
+<text class="col-name" x="38" y="65">title</text><text class="col-type" x="200" y="65">VARCHAR(200)</text>
+<text class="col-name" x="38" y="85">type</text><text class="col-type" x="200" y="85">VARCHAR(50)</text>
+<text class="col-name" x="38" y="105">deadline</text><text class="col-type" x="200" y="105">DATE</text>
+<text class="col-name" x="38" y="125">description</text><text class="col-type" x="200" y="125">TEXT</text>
+<text class="col-name" x="38" y="145">created_at</text><text class="col-type" x="200" y="145">DATETIME</text>
+<text class="col-name" x="38" y="165">updated_at</text><text class="col-type" x="200" y="165">DATETIME</text>
+</g>
+
+<!-- evaluation_scores -->
+<g transform="translate(40,420)">
+<rect class="tbl-box" width="320" height="178" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">evaluation_scores</text>
+<text class="pk" x="12" y="45">PK</text><text class="col-name" x="38" y="45">id</text><text class="col-type" x="200" y="45">BIGINT</text>
+<text class="fk" x="12" y="65">FK</text><text class="col-name" x="38" y="65">project_id</text><text class="col-type" x="200" y="65">BIGINT</text>
+<text class="fk" x="12" y="85">FK</text><text class="col-name" x="38" y="85">user_id</text><text class="col-type" x="200" y="85">BIGINT</text>
+<text class="col-name" x="38" y="105">score</text><text class="col-type" x="200" y="105">DECIMAL(5,2)</text>
+<text class="col-name" x="38" y="125">is_public</text><text class="col-type" x="200" y="125">BOOLEAN</text>
+<text class="col-name" x="38" y="145">created_at</text><text class="col-type" x="200" y="145">DATETIME</text>
+<text class="col-name" x="38" y="165">updated_at</text><text class="col-type" x="200" y="165">DATETIME</text>
+</g>
+
+<!-- milestones -->
+<g transform="translate(420,420)">
+<rect class="tbl-box" width="320" height="118" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">milestones</text>
+<text class="pk" x="12" y="45">PK</text><text class="col-name" x="38" y="45">id</text><text class="col-type" x="200" y="45">BIGINT</text>
+<text class="fk" x="12" y="65">FK</text><text class="col-name" x="38" y="65">project_id</text><text class="col-type" x="200" y="65">BIGINT</text>
+<text class="col-name" x="38" y="85">title</text><text class="col-type" x="200" y="85">VARCHAR(200)</text>
+<text class="col-name" x="38" y="105">due_date</text><text class="col-type" x="200" y="105">DATE</text>
+</g>
+
+<!-- tasks -->
+<g transform="translate(800,420)">
+<rect class="tbl-box" width="320" height="258" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">tasks</text>
+<text class="pk" x="12" y="45">PK</text><text class="col-name" x="38" y="45">id</text><text class="col-type" x="200" y="45">BIGINT</text>
+<text class="fk" x="12" y="65">FK</text><text class="col-name" x="38" y="65">project_id</text><text class="col-type" x="200" y="65">BIGINT</text>
+<text class="fk" x="12" y="85">FK</text><text class="col-name" x="38" y="85">milestone_id</text><text class="col-type" x="200" y="85">BIGINT NULL</text>
+<text class="fk" x="12" y="105">FK</text><text class="col-name" x="38" y="105">assignee_id</text><text class="col-type" x="200" y="105">BIGINT NULL</text>
+<text class="col-name" x="38" y="125">title</text><text class="col-type" x="200" y="125">VARCHAR(200)</text>
+<text class="col-name" x="38" y="145">category</text><text class="col-type" x="200" y="145">VARCHAR(50)</text>
+<text class="col-name" x="38" y="165">status</text><text class="col-type" x="200" y="165">VARCHAR(20)</text>
+<text class="col-name" x="38" y="185">due_date / priority</text><text class="col-type" x="200" y="185">DATE / VARCHAR</text>
+<text class="col-name" x="38" y="205">created_at / updated_at</text><text class="col-type" x="200" y="205">DATETIME</text>
+</g>
+
+<!-- deliverables -->
+<g transform="translate(40,800)">
+<rect class="tbl-box" width="320" height="198" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">deliverables</text>
+<text class="pk" x="12" y="45">PK</text><text class="col-name" x="38" y="45">id</text><text class="col-type" x="200" y="45">BIGINT</text>
+<text class="fk" x="12" y="65">FK</text><text class="col-name" x="38" y="65">project_id</text><text class="col-type" x="200" y="65">BIGINT</text>
+<text class="col-name" x="38" y="85">type</text><text class="col-type" x="200" y="85">VARCHAR(30)</text>
+<text class="col-name" x="38" y="105">title</text><text class="col-type" x="200" y="105">VARCHAR(200)</text>
+<text class="col-name" x="38" y="125">status</text><text class="col-type" x="200" y="125">VARCHAR(20)</text>
+<text class="col-name" x="38" y="145">content</text><text class="col-type" x="200" y="145">LONGTEXT</text>
+</g>
+
+<!-- meetings -->
+<g transform="translate(420,800)">
+<rect class="tbl-box" width="320" height="178" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">meetings</text>
+<text class="pk" x="12" y="45">PK</text><text class="col-name" x="38" y="45">id</text><text class="col-type" x="200" y="45">BIGINT</text>
+<text class="fk" x="12" y="65">FK</text><text class="col-name" x="38" y="65">project_id</text><text class="col-type" x="200" y="65">BIGINT</text>
+<text class="col-name" x="38" y="85">file_type</text><text class="col-type" x="200" y="85">VARCHAR(20)</text>
+<text class="col-name" x="38" y="105">transcript</text><text class="col-type" x="200" y="105">LONGTEXT</text>
+<text class="col-name" x="38" y="125">analysis_status</text><text class="col-type" x="200" y="125">VARCHAR(20)</text>
+</g>
+
+<!-- meeting_analysis -->
+<g transform="translate(800,800)">
+<rect class="tbl-box" width="320" height="158" rx="6"/>
+<rect class="tbl-head" width="320" height="28" rx="6"/>
+<text class="tbl-name" x="12" y="19">meeting_analysis</text>
+<text class="pk fk" x="8" y="45">PK/FK</text><text class="col-name" x="70" y="45">meeting_id</text><text class="col-type" x="200" y="45">BIGINT</text>
+<text class="col-name" x="38" y="65">summary</text><text class="col-type" x="200" y="65">TEXT</text>
+<text class="col-name" x="38" y="85">decisions / risks</text><text class="col-type" x="200" y="85">JSON</text>
+<text class="col-name" x="38" y="105">action_items</text><text class="col-type" x="200" y="105">JSON</text>
+</g>
+
+</svg>
+<p class="legend-note">표기: ││ = 1(필수) · ○│ = 0..1(선택, FK NULL 허용) · 세갈래(⋔) = N(다수). meetings↔meeting_analysis만 1:1 식별관계(meeting_id가 PK이자 FK)이고 나머지는 모두 1:N입니다. tasks.milestone_id, tasks.assignee_id는 NULL 허용이라 해당 쪽만 0..1로 표시했습니다.</p>
+</section>
+
+<section>
+<p class="erd-title">핵심 테이블 요약</p>
+<p class="erd-sub">MySQL 기준 핵심 9개 테이블의 목적·PK·FK·카디널리티 정리</p>
+<table class="tbl-summary">
+<thead>
+<tr><th>테이블</th><th>설명</th><th>PK</th><th>FK</th><th>카디널리티</th></tr>
+</thead>
+<tbody>
+<tr><td><code>users</code></td><td>사용자(OAuth 로그인)</td><td class="pk-cell">id</td><td class="fk-cell">-</td><td>1 &rarr; project_members, tasks(assignee, 0..1), evaluation_scores</td></tr>
+<tr><td><code>projects</code></td><td>프로젝트 기본 정보</td><td class="pk-cell">id</td><td class="fk-cell">-</td><td>1 &rarr; project_members, milestones, tasks, meetings, deliverables, evaluation_scores</td></tr>
+<tr><td><code>project_members</code></td><td>프로젝트-사용자 참여(역할)</td><td class="pk-cell">id</td><td class="fk-cell">project_id, user_id</td><td>users(1) : projects(1) 를 잇는 N:M 매핑</td></tr>
+<tr><td><code>milestones</code></td><td>프로젝트 마일스톤</td><td class="pk-cell">id</td><td class="fk-cell">project_id</td><td>projects(1) &rarr; N</td></tr>
+<tr><td><code>tasks</code></td><td>업무 보드 항목</td><td class="pk-cell">id</td><td class="fk-cell">project_id, milestone_id(0..1), assignee_id(0..1)</td><td>projects(1) &rarr; N, milestones(0..1) &rarr; N, users(0..1) &rarr; N</td></tr>
+<tr><td><code>meetings</code></td><td>회의록/녹음 업로드</td><td class="pk-cell">id</td><td class="fk-cell">project_id</td><td>projects(1) &rarr; N</td></tr>
+<tr><td><code>meeting_analysis</code></td><td>회의록 AI 분석 결과</td><td class="pk-cell">meeting_id</td><td class="fk-cell">meeting_id</td><td>meetings(1) : 1 (식별 관계)</td></tr>
+<tr><td><code>deliverables</code></td><td>산출물 초안/결과물</td><td class="pk-cell">id</td><td class="fk-cell">project_id</td><td>projects(1) &rarr; N</td></tr>
+<tr><td><code>evaluation_scores</code></td><td>심사자 최종 평가 점수</td><td class="pk-cell">id</td><td class="fk-cell">project_id, user_id</td><td>projects(1) &rarr; N, users(1) &rarr; N</td></tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<p class="erd-title">테이블별 상세 스키마</p>
+<p class="erd-sub">MySQL 기준 컬럼·타입·NULL 여부 (PK=주황, FK=파랑)</p>
+<div class="tbl-grid">
+
+<div class="tbl-card">
+<h4>users — 사용자</h4>
+<table>
+<tr><td class="col-k k-pk">PK</td><td class="col-nm">id</td><td class="col-tp">BIGINT</td><td class="col-ds">NOT NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">email</td><td class="col-tp">VARCHAR(255)</td><td class="col-ds">NOT NULL, UNIQUE</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">name</td><td class="col-tp">VARCHAR(100)</td><td class="col-ds">NOT NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">provider</td><td class="col-tp">VARCHAR(20)</td><td class="col-ds">NOT NULL, OAuth 제공자(google 등)</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">provider_id</td><td class="col-tp">VARCHAR(255)</td><td class="col-ds">NOT NULL, OAuth sub · UNIQUE(provider, provider_id)</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">created_at</td><td class="col-tp">DATETIME</td><td class="col-ds">NOT NULL, DEFAULT now</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">updated_at</td><td class="col-tp">DATETIME</td><td class="col-ds">NOT NULL, ON UPDATE now</td></tr>
+</table>
+</div>
+
+<div class="tbl-card">
+<h4>projects — 프로젝트</h4>
+<table>
+<tr><td class="col-k k-pk">PK</td><td class="col-nm">id</td><td class="col-tp">BIGINT</td><td class="col-ds">NOT NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">title</td><td class="col-tp">VARCHAR(200)</td><td class="col-ds">NOT NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">type</td><td class="col-tp">VARCHAR(50)</td><td class="col-ds">NULL, 캡스톤디자인/해커톤/공모전 등</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">deadline</td><td class="col-tp">DATE</td><td class="col-ds">NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">description</td><td class="col-tp">TEXT</td><td class="col-ds">NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">created_at</td><td class="col-tp">DATETIME</td><td class="col-ds">NOT NULL, DEFAULT now</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">updated_at</td><td class="col-tp">DATETIME</td><td class="col-ds">NOT NULL, ON UPDATE now</td></tr>
+</table>
+</div>
+
+<div class="tbl-card">
+<h4>project_members — 프로젝트 참여</h4>
+<table>
+<tr><td class="col-k k-pk">PK</td><td class="col-nm">id</td><td class="col-tp">BIGINT</td><td class="col-ds">NOT NULL</td></tr>
+<tr><td class="col-k k-fk">FK</td><td class="col-nm">project_id</td><td class="col-tp">BIGINT</td><td class="col-ds">NOT NULL &rarr; projects.id</td></tr>
+<tr><td class="col-k k-fk">FK</td><td class="col-nm">user_id</td><td class="col-tp">BIGINT</td><td class="col-ds">NOT NULL &rarr; users.id · UNIQUE(project_id, user_id)</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">role</td><td class="col-tp">VARCHAR(20)</td><td class="col-ds">NOT NULL, 팀장/팀원/심사자</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">created_at</td><td class="col-tp">DATETIME</td><td class="col-ds">NOT NULL, DEFAULT now</td></tr>
+</table>
+</div>
+
+<div class="tbl-card">
+<h4>milestones — 마일스톤</h4>
+<table>
+<tr><td class="col-k k-pk">PK</td><td class="col-nm">id</td><td class="col-tp">BIGINT</td><td class="col-ds">NOT NULL</td></tr>
+<tr><td class="col-k k-fk">FK</td><td class="col-nm">project_id</td><td class="col-tp">BIGINT</td><td class="col-ds">NOT NULL &rarr; projects.id</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">title</td><td class="col-tp">VARCHAR(200)</td><td class="col-ds">NOT NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">due_date</td><td class="col-tp">DATE</td><td class="col-ds">NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">created_at</td><td class="col-tp">DATETIME</td><td class="col-ds">NOT NULL, DEFAULT now</td></tr>
+</table>
+</div>
+
+<div class="tbl-card">
+<h4>tasks — 업무</h4>
+<table>
+<tr><td class="col-k k-pk">PK</td><td class="col-nm">id</td><td class="col-tp">BIGINT</td><td class="col-ds">NOT NULL</td></tr>
+<tr><td class="col-k k-fk">FK</td><td class="col-nm">project_id</td><td class="col-tp">BIGINT</td><td class="col-ds">NOT NULL &rarr; projects.id</td></tr>
+<tr><td class="col-k k-fk">FK</td><td class="col-nm">milestone_id</td><td class="col-tp">BIGINT</td><td class="col-ds">NULL &rarr; milestones.id</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">title</td><td class="col-tp">VARCHAR(200)</td><td class="col-ds">NOT NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">category</td><td class="col-tp">VARCHAR(50)</td><td class="col-ds">NOT NULL, 기획/프론트엔드/백엔드/AI-ML 등 18종</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">status</td><td class="col-tp">VARCHAR(20)</td><td class="col-ds">NOT NULL, 할 일/진행 중/보류-블로커/완료</td></tr>
+<tr><td class="col-k k-fk">FK</td><td class="col-nm">assignee_id</td><td class="col-tp">BIGINT</td><td class="col-ds">NULL &rarr; users.id, 미배정 가능</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">due_date</td><td class="col-tp">DATE</td><td class="col-ds">NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">priority</td><td class="col-tp">VARCHAR(20)</td><td class="col-ds">NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">description</td><td class="col-tp">TEXT</td><td class="col-ds">NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">created_at</td><td class="col-tp">DATETIME</td><td class="col-ds">NOT NULL, DEFAULT now</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">updated_at</td><td class="col-tp">DATETIME</td><td class="col-ds">NOT NULL, ON UPDATE now</td></tr>
+</table>
+</div>
+
+<div class="tbl-card">
+<h4>meetings — 회의록/녹음</h4>
+<table>
+<tr><td class="col-k k-pk">PK</td><td class="col-nm">id</td><td class="col-tp">BIGINT</td><td class="col-ds">NOT NULL</td></tr>
+<tr><td class="col-k k-fk">FK</td><td class="col-nm">project_id</td><td class="col-tp">BIGINT</td><td class="col-ds">NOT NULL &rarr; projects.id</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">title</td><td class="col-tp">VARCHAR(200)</td><td class="col-ds">NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">file_type</td><td class="col-tp">VARCHAR(20)</td><td class="col-ds">NOT NULL, document/audio/video</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">file_path</td><td class="col-tp">VARCHAR(500)</td><td class="col-ds">NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">transcript</td><td class="col-tp">LONGTEXT</td><td class="col-ds">NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">analysis_status</td><td class="col-tp">VARCHAR(20)</td><td class="col-ds">NOT NULL, DEFAULT 'pending', 비동기 분석 상태</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">created_at</td><td class="col-tp">DATETIME</td><td class="col-ds">NOT NULL, DEFAULT now</td></tr>
+</table>
+</div>
+
+<div class="tbl-card">
+<h4>meeting_analysis — 회의록 AI 분석</h4>
+<table>
+<tr><td class="col-k k-pk">PK/FK</td><td class="col-nm">meeting_id</td><td class="col-tp">BIGINT</td><td class="col-ds">NOT NULL &rarr; meetings.id (1:1)</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">summary</td><td class="col-tp">TEXT</td><td class="col-ds">NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">decisions</td><td class="col-tp">JSON</td><td class="col-ds">NULL, 결정사항 목록</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">risks</td><td class="col-tp">JSON</td><td class="col-ds">NULL, 위험요소 목록</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">action_items</td><td class="col-tp">JSON</td><td class="col-ds">NULL, To-Do 후보 목록</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">created_at</td><td class="col-tp">DATETIME</td><td class="col-ds">NOT NULL, DEFAULT now</td></tr>
+</table>
+</div>
+
+<div class="tbl-card">
+<h4>deliverables — 산출물</h4>
+<table>
+<tr><td class="col-k k-pk">PK</td><td class="col-nm">id</td><td class="col-tp">BIGINT</td><td class="col-ds">NOT NULL</td></tr>
+<tr><td class="col-k k-fk">FK</td><td class="col-nm">project_id</td><td class="col-tp">BIGINT</td><td class="col-ds">NOT NULL &rarr; projects.id</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">type</td><td class="col-tp">VARCHAR(30)</td><td class="col-ds">NOT NULL, 발표자료/보고서/README/제안서 등</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">title</td><td class="col-tp">VARCHAR(200)</td><td class="col-ds">NOT NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">content</td><td class="col-tp">LONGTEXT</td><td class="col-ds">NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">status</td><td class="col-tp">VARCHAR(20)</td><td class="col-ds">NOT NULL, DEFAULT 'draft', draft/review/final</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">file_path</td><td class="col-tp">VARCHAR(500)</td><td class="col-ds">NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">created_at</td><td class="col-tp">DATETIME</td><td class="col-ds">NOT NULL, DEFAULT now</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">updated_at</td><td class="col-tp">DATETIME</td><td class="col-ds">NOT NULL, ON UPDATE now</td></tr>
+</table>
+</div>
+
+<div class="tbl-card">
+<h4>evaluation_scores — 평가 점수</h4>
+<table>
+<tr><td class="col-k k-pk">PK</td><td class="col-nm">id</td><td class="col-tp">BIGINT</td><td class="col-ds">NOT NULL</td></tr>
+<tr><td class="col-k k-fk">FK</td><td class="col-nm">project_id</td><td class="col-tp">BIGINT</td><td class="col-ds">NOT NULL &rarr; projects.id</td></tr>
+<tr><td class="col-k k-fk">FK</td><td class="col-nm">user_id</td><td class="col-tp">BIGINT</td><td class="col-ds">NOT NULL &rarr; users.id · UNIQUE(project_id, user_id)</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">score</td><td class="col-tp">DECIMAL(5,2)</td><td class="col-ds">NOT NULL</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">is_public</td><td class="col-tp">BOOLEAN</td><td class="col-ds">NOT NULL, DEFAULT FALSE</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">created_at</td><td class="col-tp">DATETIME</td><td class="col-ds">NOT NULL, DEFAULT now</td></tr>
+<tr><td class="col-k"></td><td class="col-nm">updated_at</td><td class="col-tp">DATETIME</td><td class="col-ds">NOT NULL, ON UPDATE now</td></tr>
+</table>
+</div>
+
+</div>
+</section>
+</div>
+</body>
+</html>
