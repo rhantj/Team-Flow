@@ -1,0 +1,22 @@
+node_modules/
+dist/
+
+.DS_Store
+
+.tools/
+.m2/
+
+backend-spring/target/
+
+ai-fastapi/.venv/
+ai-fastapi/**/__pycache__/
+ai-fastapi/**/*.pyc
+
+# 산출물/발표자료/임시 파일 (실행에 불필요)
+figma_export/
+prototype/
+output/
+*.pdf
+*.pptx
+*.png
+*.zip

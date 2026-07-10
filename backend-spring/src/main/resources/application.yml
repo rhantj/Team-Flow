@@ -1,0 +1,17 @@
+server:
+  port: ${PORT:8080}
+  address: 0.0.0.0
+
+spring:
+  application:
+    name: workflow-ai-backend
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 120MB
+
+workflow:
+  ai:
+    base-url: ${WORKFLOW_AI_FASTAPI_URL:http://localhost:8000}
+  cors:
+    allowed-origins: ${WORKFLOW_CORS_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
