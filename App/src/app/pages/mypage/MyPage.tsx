@@ -7,11 +7,16 @@ import {
   Calendar, Layers, ArrowRight, AlertCircle, Users, RefreshCw,
   Link2, Target, Award
 } from "lucide-react";
+import { StatusBadge } from "../../components/common/StatusBadge";
+import { DelivBadge } from "../../components/common/DelivBadge";
+import { SectionTitle } from "../../components/common/SectionTitle";
+import { ActIcon } from "../../components/common/ActIcon";
 import {
-  StatusBadge, DelivBadge, SectionTitle, ActIcon,
-  MEMBER_USER, MY_TASKS, MY_DELIVERABLES, MY_ACTIVITIES, MY_FEEDBACKS,
-  PUBLIC_SCORE, REVIEWER_USER, REVIEWER_TEAMS, CONTRIB_REPORTS, REVIEWER_ACTIVITIES,
-} from "./demoData";
+  MEMBER_USER, MY_TASKS, MY_DELIVERABLES, MY_ACTIVITIES, MY_FEEDBACKS, PUBLIC_SCORE,
+} from "../../data/mypage";
+import {
+  REVIEWER_USER, REVIEWER_TEAMS, CONTRIB_REPORTS, REVIEWER_ACTIVITIES,
+} from "../../data/reviewer";
 
 // ─── local types ──────────────────────────────────────────────────────────────
 export type MyPageRole = "member" | "reviewer";
