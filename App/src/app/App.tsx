@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useRef, useEffect, type ReactNode } from "react";
+import { useState, useRef, useEffect, type ReactNode } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   AreaChart, Area, Legend
@@ -15,17 +15,201 @@ import {
   AlertCircle, MessageSquare, RefreshCw,
   Monitor, Server, Database, GitBranch, Palette, Target, Cloud,
   Layout, BookOpen, FlaskConical, Film, ListChecks, Radio,
-  Download, Pencil, Globe, Code2, ClipboardList, Star
+  Download, Pencil, Globe, Code2, ClipboardList, Star, Trash2
 } from "lucide-react";
-import {
-  Avatar, PriorityBadge, LabelBadge, StatusIcon,
-  MEMBERS, TASKS, MEETINGS, GITHUB, DELIVERABLES,
-  WORKLOAD_DATA, PROGRESS_HISTORY, CHAT_INIT, QUICK_QUESTIONS,
-  type Tab, type TaskStatus, type Priority, type DetailPage,
-  type Member, type Task, type Meeting, type GitRecord, type Deliverable,
-} from "./demoData";
+import { MyPage } from "./MyPage";
+import { analyzeMeeting } from "./meetingAiApi";
+import type { MeetingAiResult } from "./meetingAiTypes";
 
-const MyPage = lazy(() => import("./MyPage").then((mod) => ({ default: mod.MyPage })));
+// ─── types ───────────────────────────────────────────────────────────────────
+type Tab = "dashboard" | "board" | "meetings" | "deliverables" | "github" | "contributors" | "mypage";
+type TaskStatus = "todo" | "inprogress" | "done" | "blocked";
+type Priority = "high" | "medium" | "low";
+type DetailPage = "all-tasks" | "progress" | "blockers" | "inprogress" | "dash-progress" | "urgent" | "workload" | "activity" | null;
+
+const getDesignParam = (key: string) => {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get(key);
+};
+
+const getDesignStep = (key: string, fallback = 0) => {
+  const parsed = Number(getDesignParam(key));
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const isDesignCapture = () => getDesignParam("capture") === "1";
+
+interface Member { id: string; name: string; initials: string; color: string; role: string; }
+interface Task {
+  id: string; title: string; status: TaskStatus; priority: Priority;
+  assignee: string; dueDate: string; labels: string[];
+}
+interface Meeting {
+  id: string;
+  title: string;
+  date: string;
+  duration: string;
+  status: "processed" | "processing" | "pending";
+  summary?: string;
+  decisions?: string[];
+  todos?: string[];
+  risks?: string[];
+  analysisSource?: "fastapi" | "spring-fallback";
+}
+interface SavedMeetingRecord {
+  meetingId: string;
+  title: string;
+  meetingDate: string;
+  meetingKind: string;
+  participants: string[];
+  originalFileName: string;
+  fileType: UploadType;
+  summary: string;
+  decisions: string[];
+  risks: string[];
+  actionItems: GenTodo[];
+  createdAt: string;
+  source: "MEETING_AI";
+}
+interface GitRecord { type: "commit" | "pr" | "merge"; message: string; author: string; time: string; }
+interface Deliverable { id: string; type: string; title: string; status: "ready" | "draft" | "pending"; updatedAt: string; }
+
+// ─── mock data ────────────────────────────────────────────────────────────────
+const MEMBERS: Member[] = [
+  { id: "1", name: "김민준", initials: "김", color: "#3B5BDB", role: "팀장" },
+  { id: "2", name: "이서연", initials: "이", color: "#7048E8", role: "팀원" },
+  { id: "3", name: "박지수", initials: "박", color: "#10B981", role: "팀원" },
+  { id: "4", name: "최동혁", initials: "최", color: "#F59E0B", role: "팀원" },
+];
+
+const TASKS: Task[] = [];
+
+const MEETINGS: Meeting[] = [];
+
+const GITHUB: GitRecord[] = [
+  { type: "pr", message: "feat: 토스페이먼츠 SDK 연동 초안 (#18)", author: "최동혁", time: "1시간 전" },
+  { type: "commit", message: "fix: 주차 공간 상태 실시간 업데이트 버그 수정", author: "김민준", time: "3시간 전" },
+  { type: "commit", message: "feat: 관리자 통계 차트 컴포넌트 추가", author: "이서연", time: "5시간 전" },
+  { type: "merge", message: "Merge PR #17: 모바일 예약 화면 완성", author: "김민준", time: "어제" },
+  { type: "commit", message: "feat: AI 예측 모델 데이터 전처리 파이프라인", author: "김민준", time: "어제" },
+  { type: "pr", message: "feat: 사용자 알림 서비스 기본 구조 (#19)", author: "최동혁", time: "2일 전" },
+];
+
+const DELIVERABLES: Deliverable[] = [
+  { id: "d1", type: "발표자료", title: "최종 발표 PPT 초안", status: "draft", updatedAt: "12.10" },
+  { id: "d2", type: "보고서", title: "중간 진행 보고서", status: "ready", updatedAt: "12.05" },
+  { id: "d3", type: "README", title: "GitHub README 초안", status: "draft", updatedAt: "12.08" },
+  { id: "d4", type: "제안서", title: "공모전 제안서", status: "ready", updatedAt: "11.28" },
+  { id: "d5", type: "회고", title: "주간 회고 문서 (6주차)", status: "pending", updatedAt: "—" },
+];
+
+
+const TASK_STORAGE_KEY = "workflow-ai.tasks";
+const MEETING_STORAGE_KEY = "workflow-ai.meetings";
+const TASKS_UPDATED_EVENT = "workflow-ai:tasks-updated";
+const MEETINGS_UPDATED_EVENT = "workflow-ai:meetings-updated";
+
+const readStoredArray = <T,>(key: string, fallback: T[] = []): T[] => {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const writeStoredArray = <T,>(key: string, eventName: string, value: T[]) => {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(key, JSON.stringify(value));
+  window.dispatchEvent(new CustomEvent(eventName, { detail: value }));
+};
+
+const getStoredTasks = () => readStoredArray<Task>(TASK_STORAGE_KEY, TASKS);
+const getStoredMeetings = () => readStoredArray<Meeting>(MEETING_STORAGE_KEY, MEETINGS);
+const saveStoredTasks = (tasks: Task[]) => writeStoredArray(TASK_STORAGE_KEY, TASKS_UPDATED_EVENT, tasks);
+const saveStoredMeetings = (meetings: Meeting[]) => writeStoredArray(MEETING_STORAGE_KEY, MEETINGS_UPDATED_EVENT, meetings);
+
+const SAVED_MEETING_STORAGE_KEY = "workflow-ai.saved-meetings";
+const SAVED_MEETINGS_UPDATED_EVENT = "workflow-ai:saved-meetings-updated";
+const getSavedMeetings = () => readStoredArray<SavedMeetingRecord>(SAVED_MEETING_STORAGE_KEY, []);
+const saveSavedMeetings = (records: SavedMeetingRecord[]) => writeStoredArray(SAVED_MEETING_STORAGE_KEY, SAVED_MEETINGS_UPDATED_EVENT, records);
+
+const escapeHtml = (value: string): string =>
+  value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] ?? char);
+
+function useStoredTasks() {
+  const [tasks, setTasks] = useState<Task[]>(getStoredTasks);
+
+  useEffect(() => {
+    const sync = () => setTasks(getStoredTasks());
+    window.addEventListener(TASKS_UPDATED_EVENT, sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener(TASKS_UPDATED_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
+
+  return tasks;
+}
+
+function useStoredMeetings() {
+  const [meetings, setMeetings] = useState<Meeting[]>(getStoredMeetings);
+
+  useEffect(() => {
+    const sync = () => setMeetings(getStoredMeetings());
+    window.addEventListener(MEETINGS_UPDATED_EVENT, sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener(MEETINGS_UPDATED_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
+
+  return meetings;
+}
+
+const CHAT_INIT = [
+  { role: "assistant", content: "안녕하세요 김민준님! TeamFlow AI 어시스턴트입니다.\n\n현재 **스마트 주차 관리 시스템** 프로젝트에 대해 무엇이든 물어보세요. 회의록, 업무, 일정, GitHub 기록을 바탕으로 답변드릴게요." }
+];
+
+const QUICK_QUESTIONS = [
+  "오늘 해야 할 일 알려줘", "마감 임박한 업무 뭐야?",
+  "블로커 해결 방법 추천해줘", "발표자료 초안 만들어줘"
+];
+
+const CURRENT_USER_ROLE = "leader";
+const ROLE_LABEL = { leader: "팀장", member: "팀원", reviewer: "심사자" } as const;
+
+// ─── helper components ────────────────────────────────────────────────────────
+const Avatar = ({ member, size = "sm" }: { member: Member; size?: "sm" | "md" | "lg" }) => {
+  const sizes = { sm: "w-7 h-7 text-xs", md: "w-9 h-9 text-sm", lg: "w-11 h-11 text-base" };
+  return (
+    <div className={`${sizes[size]} rounded-full flex items-center justify-center font-semibold text-white shrink-0`}
+      style={{ backgroundColor: member.color }}>
+      {member.initials}
+    </div>
+  );
+};
+
+const PriorityBadge = ({ priority }: { priority: Priority }) => {
+  const map = { high: { label: "높음", cls: "bg-red-50 text-red-600" }, medium: { label: "중간", cls: "bg-amber-50 text-amber-600" }, low: { label: "낮음", cls: "bg-slate-100 text-slate-500" } };
+  return <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${map[priority].cls}`}>{map[priority].label}</span>;
+};
+
+const LabelBadge = ({ label }: { label: string }) => (
+  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-600">{label}</span>
+);
+
+const StatusIcon = ({ status }: { status: TaskStatus }) => {
+  if (status === "done") return <CheckCircle2 className="w-4 h-4 text-emerald-500" />;
+  if (status === "inprogress") return <Clock className="w-4 h-4 text-blue-500" />;
+  if (status === "blocked") return <AlertTriangle className="w-4 h-4 text-red-500" />;
+  return <Circle className="w-4 h-4 text-slate-300" />;
+};
 
 // ─── sidebar ──────────────────────────────────────────────────────────────────
 const NAV_ITEMS = [
@@ -41,6 +225,10 @@ const NAV_ITEMS = [
 function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t: Tab) => void; onAI: () => void }) {
   const groups: Record<string, string> = { planning: "계획 관리", ai: "AI 기능", dev: "개발", eval: "평가 (심사자 전용)", me: "내 계정" };
   const rendered: string[] = [];
+  const visibleNavItems = NAV_ITEMS.filter(item => {
+    if (CURRENT_USER_ROLE === "leader") return item.id !== "contributors";
+    return true;
+  });
 
   return (
     <div className="w-[220px] shrink-0 flex flex-col h-full" style={{ background: "var(--sidebar)", fontFamily: "'Inter', 'Noto Sans KR', sans-serif" }}>
@@ -72,7 +260,7 @@ function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t: Tab) =
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-3 space-y-0.5">
-        {NAV_ITEMS.map((item) => {
+        {visibleNavItems.map((item) => {
           const showGroup = !rendered.includes(item.group);
           if (showGroup) rendered.push(item.group);
           const isActive = active === item.id;
@@ -138,130 +326,8 @@ function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t: Tab) =
   );
 }
 
-// ─── detail page data ─────────────────────────────────────────────────────────
-const TASK_SOURCES: Record<string, string> = {
-  "TF-01": "직접 생성", "TF-02": "직접 생성", "TF-03": "직접 생성",
-  "TF-04": "회의록 AI",  "TF-05": "회의록 AI",  "TF-06": "회의록 AI",
-  "TF-07": "회의록 AI",  "TF-08": "회의록 AI",
-  "TF-09": "직접 생성", "TF-10": "직접 생성", "TF-11": "직접 생성", "TF-12": "직접 생성",
-  "TF-13": "GitHub",    "TF-14": "GitHub",
-};
-
-const BLOCKER_DETAILS = [
-  {
-    id: "BL-01", taskId: "TF-13",
-    title: "DB 인덱싱 최적화 — MySQL 복합 인덱스 의사결정 미결",
-    type: "결정 필요", severity: "high" as const,
-    reason: "EXPLAIN 분석 결과 복합 인덱스 설계 방향에 팀 내 합의가 없어 주요 조회 쿼리 전체의 풀스캔이 지속되고 있음.",
-    assignee: "1", resolver: null as string | null,
-    affectedTaskIds: ["TF-05", "TF-14"], daysSince: 4, createdAt: "12.06",
-    aiSuggestion: "EXPLAIN 결과를 공유 채널에 올리고 오늘 내 30분 결정 미팅을 잡는 것을 추천합니다. 단기 조치로 단일 컬럼 인덱스를 먼저 적용하세요.",
-    link: "5차 정기 회의",
-  },
-  {
-    id: "BL-02", taskId: "TF-14",
-    title: "결제 오류 예외 처리 — 토스페이먼츠 SDK fetch 인터셉터 충돌",
-    type: "기술 문제", severity: "high" as const,
-    reason: "토스페이먼츠 SDK v2.3 내부 fetch 인터셉터가 기존 전역 fetch와 충돌하여 에러 코드 응답 파싱이 불가능. PR #18 머지가 블로킹 중.",
-    assignee: "4", resolver: "1",
-    affectedTaskIds: ["TF-05"], daysSince: 3, createdAt: "12.07",
-    aiSuggestion: "axios 인터셉터로 교체하거나 SDK 응답 래퍼 함수를 도입하세요. 토스페이먼츠 공식 이슈 #234에 동일 사례가 있습니다.",
-    link: "PR #18",
-  },
-];
-
-const PROGRESS_BY_TYPE = [
-  { type: "백엔드",  total: 4, done: 2, color: "#3B5BDB" },
-  { type: "프론트",  total: 4, done: 2, color: "#7048E8" },
-  { type: "AI/ML",   total: 2, done: 1, color: "#10B981" },
-  { type: "문서",    total: 2, done: 0, color: "#F59E0B" },
-  { type: "QA",      total: 1, done: 0, color: "#EF4444" },
-  { type: "산출물",  total: 1, done: 0, color: "#06B6D4" },
-];
-
-const DELIVERABLE_READY = [
-  { name: "발표자료",      pct: 20 },
-  { name: "최종보고서",    pct: 40 },
-  { name: "README",        pct: 60 },
-  { name: "공모전 제안서", pct: 100 },
-  { name: "데모 영상",     pct: 0 },
-];
-
-const IN_PROGRESS_META: Record<string, { startDate: string; lastUpdate: string; stale: boolean; riskLevel: "high" | "medium" | "low"; nextAction: string; note: string }> = {
-  "TF-05": { startDate: "11.28", lastUpdate: "오늘",   stale: false, riskLevel: "high",   nextAction: "SDK 충돌 이슈 해결 후 PR #18 재요청",        note: "결제 연동 블로커(BL-02) 해결 대기 중. 우선순위 1위" },
-  "TF-06": { startDate: "12.02", lastUpdate: "어제",   stale: false, riskLevel: "medium", nextAction: "모델 학습 완료 후 정확도 검증 보고서 작성",    note: "현재 87% 정확도. 목표 90% 달성을 위한 추가 학습 중" },
-  "TF-07": { startDate: "12.03", lastUpdate: "3일 전", stale: true,  riskLevel: "medium", nextAction: "차트 컴포넌트 API 연동 완료 및 PR 제출",       note: "3일 간 업데이트 없음. 진행 상황 확인 필요" },
-  "TF-08": { startDate: "12.05", lastUpdate: "5일 전", stale: true,  riskLevel: "low",    nextAction: "FCM 토큰 발급 로직 완성 후 단위 테스트 작성",  note: "5일 간 업데이트 없음. 팀장 확인 요청 예정" },
-};
-
-const PLANNED_VS_ACTUAL = [
-  { week: "11/4",  planned: 20, actual: 18 },
-  { week: "11/11", planned: 35, actual: 32 },
-  { week: "11/18", planned: 50, actual: 45 },
-  { week: "11/25", planned: 65, actual: 58 },
-  { week: "12/2",  planned: 80, actual: 65 },
-  { week: "12/10", planned: 90, actual: 71 },
-];
-
-const MILESTONES = [
-  { id: "M1", name: "요구사항 분석 완료",  date: "11.10", status: "done"       as TaskStatus, tasks: 3, progress: 100 },
-  { id: "M2", name: "시스템 설계 완료",    date: "11.20", status: "done"       as TaskStatus, tasks: 5, progress: 100 },
-  { id: "M3", name: "핵심 기능 개발",      date: "12.10", status: "inprogress" as TaskStatus, tasks: 6, progress: 58  },
-  { id: "M4", name: "통합 테스트",         date: "12.20", status: "todo"       as TaskStatus, tasks: 4, progress: 10  },
-  { id: "M5", name: "최종 발표 준비",      date: "12.25", status: "todo"       as TaskStatus, tasks: 3, progress: 0   },
-  { id: "M6", name: "최종 제출",           date: "12.28", status: "todo"       as TaskStatus, tasks: 2, progress: 0   },
-];
-
-const STAGES = [
-  { name: "기획",     pct: 100, color: "#10B981" },
-  { name: "디자인",   pct: 85,  color: "#10B981" },
-  { name: "개발",     pct: 55,  color: "#3B5BDB" },
-  { name: "테스트",   pct: 15,  color: "#F59E0B" },
-  { name: "발표자료", pct: 20,  color: "#F59E0B" },
-  { name: "최종제출", pct: 0,   color: "#C1C9D9" },
-];
-
-const URGENT_META: Record<string, { daysLeft: number; urgency: "overdue" | "today" | "3day" | "week" | "normal" }> = {
-  "TF-05": { daysLeft: 8,  urgency: "week" },
-  "TF-06": { daysLeft: 10, urgency: "week" },
-  "TF-07": { daysLeft: 9,  urgency: "week" },
-  "TF-08": { daysLeft: 11, urgency: "week" },
-  "TF-09": { daysLeft: 18, urgency: "normal" },
-  "TF-10": { daysLeft: 13, urgency: "week" },
-  "TF-11": { daysLeft: 15, urgency: "normal" },
-  "TF-12": { daysLeft: 16, urgency: "normal" },
-  "TF-13": { daysLeft: 5,  urgency: "3day" },
-  "TF-14": { daysLeft: 6,  urgency: "3day" },
-};
-
-type ActivityType = "commit" | "pr" | "merge" | "task_create" | "task_update" | "meeting" | "ai" | "deliverable" | "comment" | "file";
-interface Activity { id: number; type: ActivityType; actor: string; time: string; message: string; target: string; }
-
-const ACTIVITY_LOG: Activity[] = [
-  { id: 1,  type: "pr",          actor: "최동혁", time: "방금 전",   message: "PR #18 생성: 토스페이먼츠 SDK 연동 초안",          target: "TF-05" },
-  { id: 2,  type: "task_update", actor: "김민준", time: "1시간 전",  message: "AI 빈자리 예측 모델 학습을 '진행 중'으로 변경",      target: "TF-06" },
-  { id: 3,  type: "meeting",     actor: "이서연", time: "3시간 전",  message: "6차 정기 회의 회의록 업로드",                       target: "M-06" },
-  { id: 4,  type: "ai",          actor: "AI",     time: "3시간 전",  message: "6차 정기 회의 AI 요약 및 To-Do 자동 생성 완료",      target: "M-06" },
-  { id: 5,  type: "commit",      actor: "김민준", time: "5시간 전",  message: "fix: 주차 공간 상태 실시간 업데이트 버그 수정",       target: "TF-01" },
-  { id: 6,  type: "commit",      actor: "이서연", time: "5시간 전",  message: "feat: 관리자 통계 차트 컴포넌트 추가",               target: "TF-07" },
-  { id: 7,  type: "pr",          actor: "최동혁", time: "6시간 전",  message: "PR #19 생성: 사용자 알림 서비스 기본 구조",          target: "TF-08" },
-  { id: 8,  type: "deliverable", actor: "김민준", time: "어제",      message: "중간 진행 보고서 초안 AI 생성 완료",                 target: "보고서" },
-  { id: 9,  type: "merge",       actor: "김민준", time: "어제",      message: "PR #17 머지: 모바일 예약 화면 UI 완성",              target: "TF-04" },
-  { id: 10, type: "task_create", actor: "AI",     time: "어제",      message: "회의록 AI가 업무 3개 자동 생성 — 팀장 승인 대기",    target: "회의록 AI" },
-  { id: 11, type: "comment",     actor: "박지수", time: "어제",      message: "TF-11: README 작성 방향에 대한 코멘트 남김",          target: "TF-11" },
-  { id: 12, type: "commit",      actor: "김민준", time: "2일 전",    message: "feat: AI 예측 모델 데이터 전처리 파이프라인 구현",    target: "TF-06" },
-  { id: 13, type: "task_update", actor: "박지수", time: "2일 전",    message: "실시간 주차 현황 대시보드 UI 완료 처리",             target: "TF-03" },
-  { id: 14, type: "file",        actor: "이서연", time: "2일 전",    message: "발표자료 초안 PPT 파일 업로드",                      target: "발표자료" },
-  { id: 15, type: "task_update", actor: "박지수", time: "2일 전",    message: "사용자 인증 API 구현 완료 처리",                     target: "TF-02" },
-  { id: 16, type: "meeting",     actor: "김민준", time: "4일 전",    message: "5차 정기 회의 회의록 업로드",                        target: "M-05" },
-  { id: 17, type: "ai",          actor: "AI",     time: "4일 전",    message: "5차 정기 회의 AI 분석 완료 — 리스크 2건 감지",       target: "M-05" },
-  { id: 18, type: "commit",      actor: "최동혁", time: "4일 전",    message: "feat: 결제 연동 기본 흐름 구현",                     target: "TF-05" },
-];
-
-// ─── dashboard ────────────────────────────────────────────────────────────────
-const totalTasks = TASKS.length;
-const doneTasks = TASKS.filter(t => t.status === "done").length;
-const progressPct = Math.round((doneTasks / totalTasks) * 100);
+type ActivityType = "task_create" | "meeting" | "ai";
+interface Activity { id: string; type: ActivityType; actor: string; time: string; message: string; target: string; }
 
 function StatCard({ icon: Icon, label, value, sub, color, onClick }: { icon: any; label: string; value: string | number; sub: string; color: string; onClick?: () => void }) {
   return (
@@ -288,8 +354,47 @@ function StatCard({ icon: Icon, label, value, sub, color, onClick }: { icon: any
 }
 
 function DashboardView({ onCardClick }: { onCardClick?: (p: DetailPage) => void }) {
-  const atRisk = TASKS.filter(t => t.status === "blocked").length;
-  const inProgress = TASKS.filter(t => t.status === "inprogress").length;
+  const tasks = useStoredTasks();
+  const meetings = useStoredMeetings();
+  const totalTasks = tasks.length;
+  const doneTasks = tasks.filter(t => t.status === "done").length;
+  const atRiskTasks = tasks.filter(t => t.status === "blocked");
+  const inProgressTasks = tasks.filter(t => t.status === "inprogress");
+  const atRisk = atRiskTasks.length;
+  const inProgress = inProgressTasks.length;
+  const progressPct = totalTasks ? Math.round((doneTasks / totalTasks) * 100) : 0;
+  const progressData = [{ week: "현재", progress: progressPct }];
+  const urgentTasks = tasks.filter(t => t.status !== "done").slice(0, 5);
+  const workloadData = MEMBERS.map(member => {
+    const memberTasks = tasks.filter(t => t.assignee === member.id);
+    return {
+      name: member.name,
+      total: memberTasks.length,
+      done: memberTasks.filter(t => t.status === "done").length,
+      color: member.color,
+    };
+  });
+  const recentActivity = [
+    ...meetings.slice(0, 3).map(meeting => ({
+      icon: FileAudio,
+      message: `${meeting.title} 분석 완료`,
+      author: "회의록 AI",
+      time: meeting.date,
+      color: "#7048E8",
+      bg: "rgba(112,72,232,0.1)",
+    })),
+    ...tasks.slice(0, 3).map(task => {
+      const member = MEMBERS.find(m => m.id === task.assignee) ?? MEMBERS[0];
+      return {
+        icon: CheckSquare,
+        message: `${task.title} 업무 등록`,
+        author: member.name,
+        time: `마감 ${task.dueDate}`,
+        color: "#3B5BDB",
+        bg: "rgba(59,91,219,0.1)",
+      };
+    }),
+  ].slice(0, 5);
 
   return (
     <div className="p-6 space-y-6 overflow-y-auto h-full" style={{ fontFamily: "'Inter', 'Noto Sans KR', sans-serif" }}>
@@ -298,7 +403,11 @@ function DashboardView({ onCardClick }: { onCardClick?: (p: DetailPage) => void 
         <Sparkles className="w-5 h-5 text-white shrink-0 mt-0.5" />
         <div className="flex-1">
           <div className="text-sm font-semibold text-white">AI 추천 액션</div>
-          <div className="text-xs text-purple-100 mt-0.5">최동혁님의 결제 연동 작업이 3일 지연 위험입니다. 오늘 중 코드 리뷰를 진행하고 블로커를 해소하는 것을 추천합니다.</div>
+          <div className="text-xs text-purple-100 mt-0.5">
+            {totalTasks
+              ? `회의록 AI로 등록된 ${totalTasks}개 업무를 기준으로 진행률과 위험 업무를 추적 중입니다.`
+              : "회의록 AI에서 To-Do를 등록하면 추천 액션, 진행률, 마감 임박 업무가 이곳에 표시됩니다."}
+          </div>
         </div>
         <button className="text-xs font-medium text-white bg-white/20 px-3 py-1.5 rounded-lg hover:bg-white/30 transition-colors shrink-0">
           자세히
@@ -332,7 +441,7 @@ function DashboardView({ onCardClick }: { onCardClick?: (p: DetailPage) => void 
 
           <div className="mt-5 h-32">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={PROGRESS_HISTORY} margin={{ top: 0, right: 0, left: -30, bottom: 0 }}>
+              <AreaChart data={progressData} margin={{ top: 0, right: 0, left: -30, bottom: 0 }}>
                 <defs>
                   <linearGradient id="progGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop key="s1" offset="5%" stopColor="#3B5BDB" stopOpacity={0.18} />
@@ -356,8 +465,13 @@ function DashboardView({ onCardClick }: { onCardClick?: (p: DetailPage) => void 
             <Calendar className="w-4 h-4 text-muted-foreground" />
           </div>
           <div className="space-y-3">
-            {TASKS.filter(t => t.status !== "done").slice(0, 5).map(task => {
-              const m = MEMBERS.find(m => m.id === task.assignee)!;
+            {urgentTasks.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border bg-muted/30 p-5 text-center">
+                <div className="text-xs font-semibold text-foreground">표시할 업무가 없습니다</div>
+                <div className="text-[10px] text-muted-foreground mt-1">회의록 AI에서 업무를 등록하면 마감 임박 업무가 표시됩니다.</div>
+              </div>
+            ) : urgentTasks.map(task => {
+              const m = MEMBERS.find(m => m.id === task.assignee) ?? MEMBERS[0];
               return (
                 <div key={task.id} className="flex items-center gap-2.5">
                   <StatusIcon status={task.status} />
@@ -382,14 +496,14 @@ function DashboardView({ onCardClick }: { onCardClick?: (p: DetailPage) => void 
             <BarChart3 className="w-4 h-4 text-muted-foreground" />
           </div>
           <div className="space-y-3">
-            {WORKLOAD_DATA.map(m => (
+            {workloadData.map(m => (
               <div key={m.name}>
                 <div className="flex items-center justify-between text-xs mb-1">
                   <span className="font-medium text-foreground">{m.name}</span>
                   <span className="text-muted-foreground">{m.done}/{m.total}</span>
                 </div>
                 <div className="w-full bg-muted rounded-full h-1.5">
-                  <div className="h-1.5 rounded-full transition-all" style={{ width: `${(m.done / m.total) * 100}%`, background: m.color }} />
+                  <div className="h-1.5 rounded-full transition-all" style={{ width: `${m.total ? (m.done / m.total) * 100 : 0}%`, background: m.color }} />
                 </div>
               </div>
             ))}
@@ -397,7 +511,7 @@ function DashboardView({ onCardClick }: { onCardClick?: (p: DetailPage) => void 
 
           <div className="mt-5 h-28">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={WORKLOAD_DATA} margin={{ top: 0, right: 0, left: -30, bottom: 0 }}>
+              <BarChart data={workloadData} margin={{ top: 0, right: 0, left: -30, bottom: 0 }}>
                 <CartesianGrid key="bcg" strokeDasharray="3 3" stroke="rgba(0,0,0,0.05)" />
                 <XAxis key="bx" dataKey="name" tick={{ fontSize: 10, fill: "#8892A4" }} />
                 <YAxis key="by" tick={{ fontSize: 10, fill: "#8892A4" }} />
@@ -416,19 +530,24 @@ function DashboardView({ onCardClick }: { onCardClick?: (p: DetailPage) => void 
             <Zap className="w-4 h-4 text-muted-foreground" />
           </div>
           <div className="space-y-3">
-            {GITHUB.slice(0, 5).map((g, i) => (
+            {recentActivity.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border bg-muted/30 p-5 text-center">
+                <div className="text-xs font-semibold text-foreground">최근 활동이 없습니다</div>
+                <div className="text-[10px] text-muted-foreground mt-1">회의록 분석 또는 업무 등록 후 활동이 표시됩니다.</div>
+              </div>
+            ) : recentActivity.map((g, i) => {
+              const Icon = g.icon;
+              return (
               <div key={i} className="flex items-start gap-2.5">
-                <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5" style={{ background: g.type === "pr" ? "#EEF1FB" : g.type === "merge" ? "#ECFDF5" : "#F4F6FA" }}>
-                  {g.type === "pr" && <GitPullRequest className="w-3 h-3" style={{ color: "#3B5BDB" }} />}
-                  {g.type === "commit" && <GitCommit className="w-3 h-3 text-slate-500" />}
-                  {g.type === "merge" && <GitMerge className="w-3 h-3 text-emerald-500" />}
+                <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5" style={{ background: g.bg }}>
+                  <Icon className="w-3 h-3" style={{ color: g.color }} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-xs text-foreground font-medium truncate">{g.message}</div>
                   <div className="text-[10px] text-muted-foreground mt-0.5">{g.author} · {g.time}</div>
                 </div>
               </div>
-            ))}
+            ); })}
           </div>
         </div>
       </div>
@@ -461,30 +580,6 @@ const CATEGORIES: CategoryDef[] = [
   { id:"other",        label:"기타",       desc:"직접 카테고리명 입력",               icon:MoreHorizontal, color:"#9CA3AF", bg:"rgba(156,163,175,0.12)" },
 ];
 
-const TASK_CAT: Record<string, CatId> = {
-  "TF-01":"backend","TF-02":"backend","TF-03":"frontend","TF-04":"frontend",
-  "TF-05":"backend","TF-06":"ai-ml","TF-07":"frontend","TF-08":"backend",
-  "TF-09":"presentation","TF-10":"qa","TF-11":"docs","TF-12":"security",
-  "TF-13":"db","TF-14":"backend",
-};
-
-const CAT_EXTRA: Record<string, Record<string, string>> = {
-  "TF-01":{ method:"POST", endpoint:"/api/sensors/register", auth:"필요", db:"sensors, spaces", test:"완료" },
-  "TF-02":{ method:"POST", endpoint:"/api/auth/login",       auth:"불필요", db:"users, tokens",  test:"완료" },
-  "TF-03":{ screen:"실시간 주차 현황 대시보드", components:"StatusCard, MapView, RefreshTimer", api:"/api/spaces/status", figma:"설계 완료", responsive:"적용", pr:"PR #12" },
-  "TF-04":{ screen:"모바일 예약 화면",          components:"ReservationForm, TimePicker",      api:"/api/reservations",  figma:"설계 완료", responsive:"적용", pr:"PR #17 완료" },
-  "TF-05":{ method:"POST", endpoint:"/api/payments",         auth:"필요", db:"payments",        test:"블로커 — SDK 충돌 미해결" },
-  "TF-06":{ purpose:"주차 빈자리 예측", data:"CCTV 센서 90일 데이터", model:"Random Forest + LSTM", metric:"Accuracy / MAE", result:"87% — 목표 90%", inferenceAPI:"미연결" },
-  "TF-07":{ screen:"관리자 통계 대시보드",       components:"StatChart, UserTable",             api:"/api/admin/stats",   figma:"설계 중",   responsive:"미적용", pr:"진행 중" },
-  "TF-08":{ method:"POST", endpoint:"/api/notifications/send", auth:"필요", db:"notification_queue", test:"미완료" },
-  "TF-09":{ topic:"스마트 주차 관리 시스템", pages:"20슬라이드 (예정)", demo:"포함", draft:"초안 20% 완성", script:"미작성" },
-  "TF-10":{ target:"예약 API 전체", cases:"동시 1000건, 응답시간, 오류율", expected:"응답 2초 이내", actual:"미측정", bug:"미발견" },
-  "TF-11":{ docType:"README + API 명세", scope:"프로젝트 전체", includes:"설치 가이드, API 명세, 아키텍처", ref:"팀 위키" },
-  "TF-12":{ target:"인증/인가 시스템", risk:"높음", findings:"미발견", auth:"관련", remediation:"점검 후 결정" },
-  "TF-13":{ table:"spaces, reservations, users", erd:"ERD v2.0 작성됨", issue:"복합 인덱스 미적용 — 풀스캔 2.3초", index:"미적용", goal:"조회 200ms 이내" },
-  "TF-14":{ method:"POST", endpoint:"/api/payments/errors", auth:"필요", db:"payment_errors", test:"블로커 — SDK 충돌" },
-};
-
 const BOARD_COLS = [
   { id:"todo"       as TaskStatus, label:"할 일",       color:"#8892A4", bg:"#F4F6FA" },
   { id:"inprogress" as TaskStatus, label:"진행 중",     color:"#3B5BDB", bg:"#EEF1FB" },
@@ -505,10 +600,11 @@ function CatTag({ catId }: { catId: string }) {
 }
 
 function BoardView() {
-  const [selId, setSelId] = useState<string|null>(null);
-  const [showModal, setShowModal] = useState(false);
-  const [step, setStep] = useState(0);
-  const [selCat, setSelCat] = useState("");
+  const boardTasks = useStoredTasks();
+  const [selId, setSelId] = useState<string|null>(getDesignParam("boardTask"));
+  const [showModal, setShowModal] = useState(getDesignParam("boardModal") === "1");
+  const [step, setStep] = useState(getDesignStep("boardStep"));
+  const [selCat, setSelCat] = useState(getDesignParam("boardCat") ?? "");
   const [customCat, setCustomCat] = useState("");
   const [fTitle, setFTitle] = useState("");
   const [fDesc, setFDesc] = useState("");
@@ -520,8 +616,13 @@ function BoardView() {
   const [panelTab, setPanelTab] = useState<"info"|"cat"|"activity"|"ai">("info");
   const [newComment, setNewComment] = useState("");
 
-  const selTask = selId ? TASKS.find(t => t.id === selId) : null;
-  const taskCat = selTask ? (TASK_CAT[selTask.id] ?? "other") : "other";
+  const getTaskCategory = (task: Task): CatId => {
+    const matchedLabel = task.labels.find(label => CATEGORIES.some(category => category.label === label));
+    return CATEGORIES.find(category => category.label === matchedLabel)?.id ?? "other";
+  };
+
+  const selTask = selId ? boardTasks.find(t => t.id === selId) : null;
+  const taskCat = selTask ? getTaskCategory(selTask) : "other";
   const catDef = getCat(taskCat);
 
   const openModal = (status: TaskStatus) => {
@@ -529,24 +630,55 @@ function BoardView() {
     setFTitle(""); setFDesc(""); setFDue(""); setFPriority("medium"); setFCriteria("");
   };
 
+  const handleCreateTask = () => {
+    const categoryLabel = selCat === "other" ? (customCat.trim() || "기타") : getCat(selCat).label;
+    const newTask: Task = {
+      id: `TASK-${Date.now()}`,
+      title: fTitle.trim() || `${categoryLabel} 업무`,
+      status: fStatus,
+      priority: fPriority,
+      assignee: fAssignee,
+      dueDate: formatAiDueDate(fDue || null),
+      labels: [categoryLabel],
+    };
+    saveStoredTasks([newTask, ...getStoredTasks()]);
+  };
+
+  const updateTaskStatus = (taskId: string, status: TaskStatus) => {
+    saveStoredTasks(getStoredTasks().map(t => t.id === taskId ? { ...t, status } : t));
+  };
+
+  const updateTaskAssignee = (taskId: string, assignee: string) => {
+    saveStoredTasks(getStoredTasks().map(t => t.id === taskId ? { ...t, assignee } : t));
+  };
+
+  const updateTaskDueDate = (taskId: string, dueDate: string) => {
+    saveStoredTasks(getStoredTasks().map(t => t.id === taskId ? { ...t, dueDate } : t));
+  };
+
+  const deleteTask = (taskId: string) => {
+    saveStoredTasks(getStoredTasks().filter(t => t.id !== taskId));
+    setSelId(null);
+  };
+
   // ── per-status action sets ──────────────────────────────────────────────────
-  const STATUS_ACTIONS: Record<TaskStatus, { label: string; icon: any; primary?: boolean; danger?: boolean }[]> = {
+  const STATUS_ACTIONS: Record<TaskStatus, { label: string; icon: any; primary?: boolean; danger?: boolean; nextStatus?: TaskStatus }[]> = {
     todo: [
-      { label:"진행 중으로 이동", icon:ArrowRight, primary:true },
+      { label:"진행 중으로 이동", icon:ArrowRight, primary:true, nextStatus:"inprogress" },
       { label:"담당자 변경", icon:User },
       { label:"체크리스트 생성", icon:CheckSquare },
       { label:"시작 알림", icon:Bell },
       { label:"AI 업무 세분화", icon:Sparkles },
     ],
     inprogress: [
-      { label:"완료로 이동", icon:CheckCircle2, primary:true },
-      { label:"블로커 등록", icon:AlertTriangle, danger:true },
+      { label:"완료로 이동", icon:CheckCircle2, primary:true, nextStatus:"done" },
+      { label:"블로커 등록", icon:AlertTriangle, danger:true, nextStatus:"blocked" },
       { label:"PR 연결", icon:GitPullRequest },
       { label:"진행상황 요청", icon:Bell },
       { label:"AI 지연 분석", icon:Sparkles },
     ],
     blocked: [
-      { label:"블로커 해결 완료", icon:CheckCircle2, primary:true },
+      { label:"블로커 해결 완료", icon:CheckCircle2, primary:true, nextStatus:"inprogress" },
       { label:"긴급 알림", icon:Bell, danger:true },
       { label:"담당자 재배정", icon:User },
       { label:"AI 해결안 보기", icon:Sparkles },
@@ -557,7 +689,7 @@ function BoardView() {
       { label:"팀장 피드백", icon:MessageSquare },
       { label:"결과물 보기", icon:Eye },
       { label:"AI 완료 요약", icon:Sparkles },
-      { label:"다시 열기", icon:RefreshCw },
+      { label:"다시 열기", icon:RefreshCw, nextStatus:"todo" },
     ],
   };
 
@@ -585,7 +717,7 @@ function BoardView() {
 
   // ── category-specific detail panel fields ───────────────────────────────────
   const getCatDetailFields = (taskId: string, cat: string): [string, string][] => {
-    const e = CAT_EXTRA[taskId] ?? {};
+    const e: Record<string, string> = {};
     switch (cat) {
       case "frontend":     return [["화면",e.screen??"—"],["컴포넌트",e.components??"—"],["API",e.api??"—"],["Figma",e.figma??"—"],["반응형",e.responsive??"—"],["PR",e.pr??"—"]];
       case "backend":      return [["Method",e.method??"—"],["Endpoint",e.endpoint??"—"],["인증",e.auth??"—"],["연결 DB",e.db??"—"],["테스트",e.test??"—"]];
@@ -610,7 +742,7 @@ function BoardView() {
       {/* ── Kanban board ── */}
       <div className={`flex gap-4 p-5 overflow-x-auto transition-all ${selTask ? "flex-1 min-w-0" : "w-full"}`}>
         {BOARD_COLS.map(col => {
-          const tasks = TASKS.filter(t => t.status === col.id);
+          const tasks = boardTasks.filter(t => t.status === col.id);
           return (
             <div key={col.id} className="w-[272px] shrink-0 flex flex-col rounded-xl" style={{ background: col.bg }}>
               {/* Column header */}
@@ -628,8 +760,8 @@ function BoardView() {
               {/* Task cards */}
               <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-2 min-h-0">
                 {tasks.map(task => {
-                  const catId = TASK_CAT[task.id] ?? "other";
-                  const m = MEMBERS.find(me => me.id === task.assignee)!;
+                  const catId = getTaskCategory(task);
+                  const m = MEMBERS.find(me => me.id === task.assignee) ?? MEMBERS[0];
                   const isSelected = selId === task.id;
                   const hasCode = ["frontend","backend","ai-ml","db","github","devops"].includes(catId);
                   return (
@@ -695,6 +827,9 @@ function BoardView() {
                 <div className="text-sm font-bold text-foreground leading-snug">{selTask.title}</div>
                 <div className="text-[10px] font-mono text-muted-foreground mt-0.5">{selTask.id}</div>
               </div>
+              <button onClick={() => deleteTask(selTask.id)} title="업무 삭제" className="p-1.5 hover:bg-red-50 rounded-lg transition-colors shrink-0">
+                <Trash2 className="w-4 h-4 text-red-500" />
+              </button>
               <button onClick={() => setSelId(null)} className="p-1.5 hover:bg-muted rounded-lg transition-colors shrink-0">
                 <X className="w-4 h-4 text-muted-foreground" />
               </button>
@@ -713,7 +848,9 @@ function BoardView() {
                     : undefined;
                   return (
                     <button key={a.label}
-                      className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold rounded-lg transition-all hover:opacity-90 ${!style ? "border border-border bg-card text-foreground hover:bg-muted" : ""}`}
+                      onClick={() => a.nextStatus && updateTaskStatus(selTask.id, a.nextStatus)}
+                      disabled={!a.nextStatus}
+                      className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold rounded-lg transition-all hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed ${!style ? "border border-border bg-card text-foreground hover:bg-muted" : ""}`}
                       style={style}>
                       <Icon className="w-3 h-3" />{a.label}
                     </button>
@@ -745,11 +882,13 @@ function BoardView() {
                     <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2.5">담당 정보</div>
                     <div className="space-y-2">
                       {[
-                        ["담당자", <div className="flex items-center gap-1.5"><div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold" style={{ background: m.color }}>{m.initials}</div><span className="text-xs font-medium text-foreground">{m.name}</span><span className="text-[10px] text-muted-foreground">({m.role})</span></div>],
-                        ["마감일", <span className="text-xs font-semibold text-foreground">{selTask.dueDate} <span className="text-amber-600">D-8</span></span>],
-                        ["마일스톤", <span className="text-xs font-medium text-blue-600 cursor-pointer hover:underline">M3: 핵심 기능 개발</span>],
-                        ["생성",    <span className="text-xs text-muted-foreground">김민준 · 회의록 AI</span>],
-                        ["최종 수정", <span className="text-xs text-muted-foreground">3시간 전</span>],
+                        ["담당자", <select value={selTask.assignee} onChange={e => updateTaskAssignee(selTask.id, e.target.value)}
+                          className="text-xs font-medium text-foreground bg-transparent border border-border rounded-lg px-2 py-1 outline-none focus:border-blue-400">
+                          {MEMBERS.map(mem => <option key={mem.id} value={mem.id}>{mem.name} ({mem.role})</option>)}
+                        </select>],
+                        ["마감일", <input value={selTask.dueDate} onChange={e => updateTaskDueDate(selTask.id, e.target.value)} placeholder="MM.DD"
+                          className="text-xs font-semibold text-foreground bg-transparent border border-border rounded-lg px-2 py-1 outline-none focus:border-blue-400 w-20" />],
+                        ["생성",    <span className="text-xs text-muted-foreground">{selTask.labels.includes("회의록 AI") ? "회의록 AI" : "직접 생성"}</span>],
                       ].map(([label, value], i) => (
                         <div key={i} className="flex items-center gap-2">
                           <span className="text-[10px] text-muted-foreground w-14 shrink-0">{label as string}</span>
@@ -1043,7 +1182,8 @@ function BoardView() {
                     className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-muted-foreground border border-border rounded-xl hover:bg-muted transition-colors">
                     <ArrowLeft className="w-4 h-4" />{step===0?"취소":"이전"}
                   </button>
-                  <button onClick={() => setStep(step+1)} disabled={step===0 && !selCat}
+                  <button onClick={() => { if (step === 2) handleCreateTask(); setStep(step+1); }}
+                    disabled={(step===0 && !selCat) || (step===1 && !fTitle.trim())}
                     className="flex items-center gap-1.5 px-5 py-2 text-sm font-semibold text-white rounded-xl disabled:opacity-40 hover:opacity-90 transition-opacity"
                     style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
                     {step===2?"업무 생성 완료":"다음 단계"}<ArrowRight className="w-4 h-4" />
@@ -1065,67 +1205,205 @@ type UploadType = null | "document" | "audio" | "video";
 interface GenTodo {
   id: string; title: string; desc: string; category: string;
   assignee: string; dueDate: string; priority: Priority; basis: string; assigned: boolean;
+  source: "MEETING_AI" | "MANUAL" | "LEADER_MANUAL";
 }
 
-const ANALYZE_STAGES = [
-  "파일 업로드 완료", "텍스트 추출 중", "음성 변환 중",
+const DOCUMENT_ANALYZE_STAGES = [
+  "파일 업로드 완료", "문서 텍스트 추출 중",
   "회의 내용 분석 중", "핵심 결정사항 추출 중",
   "업무 자동 생성 중", "역할 분배 생성 중",
 ];
 
-const GEN_TODOS: GenTodo[] = [
-  { id:"GT-01", title:"axios 인터셉터로 결제 SDK 교체",    desc:"토스페이먼츠 SDK fetch 충돌 이슈 해결 및 PR 재요청",    category:"backend",      assignee:"4", dueDate:"12.18", priority:"high",   basis:"블로커 TF-14 논의",        assigned:true },
-  { id:"GT-02", title:"AI 모델 추가 학습 (목표 90%)",       desc:"현재 87% → 목표 90% 정확도 달성 후 검증 보고서 작성",   category:"ai-ml",        assignee:"1", dueDate:"12.20", priority:"high",   basis:"AI 정확도 목표 상향 결정",  assigned:true },
-  { id:"GT-03", title:"최종 발표 대본 초안 작성",            desc:"12.28 리허설 전 대본 완성 및 팀 내 공유",              category:"presentation", assignee:"",  dueDate:"12.25", priority:"medium", basis:"발표 리허설 일정 논의",     assigned:false },
-  { id:"GT-04", title:"QA 테스트 일정 재조정",              desc:"결제 연동 완료 후 부하 테스트 일정 업데이트",            category:"qa",           assignee:"",  dueDate:"12.22", priority:"medium", basis:"일정 위험 요소 논의",       assigned:false },
-  { id:"GT-05", title:"README 및 배포 가이드 작성",          desc:"실행 방법, 환경 변수, API 명세 포함 문서화",             category:"docs",         assignee:"3", dueDate:"12.25", priority:"low",    basis:"산출물 체크리스트 논의",    assigned:true },
+const AUDIO_ANALYZE_STAGES = [
+  "파일 업로드 완료", "음성 변환 중", "텍스트 정리 중",
+  "회의 내용 분석 중", "핵심 결정사항 추출 중",
+  "업무 자동 생성 중", "역할 분배 생성 중",
 ];
 
-const MOCK_SUMMARY = "토스페이먼츠 SDK 충돌 이슈가 최우선 블로커로 논의되었고, axios 인터셉터 방식으로 교체하기로 결정했습니다. AI 예측 모델 정확도 목표를 87%에서 90%로 상향 조정하였으며, 12월 28일 최종 발표 리허설 2시간 진행이 확정되었습니다.";
-
-const MOCK_DECISIONS = [
-  "토스페이먼츠 SDK를 axios 인터셉터 방식으로 교체 — 최동혁 담당, 기한 12.18",
-  "AI 모델 정확도 목표 90% 이상으로 상향 — 김민준 담당, 기한 12.20",
-  "12월 28일 오후 2시 최종 발표 리허설 2시간 진행 확정",
-  "QA 테스트 범위를 핵심 시나리오 3개로 우선 축소 진행",
+const VIDEO_ANALYZE_STAGES = [
+  "파일 업로드 완료", "영상 음성 트랙 추출 중", "음성 변환 중",
+  "회의 내용 분석 중", "핵심 결정사항 추출 중",
+  "업무 자동 생성 중", "역할 분배 생성 중",
 ];
 
-const MOCK_RISKS = [
-  { level:"high",   text:"결제 연동 지연으로 QA 일정 부족 가능성", suggestion:"QA 범위를 핵심 시나리오 중심으로 우선 축소 검토" },
-  { level:"medium", text:"AI 모델 학습 데이터 부족 우려 (현재 87%)", suggestion:"공개 주차 데이터셋 추가 수집 또는 목표치 하향 검토" },
-];
+const getAnalyzeStages = (type: UploadType): string[] => {
+  if (type === "audio") return AUDIO_ANALYZE_STAGES;
+  if (type === "video") return VIDEO_ANALYZE_STAGES;
+  return DOCUMENT_ANALYZE_STAGES;
+};
 
-function MeetingsView() {
-  const [selected, setSelected] = useState<string|null>("m1");
-  const [uploadFlow, setUploadFlow] = useState<UploadFlow>(null);
-  const [uploadType, setUploadType] = useState<UploadType>(null);
-  const [modalStep, setModalStep] = useState(0);
-  const [analyzeStage, setAnalyzeStage] = useState(0);
-  const [analyzeProgress, setAnalyzeProgress] = useState(0);
-  const [meetTitle, setMeetTitle] = useState("7차 정기 회의 — 결제 연동 최종 점검");
-  const [meetDate, setMeetDate] = useState("2024-12-17");
+const AI_CATEGORY_TO_BOARD: Record<string, CatId> = {
+  PLANNING: "planning",
+  RESEARCH: "research",
+  UX: "ux-ui",
+  UI: "ux-ui",
+  DESIGN: "design",
+  FRONTEND: "frontend",
+  BACKEND: "backend",
+  AI: "ai-ml",
+  ML: "ai-ml",
+  STT: "ai-ml",
+  RAG: "ai-ml",
+  DATA: "data",
+  DATABASE: "db",
+  DB: "db",
+  DEVOPS: "devops",
+  GITHUB: "github",
+  DASHBOARD: "frontend",
+  DOCUMENT: "docs",
+  DOCS: "docs",
+  PRESENTATION: "presentation",
+  QA: "qa",
+  SECURITY: "security",
+  DELIVERABLE: "deliverable",
+  OPERATION: "operation",
+  ETC: "other",
+};
+
+const mapAiPriority = (priority: string): Priority => {
+  if (priority === "HIGH") return "high";
+  if (priority === "LOW") return "low";
+  return "medium";
+};
+
+const formatAiDueDate = (dueDate: string | null) => {
+  if (!dueDate) return "미정";
+  const [, month, day] = dueDate.split("-");
+  return month && day ? `${month}.${day}` : dueDate;
+};
+
+const resolveAiAssignee = (candidate: string) => {
+  const normalized = candidate.trim();
+  const member = MEMBERS.find(m => normalized.includes(m.name) || m.name.includes(normalized));
+  return member?.id ?? "";
+};
+
+const buildGeneratedTodos = (result: MeetingAiResult): GenTodo[] =>
+  result.todos.map((todo, index) => {
+    const assignee = resolveAiAssignee(todo.assignee_candidate);
+    return {
+      id: `GT-${String(index + 1).padStart(2, "0")}`,
+      title: todo.title,
+      desc: todo.description,
+      category: AI_CATEGORY_TO_BOARD[todo.category.toUpperCase()] ?? "other",
+      assignee,
+      dueDate: formatAiDueDate(todo.due_date),
+      priority: mapAiPriority(todo.priority),
+      basis: todo.assignee_candidate ? `회의록 후보 담당자: ${todo.assignee_candidate}` : "회의록 AI 분석 결과",
+      assigned: Boolean(assignee),
+      source: "MEETING_AI" as const,
+    };
+  });
+
+const buildRiskCards = (risks: string[]) =>
+  risks.map((text, index) => ({
+    level: index === 0 ? "high" : "medium",
+    text,
+    suggestion: index === 0
+      ? "팀장 검토 후 담당자와 마감일을 먼저 확정하는 것을 권장합니다."
+      : "관련 업무의 우선순위와 일정 여유를 재점검하세요.",
+  }));
+
+const getTodayIsoDate = () => {
+  const date = new Date();
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+};
+
+const stripFileExtension = (fileName: string) => fileName.replace(/\.[^/.]+$/, "");
+const formatDisplayDate = (date: string) => (date || getTodayIsoDate()).replace(/-/g, ".");
+
+const parseDueDateToDate = (dueDate: string): Date | null => {
+  const match = dueDate.match(/^(\d{1,2})\.(\d{1,2})$/);
+  if (!match) return null;
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const candidate = new Date(today.getFullYear(), month - 1, day);
+  const diffDays = Math.round((candidate.getTime() - today.getTime()) / 86400000);
+  if (diffDays < -180) candidate.setFullYear(candidate.getFullYear() + 1);
+  else if (diffDays > 180) candidate.setFullYear(candidate.getFullYear() - 1);
+  return candidate;
+};
+
+const getDaysLeft = (dueDate: string): number | null => {
+  const date = parseDueDateToDate(dueDate);
+  if (!date) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((date.getTime() - today.getTime()) / 86400000);
+};
+
+type Urgency = "overdue" | "today" | "3day" | "week" | "normal";
+const getUrgencyFromDaysLeft = (daysLeft: number | null): Urgency => {
+  if (daysLeft === null) return "normal";
+  if (daysLeft < 0) return "overdue";
+  if (daysLeft === 0) return "today";
+  if (daysLeft <= 3) return "3day";
+  if (daysLeft <= 7) return "week";
+  return "normal";
+};
+
+const formatDaysLeft = (daysLeft: number | null): string => {
+  if (daysLeft === null) return "미정";
+  if (daysLeft < 0) return `${Math.abs(daysLeft)}일 지남`;
+  return `D-${daysLeft}`;
+};
+
+function MeetingsView({ onGoBoard }: { onGoBoard?: () => void }) {
+  const initialMeetingFlow = (getDesignParam("meetingFlow") as UploadFlow) ?? null;
+  const initialUploadType = (getDesignParam("uploadType") as UploadType) ?? null;
+  const [meetings, setMeetings] = useState<Meeting[]>(getStoredMeetings);
+  const [selected, setSelected] = useState<string|null>(getDesignParam("meetingSelected"));
+  const [uploadFlow, setUploadFlow] = useState<UploadFlow>(initialMeetingFlow);
+  const [uploadType, setUploadType] = useState<UploadType>(initialUploadType);
+  const [modalStep, setModalStep] = useState(getDesignStep("meetingModalStep"));
+  const [analyzeStage, setAnalyzeStage] = useState(initialMeetingFlow === "analyzing" ? 4 : 0);
+  const [analyzeProgress, setAnalyzeProgress] = useState(initialMeetingFlow === "analyzing" ? 62 : 0);
+  const [meetTitle, setMeetTitle] = useState("");
+  const [meetDate, setMeetDate] = useState(getTodayIsoDate());
   const [meetKind, setMeetKind] = useState("정기회의");
   const [partIds, setPartIds] = useState<string[]>(["1","2","3","4"]);
-  const [selTodos, setSelTodos] = useState<string[]>(GEN_TODOS.map(t => t.id));
+  const [analysisResult, setAnalysisResult] = useState<MeetingAiResult | null>(null);
+  const [selTodos, setSelTodos] = useState<string[]>([]);
   const [todoAssignees, setTodoAssignees] = useState<Record<string,string>>({});
+  const [todoDueDates, setTodoDueDates] = useState<Record<string,string>>({});
   const [showUnassigned, setShowUnassigned] = useState(false);
-  const [uploadFileName, setUploadFileName] = useState("");
+  const [uploadFileName, setUploadFileName] = useState(getDesignParam("uploadFile") ?? "");
+  const [uploadFileSize, setUploadFileSize] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [analysisSource, setAnalysisSource] = useState<"fastapi"|"spring-fallback"|null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [panelTab, setPanelTab] = useState<"summary"|"todos"|"risks">("summary");
+  const [manualTodos, setManualTodos] = useState<GenTodo[]>([]);
+  const [showAddTodo, setShowAddTodo] = useState(false);
+  const [newTodoTitle, setNewTodoTitle] = useState("");
+  const [newTodoDesc, setNewTodoDesc] = useState("");
+  const [newTodoCategory, setNewTodoCategory] = useState<CatId>("other");
+  const [newTodoAssignee, setNewTodoAssignee] = useState(MEMBERS[0].id);
+  const [newTodoDueDate, setNewTodoDueDate] = useState("");
+  const [newTodoPriority, setNewTodoPriority] = useState<Priority>("medium");
+  const [newTodoError, setNewTodoError] = useState<string | null>(null);
+  const [saveMeetingMessage, setSaveMeetingMessage] = useState<string | null>(null);
+  const [originalViewMessage, setOriginalViewMessage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const analyzeStages = getAnalyzeStages(uploadType);
+  const canAddManualTodo = CURRENT_USER_ROLE === "leader";
 
   // Simulate analysis progress
   useEffect(() => {
-    if (uploadFlow !== "analyzing") return;
+    if (uploadFlow !== "analyzing" || isDesignCapture()) return;
     let prog = 0; let stg = 0;
     const iv = setInterval(() => {
       prog = Math.min(prog + 1.5, 100);
-      stg = Math.min(Math.floor(prog / (100 / ANALYZE_STAGES.length)), ANALYZE_STAGES.length - 1);
+      stg = Math.min(Math.floor(prog / (100 / analyzeStages.length)), analyzeStages.length - 1);
       setAnalyzeStage(stg); setAnalyzeProgress(Math.round(prog));
       if (prog >= 100) { clearInterval(iv); setTimeout(() => { setUploadFlow("results"); setPanelTab("summary"); }, 600); }
     }, 70);
     return () => clearInterval(iv);
-  }, [uploadFlow]);
+  }, [uploadFlow, analyzeStages.length]);
 
-  const meeting = MEETINGS.find(m => m.id === selected);
+  const meeting = meetings.find(m => m.id === selected);
 
   // ── Upload type metadata ─────────────────────────────────────────────────────
   const UPLOAD_TYPES = [
@@ -1137,7 +1415,204 @@ function MeetingsView() {
   const MEET_KINDS = ["정기회의","중간점검","발표준비","개발회의","기타"];
 
   const getAssignee = (todo: GenTodo): string => todoAssignees[todo.id] ?? todo.assignee;
-  const displayedTodos = showUnassigned ? GEN_TODOS.filter(t => !getAssignee(t)) : GEN_TODOS;
+  const getDueDate = (todo: GenTodo): string => todoDueDates[todo.id] ?? todo.dueDate;
+
+  const generatedTodos = analysisResult ? buildGeneratedTodos(analysisResult) : [];
+  const riskCards = analysisResult ? buildRiskCards(analysisResult.risks) : [];
+  const unassignedCount = generatedTodos.filter(t => !getAssignee(t)).length;
+  const assignedCount = generatedTodos.filter(t => Boolean(getAssignee(t))).length;
+  const nextActions = generatedTodos.slice(0, 3).map(t => t.title);
+  const reviewTodos = [...generatedTodos, ...manualTodos];
+
+  const handleAddManualTodo = () => {
+    if (!newTodoTitle.trim() || !newTodoAssignee || !newTodoDueDate) {
+      setNewTodoError("업무명, 담당자, 마감일은 필수입니다.");
+      return;
+    }
+    const todo: GenTodo = {
+      id: `MANUAL-${Date.now()}`,
+      title: newTodoTitle.trim(),
+      desc: newTodoDesc.trim(),
+      category: newTodoCategory,
+      assignee: newTodoAssignee,
+      dueDate: formatAiDueDate(newTodoDueDate),
+      priority: newTodoPriority,
+      basis: "팀장이 직접 추가",
+      assigned: true,
+      source: canAddManualTodo ? "LEADER_MANUAL" : "MANUAL",
+    };
+    setManualTodos(prev => [...prev, todo]);
+    setSelTodos(prev => [...prev, todo.id]);
+    setShowAddTodo(false);
+    setNewTodoTitle(""); setNewTodoDesc(""); setNewTodoCategory("other");
+    setNewTodoAssignee(MEMBERS[0].id); setNewTodoDueDate(""); setNewTodoPriority("medium");
+    setNewTodoError(null);
+  };
+
+  const handleSaveMeeting = () => {
+    if (!analysisResult) return;
+    const meetingId = meeting?.id ?? selected ?? `local-${Date.now()}`;
+    const record: SavedMeetingRecord = {
+      meetingId,
+      title: meetTitle,
+      meetingDate: meetDate,
+      meetingKind: meetKind,
+      participants: partIds.map(id => MEMBERS.find(m => m.id === id)?.name ?? id),
+      originalFileName: selectedFile?.name ?? uploadFileName ?? "",
+      fileType: uploadType,
+      summary: analysisResult.summary,
+      decisions: analysisResult.decisions,
+      risks: analysisResult.risks,
+      actionItems: reviewTodos,
+      createdAt: new Date().toISOString(),
+      source: "MEETING_AI",
+    };
+    const next = [record, ...getSavedMeetings().filter(item => item.meetingId !== meetingId)];
+    saveSavedMeetings(next);
+    setSaveMeetingMessage("회의록이 저장되었습니다.");
+    setTimeout(() => setSaveMeetingMessage(null), 2500);
+  };
+
+  const handleViewOriginal = () => {
+    if (selectedFile) {
+      const url = URL.createObjectURL(selectedFile);
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    setOriginalViewMessage("원본 파일 URL이 없습니다.");
+    setTimeout(() => setOriginalViewMessage(null), 2500);
+  };
+
+  const handleExportPdf = () => {
+    if (!analysisResult) return;
+    const printWindow = window.open("", "_blank", "noopener,noreferrer,width=800,height=1000");
+    if (!printWindow) return;
+    const participantsText = partIds.map(id => MEMBERS.find(m => m.id === id)?.name ?? id).join(", ");
+    const decisionsHtml = analysisResult.decisions.map(d => `<li>${escapeHtml(d)}</li>`).join("");
+    const risksHtml = analysisResult.risks.map(r => `<li>${escapeHtml(r)}</li>`).join("");
+    const todosHtml = reviewTodos.map(t => {
+      const assigneeName = MEMBERS.find(m => m.id === getAssignee(t))?.name ?? "미배정";
+      return `<li>${escapeHtml(t.title)} - ${escapeHtml(assigneeName)} (${escapeHtml(getDueDate(t))})</li>`;
+    }).join("");
+    const docTitle = `회의록_${meetTitle}_${meetDate}`;
+    printWindow.document.write(`
+      <!DOCTYPE html><html><head><meta charset="utf-8" /><title>${escapeHtml(docTitle)}</title>
+      <style>
+        body { font-family: 'Inter','Noto Sans KR',sans-serif; padding: 32px; color:#1a1a1a; }
+        h1 { font-size: 20px; margin-bottom: 4px; }
+        .meta { font-size: 12px; color:#666; margin-bottom: 20px; }
+        h2 { font-size: 14px; margin-top: 24px; margin-bottom: 8px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+        ul { margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.6; }
+        p { font-size: 13px; line-height: 1.6; }
+      </style>
+      </head><body>
+        <h1>${escapeHtml(meetTitle)}</h1>
+        <div class="meta">${escapeHtml(meetDate)} · ${escapeHtml(meetKind)} · 참석자 ${escapeHtml(participantsText)}</div>
+        <h2>회의 요약</h2><p>${escapeHtml(analysisResult.summary)}</p>
+        <h2>핵심 결정사항</h2><ul>${decisionsHtml || "<li>결정사항이 없습니다.</li>"}</ul>
+        <h2>생성된 To-Do</h2><ul>${todosHtml || "<li>생성된 업무가 없습니다.</li>"}</ul>
+        <h2>위험 요소</h2><ul>${risksHtml || "<li>감지된 위험 요소가 없습니다.</li>"}</ul>
+      </body></html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  };
+
+  const handleFileSelect = (file: File | undefined) => {
+    if (!file) return;
+    const mb = file.size / (1024 * 1024);
+    setSelectedFile(file);
+    setUploadFileName(file.name);
+    setUploadFileSize(mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(file.size / 1024))} KB`);
+    setAnalysisError(null);
+    if (!meetTitle.trim()) setMeetTitle(stripFileExtension(file.name));
+  };
+
+  const startAnalysis = () => {
+    if (!selectedFile || !uploadType) {
+      setAnalysisError("분석할 회의록 파일을 먼저 업로드해주세요.");
+      return;
+    }
+    const title = meetTitle.trim() || stripFileExtension(selectedFile.name);
+    setMeetTitle(title);
+    setAnalysisResult(null);
+    setSelTodos([]);
+    setTodoAssignees({});
+    setTodoDueDates({});
+    setShowUnassigned(false);
+    setAnalysisSource(null);
+    setAnalysisError(null);
+    setAnalyzeStage(0);
+    setAnalyzeProgress(0);
+    setUploadFlow("analyzing");
+
+    void analyzeMeeting({
+      projectId: "demo-project",
+      file: selectedFile,
+      title,
+      meetingDate: meetDate,
+      meetingKind: meetKind,
+      sourceType: uploadType,
+      participants: partIds.map(id => MEMBERS.find(member => member.id === id)?.name ?? id),
+    }).then(response => {
+      const apiTodos = buildGeneratedTodos(response.analysis);
+      const source = response.analysisSource === "FASTAPI" ? "fastapi" : "spring-fallback";
+      const analyzedMeeting: Meeting = {
+        id: response.meetingId,
+        title: response.analysis.meeting_meta.title || title,
+        date: formatDisplayDate(response.analysis.meeting_meta.meeting_date || meetDate),
+        duration: "분석 완료",
+        status: "processed",
+        summary: response.analysis.summary,
+        decisions: response.analysis.decisions,
+        todos: response.analysis.todos.map(todo => {
+          const assignee = todo.assignee_candidate || "미배정";
+          const due = todo.due_date ? ` (${todo.due_date.slice(5).replace("-", ".")})` : "";
+          return `${assignee}: ${todo.title}${due}`;
+        }),
+        risks: response.analysis.risks,
+        analysisSource: source,
+      };
+      setAnalysisResult(response.analysis);
+      setSelTodos(apiTodos.map(t => t.id));
+      setAnalysisSource(source);
+      setMeetings(prev => {
+        const next = [analyzedMeeting, ...prev.filter(item => item.id !== analyzedMeeting.id)];
+        saveStoredMeetings(next);
+        return next;
+      });
+      setSelected(analyzedMeeting.id);
+    }).catch(() => {
+      setAnalysisResult(null);
+      setSelTodos([]);
+      setAnalysisSource(null);
+      setAnalysisError("분석 서버 연결에 실패했습니다. Spring Boot와 FastAPI 서버가 실행 중인지 확인한 뒤 다시 시도해주세요.");
+    });
+  };
+
+  const registerSelectedTodos = () => {
+    const now = Date.now();
+    const selectedGeneratedTodos = reviewTodos.filter(todo => selTodos.includes(todo.id));
+    const createdTasks: Task[] = selectedGeneratedTodos.map((todo, index) => {
+      const cat = getCat(todo.category);
+      const sourceLabel = todo.source === "MEETING_AI" ? "회의록 AI" : "직접 추가";
+      return {
+        id: `AI-${now}-${String(index + 1).padStart(2, "0")}`,
+        title: todo.title,
+        status: "todo",
+        priority: todo.priority,
+        assignee: getAssignee(todo) || MEMBERS[0].id,
+        dueDate: getDueDate(todo),
+        labels: [sourceLabel, cat.label],
+      };
+    });
+
+    if (createdTasks.length > 0) {
+      saveStoredTasks([...createdTasks, ...getStoredTasks()]);
+    }
+    setUploadFlow("done");
+  };
 
   // ── Analyzing screen ────────────────────────────────────────────────────────
   const renderAnalyzing = () => (
@@ -1159,13 +1634,13 @@ function MeetingsView() {
           </div>
         </div>
 
-        <div className="mb-2 text-xs font-mono text-muted-foreground">{uploadFileName || "회의록_7차.pdf"}</div>
+        <div className="mb-2 text-xs font-mono text-muted-foreground">{uploadFileName || "업로드된 회의록"}</div>
         <h2 className="text-xl font-bold text-foreground mb-1">AI 분석 진행 중</h2>
         <p className="text-sm text-muted-foreground mb-8">잠시만 기다려주세요. 회의 내용을 분석하고 업무를 자동 생성합니다.</p>
 
         {/* Stage list */}
         <div className="space-y-2 text-left max-w-sm mx-auto">
-          {ANALYZE_STAGES.map((stage, i) => {
+          {analyzeStages.map((stage, i) => {
             const done = i < analyzeStage; const active = i === analyzeStage;
             return (
               <div key={i} className={`flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all ${active ? "bg-blue-50 border border-blue-200" : done ? "opacity-60" : "opacity-30"}`}>
@@ -1185,7 +1660,32 @@ function MeetingsView() {
   );
 
   // ── Results screen ───────────────────────────────────────────────────────────
-  const renderResults = () => (
+  const renderResults = () => {
+    if (!analysisResult) {
+      return (
+        <div className="h-full flex items-center justify-center bg-background" style={{ fontFamily:"'Inter','Noto Sans KR',sans-serif" }}>
+          <div className="w-full max-w-md px-6 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center mx-auto mb-5">
+              {analysisError ? <AlertTriangle className="w-8 h-8 text-amber-500" /> : <Sparkles className="w-8 h-8 text-blue-500 animate-pulse" />}
+            </div>
+            <h2 className="text-xl font-bold text-foreground mb-2">{analysisError ? "분석을 완료하지 못했습니다" : "분석 결과를 불러오는 중"}</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed mb-6">
+              {analysisError ?? "업로드한 회의록의 요약, 결정사항, To-Do, 위험요소를 정리하고 있습니다."}
+            </p>
+            <div className="flex gap-3 justify-center">
+              <button onClick={() => setUploadFlow("modal")} className="px-5 py-2.5 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity" style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
+                다시 업로드
+              </button>
+              <button onClick={() => setUploadFlow(null)} className="px-5 py-2.5 text-sm font-medium border border-border rounded-xl hover:bg-muted transition-colors">
+                회의록으로 돌아가기
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
     <div className="h-full flex overflow-hidden" style={{ fontFamily:"'Inter','Noto Sans KR',sans-serif" }}>
       {/* Left: meeting list (mini) */}
       <div className="w-72 shrink-0 border-r border-border flex flex-col bg-card">
@@ -1212,9 +1712,9 @@ function MeetingsView() {
         {/* Quick info */}
         <div className="p-4 space-y-2 text-xs text-muted-foreground border-b border-border">
           <div className="flex justify-between"><span>업로드 유형</span><span className="font-medium text-foreground">{UPLOAD_TYPES.find(u => u.id === uploadType)?.label ?? "문서 업로드"}</span></div>
-          <div className="flex justify-between"><span>생성된 To-Do</span><span className="font-semibold text-blue-600">{GEN_TODOS.length}개</span></div>
-          <div className="flex justify-between"><span>미배정 업무</span><span className="font-semibold text-amber-600">{GEN_TODOS.filter(t => !t.assignee).length}개</span></div>
-          <div className="flex justify-between"><span>위험 요소</span><span className="font-semibold text-red-600">{MOCK_RISKS.length}건</span></div>
+          <div className="flex justify-between"><span>생성된 To-Do</span><span className="font-semibold text-blue-600">{generatedTodos.length}개</span></div>
+          <div className="flex justify-between"><span>미배정 업무</span><span className="font-semibold text-amber-600">{unassignedCount}개</span></div>
+          <div className="flex justify-between"><span>위험 요소</span><span className="font-semibold text-red-600">{riskCards.length}건</span></div>
         </div>
         {/* Actions */}
         <div className="p-4 space-y-2">
@@ -1223,9 +1723,10 @@ function MeetingsView() {
             style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
             <ListChecks className="w-4 h-4" />역할 분배 검토 →
           </button>
-          <button className="w-full py-2 text-xs font-medium text-muted-foreground border border-border rounded-xl hover:bg-muted transition-colors flex items-center justify-center gap-1.5">
+          <button onClick={handleSaveMeeting} className="w-full py-2 text-xs font-medium text-muted-foreground border border-border rounded-xl hover:bg-muted transition-colors flex items-center justify-center gap-1.5">
             <FileText className="w-3.5 h-3.5" />회의록 저장
           </button>
+          {saveMeetingMessage && <div className="text-[10px] text-emerald-600 text-center">{saveMeetingMessage}</div>}
           <button onClick={() => setUploadFlow(null)} className="w-full py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
             닫기
           </button>
@@ -1239,14 +1740,20 @@ function MeetingsView() {
           <div>
             <div className="flex items-center gap-2 mb-1">
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">✓ AI 분석 완료</span>
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${analysisSource === "fastapi" ? "bg-blue-100 text-blue-700" : "bg-emerald-100 text-emerald-700"}`}>
+                {analysisSource === "fastapi" ? "Spring/FastAPI 응답" : "Spring 분석 응답"}
+              </span>
               <span className="text-[10px] text-muted-foreground">{meetDate}</span>
             </div>
             <h1 className="text-lg font-bold text-foreground">{meetTitle}</h1>
             <p className="text-xs text-muted-foreground mt-0.5">{meetKind} · 참석자 {partIds.length}명</p>
           </div>
-          <div className="flex items-center gap-2">
-            <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card rounded-lg hover:bg-muted transition-colors"><Eye className="w-3.5 h-3.5" />원본 보기</button>
-            <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card rounded-lg hover:bg-muted transition-colors"><FileText className="w-3.5 h-3.5" />PDF 저장</button>
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-2">
+              <button onClick={handleViewOriginal} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card rounded-lg hover:bg-muted transition-colors"><Eye className="w-3.5 h-3.5" />원본 보기</button>
+              <button onClick={handleExportPdf} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card rounded-lg hover:bg-muted transition-colors"><FileText className="w-3.5 h-3.5" />PDF 저장</button>
+            </div>
+            {originalViewMessage && <div className="text-[10px] text-amber-600">{originalViewMessage}</div>}
           </div>
         </div>
 
@@ -1258,7 +1765,7 @@ function MeetingsView() {
                 <Sparkles className="w-4 h-4" style={{ color:"var(--accent)" }} />
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">AI 회의 요약</span>
               </div>
-              <p className="text-sm text-foreground leading-relaxed">{MOCK_SUMMARY}</p>
+              <p className="text-sm text-foreground leading-relaxed">{analysisResult.summary}</p>
             </div>
 
             <div className="bg-card rounded-xl p-5 border border-border shadow-sm">
@@ -1267,7 +1774,7 @@ function MeetingsView() {
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">핵심 결정사항</span>
               </div>
               <ul className="space-y-2.5">
-                {MOCK_DECISIONS.map((d, i) => (
+                {analysisResult.decisions.map((d, i) => (
                   <li key={i} className="flex items-start gap-2">
                     <div className="w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center shrink-0 mt-0.5 text-[10px] font-bold text-emerald-600">{i + 1}</div>
                     <span className="text-sm text-foreground leading-relaxed">{d}</span>
@@ -1279,7 +1786,7 @@ function MeetingsView() {
             <div className="bg-card rounded-xl p-5 border border-border shadow-sm">
               <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">다음 회의 전까지</div>
               <ul className="space-y-1.5">
-                {["SDK 교체 완료 및 테스트 결과 공유", "AI 모델 80 epoch 학습 결과 리포트", "발표 대본 1차 초안 팀 채널 공유"].map((t, i) => (
+                {(nextActions.length ? nextActions : ["담당자 검토 후 업무 보드에 등록"]).map((t, i) => (
                   <li key={i} className="flex items-center gap-2 text-sm text-foreground">
                     <ArrowRight className="w-3.5 h-3.5 text-blue-500 shrink-0" />{t}
                   </li>
@@ -1293,15 +1800,15 @@ function MeetingsView() {
         {panelTab === "todos" && (
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold text-foreground">생성된 To-Do <span className="text-muted-foreground font-normal">({GEN_TODOS.length}개)</span></div>
+              <div className="text-sm font-semibold text-foreground">생성된 To-Do <span className="text-muted-foreground font-normal">({generatedTodos.length}개)</span></div>
               <button onClick={() => setUploadFlow("review")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg hover:opacity-90"
                 style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
                 <ListChecks className="w-3.5 h-3.5" />역할 분배 검토
               </button>
             </div>
-            {GEN_TODOS.map(todo => {
-              const cat = getCat(todo.category);
-              const m = MEMBERS.find(me => me.id === todo.assignee);
+            {generatedTodos.map(todo => {
+              const assigneeId = getAssignee(todo);
+              const m = MEMBERS.find(me => me.id === assigneeId);
               return (
                 <div key={todo.id} className={`bg-card rounded-xl p-4 border shadow-sm ${!todo.assigned ? "border-amber-300" : "border-border"}`}>
                   <div className="flex items-start justify-between gap-2 mb-2">
@@ -1333,7 +1840,7 @@ function MeetingsView() {
         {/* Risks tab */}
         {panelTab === "risks" && (
           <div className="space-y-4">
-            {MOCK_RISKS.map((r, i) => (
+            {riskCards.map((r, i) => (
               <div key={i} className={`rounded-xl p-5 border ${r.level==="high" ? "bg-red-50 border-red-200" : "bg-amber-50 border-amber-200"}`}>
                 <div className="flex items-start gap-2 mb-2">
                   <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${r.level==="high" ? "text-red-500" : "text-amber-500"}`} />
@@ -1350,18 +1857,19 @@ function MeetingsView() {
             ))}
             <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
               <div className="flex items-center gap-2 mb-1"><Sparkles className="w-3.5 h-3.5 text-blue-500" /><span className="text-xs font-semibold text-blue-700">AI 종합 제안</span></div>
-              <p className="text-xs text-blue-800 leading-relaxed">결제 연동 이슈를 최우선 해결하고, AI 모델 목표를 단계적으로 설정하는 것이 현실적입니다. QA 일정은 결제 완료 후 집중 진행으로 조정을 권장합니다.</p>
+              <p className="text-xs text-blue-800 leading-relaxed">핵심 키워드({analysisResult.keywords.slice(0, 4).join(", ")})를 기준으로 업무 우선순위를 정리하고, 미배정 업무는 팀장이 먼저 확정하는 것을 권장합니다.</p>
             </div>
           </div>
         )}
       </div>
     </div>
-  );
+    );
+  };
 
   // ── Review screen ────────────────────────────────────────────────────────────
   const renderReview = () => {
-    const todos = showUnassigned ? GEN_TODOS.filter(t => !getAssignee(t)) : GEN_TODOS;
-    const selCount = selTodos.filter(id => todos.find(t => t.id === id)).length;
+    const todos = showUnassigned ? reviewTodos.filter(t => !getAssignee(t)) : reviewTodos;
+    const approvedCount = selTodos.length;
     return (
       <div className="h-full flex flex-col overflow-hidden" style={{ fontFamily:"'Inter','Noto Sans KR',sans-serif" }}>
         {/* Header */}
@@ -1377,28 +1885,30 @@ function MeetingsView() {
             <div className="flex items-center gap-2">
               <button onClick={() => setShowUnassigned(v => !v)}
                 className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border transition-all ${showUnassigned ? "border-amber-400 bg-amber-50 text-amber-700" : "border-border bg-card text-muted-foreground hover:border-slate-300"}`}>
-                <AlertTriangle className="w-3.5 h-3.5" />미배정만 보기 {showUnassigned && <span className="bg-amber-200 text-amber-800 px-1 rounded text-[10px]">{GEN_TODOS.filter(t=>!getAssignee(t)).length}</span>}
+                <AlertTriangle className="w-3.5 h-3.5" />미배정만 보기 {showUnassigned && <span className="bg-amber-200 text-amber-800 px-1 rounded text-[10px]">{unassignedCount}</span>}
               </button>
-              <button onClick={() => setUploadFlow("done")}
+              <button onClick={registerSelectedTodos}
+                disabled={approvedCount === 0}
                 className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50"
                 style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
-                <CheckCircle2 className="w-4 h-4" />{selCount}개 업무 보드에 등록
+                <CheckCircle2 className="w-4 h-4" />{approvedCount}개 업무 보드에 등록
               </button>
             </div>
           </div>
 
           {/* Summary chips */}
           <div className="flex items-center gap-2 text-xs">
-            <span className="px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 font-medium">{GEN_TODOS.length}개 AI 생성</span>
-            <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 font-medium">{GEN_TODOS.filter(t=>t.assigned).length}개 배정 완료</span>
-            <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 font-medium">{GEN_TODOS.filter(t=>!getAssignee(t)).length}개 미배정</span>
-            <button onClick={() => setSelTodos(GEN_TODOS.map(t=>t.id))} className="ml-auto text-xs text-blue-600 hover:text-blue-700 underline underline-offset-2">전체 선택</button>
+            <span className="px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 font-medium">{generatedTodos.length}개 AI 생성</span>
+            <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 font-medium">{assignedCount}개 배정 완료</span>
+            <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 font-medium">{unassignedCount}개 미배정</span>
+            {manualTodos.length > 0 && <span className="px-2.5 py-1 rounded-full bg-purple-100 text-purple-700 font-medium">{manualTodos.length}개 직접 추가</span>}
+            <button onClick={() => setSelTodos(reviewTodos.map(t=>t.id))} className="ml-auto text-xs text-blue-600 hover:text-blue-700 underline underline-offset-2">전체 선택</button>
             <button onClick={() => setSelTodos([])} className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2">전체 해제</button>
           </div>
         </div>
 
         {/* Table */}
-        <div className="flex-1 overflow-y-auto px-6 pb-6">
+        <div className="flex-1 overflow-y-auto px-6 pb-24">
           <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden mt-4">
             <table className="w-full text-sm">
               <thead>
@@ -1438,7 +1948,12 @@ function MeetingsView() {
                         </select>
                       </td>
                       <td className="px-3 py-3">
-                        <input type="text" defaultValue={todo.dueDate} className="text-xs rounded-lg border border-border bg-card px-2 py-1.5 outline-none focus:border-blue-400 w-16 text-center" />
+                        <input
+                          type="text"
+                          value={getDueDate(todo)}
+                          onChange={e => setTodoDueDates(p => ({ ...p, [todo.id]: e.target.value }))}
+                          className="text-xs rounded-lg border border-border bg-card px-2 py-1.5 outline-none focus:border-blue-400 w-16 text-center"
+                        />
                       </td>
                       <td className="px-3 py-3"><PriorityBadge priority={todo.priority} /></td>
                       <td className="px-3 py-3 text-[10px] text-muted-foreground max-w-[120px] truncate" title={todo.basis}>{todo.basis}</td>
@@ -1453,9 +1968,67 @@ function MeetingsView() {
           </div>
 
           {/* Add task */}
-          <button className="mt-3 flex items-center gap-2 px-4 py-2 text-xs font-medium text-blue-600 border border-dashed border-blue-300 rounded-xl hover:bg-blue-50 transition-colors">
-            <Plus className="w-3.5 h-3.5" />새 업무 직접 추가
-          </button>
+          {canAddManualTodo && (
+            <div className="mt-3">
+              {!showAddTodo && (
+                <button onClick={() => setShowAddTodo(true)}
+                  className="flex items-center gap-2 px-4 py-2 text-xs font-medium text-blue-600 border border-dashed border-blue-300 rounded-xl hover:bg-blue-50 transition-colors">
+                  <Plus className="w-3.5 h-3.5" />새 업무 직접 추가
+                </button>
+              )}
+              {showAddTodo && (
+                <div className="p-4 rounded-xl border border-border bg-card space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="col-span-2">
+                      <label className="text-xs font-semibold text-foreground block mb-1.5">업무명 <span className="text-red-500">*</span></label>
+                      <input value={newTodoTitle} onChange={e => setNewTodoTitle(e.target.value)} placeholder="업무명을 입력하세요"
+                        className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-xs outline-none focus:border-blue-400" />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-xs font-semibold text-foreground block mb-1.5">설명</label>
+                      <input value={newTodoDesc} onChange={e => setNewTodoDesc(e.target.value)} placeholder="업무 설명 (선택)"
+                        className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-xs outline-none focus:border-blue-400" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-foreground block mb-1.5">카테고리</label>
+                      <select value={newTodoCategory} onChange={e => setNewTodoCategory(e.target.value as CatId)}
+                        className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-xs outline-none focus:border-blue-400">
+                        {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-foreground block mb-1.5">담당자 <span className="text-red-500">*</span></label>
+                      <select value={newTodoAssignee} onChange={e => setNewTodoAssignee(e.target.value)}
+                        className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-xs outline-none focus:border-blue-400">
+                        {MEMBERS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-foreground block mb-1.5">마감일 <span className="text-red-500">*</span></label>
+                      <input type="date" value={newTodoDueDate} onChange={e => setNewTodoDueDate(e.target.value)}
+                        className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-xs outline-none focus:border-blue-400" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-foreground block mb-1.5">우선순위</label>
+                      <div className="flex gap-1.5">
+                        {(["low","medium","high"] as Priority[]).map(p => (
+                          <button key={p} type="button" onClick={() => setNewTodoPriority(p)}
+                            className={`flex-1 py-1.5 text-[11px] font-semibold rounded-lg border transition-all ${newTodoPriority===p ? "border-blue-500 bg-blue-50 text-blue-700" : "border-border bg-card text-muted-foreground"}`}>
+                            {p==="low"?"낮음":p==="medium"?"중간":"높음"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  {newTodoError && <div className="text-[11px] text-red-600">{newTodoError}</div>}
+                  <div className="flex items-center gap-2 justify-end pt-1">
+                    <button onClick={() => { setShowAddTodo(false); setNewTodoError(null); }} className="px-3 py-1.5 text-xs font-medium text-muted-foreground border border-border rounded-lg hover:bg-muted transition-colors">취소</button>
+                    <button onClick={handleAddManualTodo} className="px-3 py-1.5 text-xs font-semibold text-white rounded-lg hover:opacity-90 transition-opacity" style={{ background:"var(--primary)" }}>추가</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1499,7 +2072,7 @@ function MeetingsView() {
           <button onClick={() => setUploadFlow(null)} className="px-5 py-2.5 text-sm font-medium border border-border rounded-xl hover:bg-muted transition-colors">
             회의록으로 돌아가기
           </button>
-          <button onClick={() => setUploadFlow(null)} className="px-5 py-2.5 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity" style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
+          <button onClick={() => { setUploadFlow(null); onGoBoard?.(); }} className="px-5 py-2.5 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity" style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
             업무 보드 확인하기
           </button>
         </div>
@@ -1539,7 +2112,14 @@ function MeetingsView() {
                       {UPLOAD_TYPES.map(t => {
                         const Icon = t.icon; const sel = uploadType === t.id;
                         return (
-                          <button key={t.id} onClick={() => setUploadType(t.id as UploadType)}
+                          <button key={t.id} onClick={() => {
+                            const nextType = t.id as UploadType;
+                            setUploadType(nextType);
+                            setSelectedFile(null);
+                            setUploadFileName("");
+                            setUploadFileSize("");
+                            setAnalysisError(null);
+                          }}
                             className={`flex flex-col items-center gap-2.5 p-5 rounded-xl border-2 transition-all hover:shadow-sm ${sel ? "shadow-sm" : "border-border hover:border-slate-300"}`}
                             style={sel ? { borderColor:t.color, background:t.bg } : {}}>
                             <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ background:sel ? t.bg : "#F4F6FA" }}>
@@ -1575,13 +2155,27 @@ function MeetingsView() {
                       </div>
 
                       {/* File drop zone */}
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept={utype.accept}
+                        className="hidden"
+                        onChange={e => handleFileSelect(e.target.files?.[0])}
+                      />
                       <div className="border-2 border-dashed border-border rounded-xl p-8 text-center hover:border-blue-400 hover:bg-blue-50/30 transition-all cursor-pointer"
-                        onClick={() => setUploadFileName(utype.id === "document" ? "회의록_7차.pdf" : utype.id === "audio" ? "7차회의_녹음.m4a" : "7차회의_zoom.mp4")}>
+                        onDragOver={e => { e.preventDefault(); e.stopPropagation(); }}
+                        onDragEnter={e => { e.preventDefault(); e.stopPropagation(); }}
+                        onDrop={e => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleFileSelect(e.dataTransfer.files?.[0]);
+                        }}
+                        onClick={() => fileInputRef.current?.click()}>
                         {uploadFileName ? (
                           <div className="flex flex-col items-center gap-2">
                             <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background:utype.bg }}><Icon className="w-6 h-6" style={{ color:utype.color }} /></div>
                             <div className="text-sm font-semibold text-foreground">{uploadFileName}</div>
-                            <div className="text-[10px] text-muted-foreground">{utype.id==="document"?"245 KB":utype.id==="audio"?"18.2 MB":"127 MB"}</div>
+                            <div className="text-[10px] text-muted-foreground">{uploadFileSize || "파일 선택됨"}</div>
                             <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-600">업로드 완료</span>
                           </div>
                         ) : (
@@ -1658,8 +2252,8 @@ function MeetingsView() {
                     다음<ArrowRight className="w-4 h-4" />
                   </button>
                 ) : (
-                  <button onClick={() => { setUploadFlow("analyzing"); setAnalyzeStage(0); setAnalyzeProgress(0); }}
-                    disabled={!uploadFileName}
+                  <button onClick={startAnalysis}
+                    disabled={!selectedFile}
                     className="flex items-center gap-1.5 px-5 py-2 text-sm font-semibold text-white rounded-xl disabled:opacity-40 hover:opacity-90 transition-opacity"
                     style={{ background:"linear-gradient(135deg,#7048E8,#4F6EF7)" }}>
                     <Sparkles className="w-4 h-4" />AI 분석 시작
@@ -1674,7 +2268,7 @@ function MeetingsView() {
       {/* ── Meeting list ── */}
       <div className="w-80 shrink-0 border-r border-border flex flex-col">
         <div className="p-4 border-b border-border flex items-center gap-2">
-          <button onClick={() => { setUploadFlow("modal"); setModalStep(0); setUploadType(null); setUploadFileName(""); }}
+          <button onClick={() => { setUploadFlow("modal"); setModalStep(0); setUploadType(null); setUploadFileName(""); setUploadFileSize(""); setSelectedFile(null); setAnalysisSource(null); setAnalysisError(null); }}
             className="flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg text-white text-sm font-medium transition-opacity hover:opacity-90"
             style={{ background:"linear-gradient(135deg,#7048E8 0%,#4F6EF7 100%)" }}>
             <Upload className="w-4 h-4" />회의록 업로드
@@ -1684,7 +2278,20 @@ function MeetingsView() {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
-          {MEETINGS.map(m => (
+          {meetings.length === 0 ? (
+            <div className="h-full min-h-[360px] flex flex-col items-center justify-center text-center px-4 text-muted-foreground">
+              <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-4">
+                <FileAudio className="w-7 h-7 text-slate-400" />
+              </div>
+              <div className="text-sm font-semibold text-foreground mb-1">아직 업로드한 회의록이 없습니다</div>
+              <div className="text-xs leading-relaxed mb-4">문서, 음성, 영상 파일을 업로드하면 AI 분석 결과가 이곳에 자동으로 쌓입니다.</div>
+              <button onClick={() => { setUploadFlow("modal"); setModalStep(0); setUploadType(null); setUploadFileName(""); setUploadFileSize(""); setSelectedFile(null); setAnalysisError(null); }}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-white hover:opacity-90 transition-opacity"
+                style={{ background:"linear-gradient(135deg,#7048E8,#4F6EF7)" }}>
+                회의록 업로드
+              </button>
+            </div>
+          ) : meetings.map(m => (
             <button key={m.id} onClick={() => setSelected(m.id)}
               className={`w-full text-left p-3 rounded-lg border transition-all ${selected === m.id ? "border-blue-300 bg-blue-50" : "border-border bg-card hover:bg-muted"}`}>
               <div className="flex items-center justify-between mb-1">
@@ -1742,7 +2349,12 @@ function MeetingsView() {
                     <CheckSquare className="w-4 h-4" style={{ color: "var(--primary)" }} />
                     <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">생성된 To-Do</div>
                   </div>
-                  <button className="text-xs font-medium text-blue-600 hover:text-blue-700">업무로 등록</button>
+                  <button
+                    onClick={() => analysisResult && setUploadFlow("review")}
+                    disabled={!analysisResult}
+                    className="text-xs font-medium text-blue-600 hover:text-blue-700 disabled:text-slate-400 disabled:cursor-not-allowed">
+                    업무로 등록
+                  </button>
                 </div>
                 <ul className="space-y-2">
                   {meeting.todos.map((t, i) => (
@@ -1777,9 +2389,27 @@ function MeetingsView() {
             </div>
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
-            <FileAudio className="w-12 h-12 text-muted" />
-            <div className="text-sm font-medium">회의록을 선택하세요</div>
+          <div className="flex flex-col items-center justify-center h-full gap-3 text-center text-muted-foreground">
+            <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center">
+              <FileAudio className="w-8 h-8 text-slate-400" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-foreground mb-1">
+                {meetings.length === 0 ? "분석할 회의록을 업로드해주세요" : "회의록을 선택하세요"}
+              </div>
+              <div className="text-xs leading-relaxed max-w-sm">
+                {meetings.length === 0
+                  ? "업로드 후 분석이 완료되면 회의 요약, 핵심 결정사항, 생성된 To-Do, 위험 요소가 이 화면에 표시됩니다."
+                  : "왼쪽 목록에서 분석된 회의록을 선택하면 상세 결과를 확인할 수 있습니다."}
+              </div>
+            </div>
+            {meetings.length === 0 && (
+              <button onClick={() => { setUploadFlow("modal"); setModalStep(0); setUploadType(null); setUploadFileName(""); setUploadFileSize(""); setSelectedFile(null); setAnalysisError(null); }}
+                className="mt-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white hover:opacity-90 transition-opacity"
+                style={{ background:"linear-gradient(135deg,#7048E8,#4F6EF7)" }}>
+                회의록 업로드
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -1833,15 +2463,15 @@ const FILE_FORMATS = ["PDF","DOCX","PPTX","Markdown"];
 const TONE_OPTIONS = ["공식적","간결","자세히","발표용"];
 
 function DeliverablesView() {
-  const [activeCat, setActiveCat] = useState("발표자료");
-  const [selCard, setSelCard] = useState<string|null>(null);
+  const [activeCat, setActiveCat] = useState(getDesignParam("delivCat") ?? "발표자료");
+  const [selCard, setSelCard] = useState<string|null>(getDesignParam("delivCard"));
   const [search, setSearch] = useState("");
-  const [generating, setGenerating] = useState(false);
+  const [generating, setGenerating] = useState(getDesignParam("delivGenerating") === "1");
   const [selSources, setSelSources] = useState<string[]>(["회의록","To-Do","업무 보드"]);
   const [selTone, setSelTone] = useState("공식적");
   const [selFormat, setSelFormat] = useState("PDF");
   const [delivTitle, setDelivTitle] = useState("");
-  const [panelTab, setPanelTab] = useState<"info"|"preview"|"versions">("info");
+  const [panelTab, setPanelTab] = useState<"info"|"preview"|"versions">((getDesignParam("delivPanel") as "info"|"preview"|"versions") ?? "info");
   const [aiComment, setAiComment] = useState("");
 
   // Category-specific form state
@@ -2657,16 +3287,6 @@ function SourceBadge({ source }: { source: string }) {
   return <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded whitespace-nowrap ${map[source] ?? "bg-slate-100 text-slate-500"}`}>{source}</span>;
 }
 
-function SeverityBadge({ severity }: { severity: "high" | "medium" | "low" }) {
-  const map = {
-    high:   "bg-red-100 text-red-700 border border-red-200",
-    medium: "bg-amber-100 text-amber-700 border border-amber-200",
-    low:    "bg-slate-100 text-slate-600 border border-slate-200",
-  };
-  const labels = { high: "심각도 높음", medium: "심각도 보통", low: "심각도 낮음" };
-  return <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${map[severity]}`}>{labels[severity]}</span>;
-}
-
 function DetailStatCard({ label, value, sub, color, icon: Icon }: { label: string; value: string | number; sub: string; color: string; icon: any }) {
   return (
     <div className="bg-card rounded-xl p-4 flex items-center gap-3 shadow-sm border border-border">
@@ -2716,6 +3336,7 @@ function AIBox({ text, onAsk }: { text: string; onAsk?: () => void }) {
 
 // ─── page 1: all tasks ────────────────────────────────────────────────────────
 function AllTasksPage({ onBack }: { onBack: () => void }) {
+  const tasks = useStoredTasks();
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("전체");
   const [sortBy, setSortBy] = useState("마감일");
@@ -2724,17 +3345,17 @@ function AllTasksPage({ onBack }: { onBack: () => void }) {
   const statusMap: Record<string, TaskStatus | null> = {
     "전체": null, "대기": "todo", "진행 중": "inprogress", "완료": "done", "블로커": "blocked",
   };
-  const filtered = TASKS.filter(t => {
+  const filtered = tasks.filter(t => {
     const ms = filterStatus === "전체" || t.status === statusMap[filterStatus];
     const mq = !search || t.title.toLowerCase().includes(search.toLowerCase()) || t.id.toLowerCase().includes(search);
     return ms && mq;
   });
 
   const counts = {
-    total: TASKS.length,
-    done: TASKS.filter(t => t.status === "done").length,
-    inProgress: TASKS.filter(t => t.status === "inprogress").length,
-    blocked: TASKS.filter(t => t.status === "blocked").length,
+    total: tasks.length,
+    done: tasks.filter(t => t.status === "done").length,
+    inProgress: tasks.filter(t => t.status === "inprogress").length,
+    blocked: tasks.filter(t => t.status === "blocked").length,
   };
 
   const toggleAll = () => setSelected(filtered.every(t => selected.includes(t.id)) ? [] : filtered.map(t => t.id));
@@ -2762,14 +3383,16 @@ function AllTasksPage({ onBack }: { onBack: () => void }) {
       {/* stat cards */}
       <div className="grid grid-cols-4 gap-3">
         <DetailStatCard label="전체 업무" value={counts.total} sub="프로젝트 전체" color="#3B5BDB" icon={Layers} />
-        <DetailStatCard label="완료" value={counts.done} sub={`완료율 ${Math.round(counts.done / counts.total * 100)}%`} color="#10B981" icon={CheckCircle2} />
+        <DetailStatCard label="완료" value={counts.done} sub={`완료율 ${counts.total ? Math.round(counts.done / counts.total * 100) : 0}%`} color="#10B981" icon={CheckCircle2} />
         <DetailStatCard label="진행 중" value={counts.inProgress} sub="활성 업무" color="#3B5BDB" icon={Clock} />
         <DetailStatCard label="블로커" value={counts.blocked} sub="즉시 해결 필요" color="#EF4444" icon={AlertTriangle} />
       </div>
 
       {/* AI box */}
       <AIBox
-        text="회의록 AI가 생성한 업무 5개 중 2개가 팀장 승인 대기 중입니다. 최동혁님 담당 업무 완료율이 37.5%로 가장 낮습니다. 업무 재배정을 검토하세요."
+        text={counts.total
+          ? `현재 ${counts.total}개 업무가 등록되어 있습니다. 회의록 AI로 생성된 업무는 담당자와 마감일 확인 후 상태를 관리하세요.`
+          : "아직 등록된 업무가 없습니다. 회의록 AI에서 To-Do를 승인하면 전체 업무 목록에 표시됩니다."}
         onAsk={() => {}}
       />
 
@@ -2802,12 +3425,12 @@ function AllTasksPage({ onBack }: { onBack: () => void }) {
       </div>
 
       {/* pending approval banner */}
-      <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-amber-50 border border-amber-200">
-        <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
-        <span className="text-xs text-amber-700 flex-1">회의록 AI가 생성한 업무 2개가 승인 대기 중입니다.</span>
-        <button className="text-xs font-semibold text-amber-700 underline hover:no-underline">승인 검토</button>
-        <button className="text-xs font-medium text-amber-500">반려</button>
-      </div>
+      {tasks.length === 0 && (
+        <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-blue-50 border border-blue-200">
+          <FileAudio className="w-4 h-4 text-blue-500 shrink-0" />
+          <span className="text-xs text-blue-700 flex-1">회의록 AI 분석 후 역할 분배 검토에서 승인한 업무만 이 목록에 표시됩니다.</span>
+        </div>
+      )}
 
       {/* table */}
       <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
@@ -2827,8 +3450,8 @@ function AllTasksPage({ onBack }: { onBack: () => void }) {
           </thead>
           <tbody className="divide-y divide-border">
             {filtered.map(task => {
-              const member = MEMBERS.find(m => m.id === task.assignee)!;
-              const src = TASK_SOURCES[task.id] ?? "직접 생성";
+              const member = MEMBERS.find(m => m.id === task.assignee) ?? MEMBERS[0];
+              const src = task.labels.includes("회의록 AI") ? "회의록 AI" : "직접 생성";
               const isSelected = selected.includes(task.id);
               const isDueSoon = task.status !== "done" && task.dueDate <= "12.18";
               return (
@@ -2910,6 +3533,26 @@ function CircleProgress({ pct, size = 160 }: { pct: number; size?: number }) {
 }
 
 function ProgressPage({ onBack }: { onBack: () => void }) {
+  const tasks = useStoredTasks();
+  const totalTasks = tasks.length;
+  const doneTasks = tasks.filter(t => t.status === "done").length;
+  const inProgressTasks = tasks.filter(t => t.status === "inprogress").length;
+  const todoTasks = tasks.filter(t => t.status === "todo").length;
+  const blockedTasks = tasks.filter(t => t.status === "blocked").length;
+  const progressPct = totalTasks ? Math.round((doneTasks / totalTasks) * 100) : 0;
+
+  const perMemberCompletion = MEMBERS.map(m => {
+    const memberTasks = tasks.filter(t => t.assignee === m.id);
+    return { name: m.name, color: m.color, done: memberTasks.filter(t => t.status === "done").length, total: memberTasks.length };
+  }).filter(m => m.total > 0);
+
+  const categoryBreakdown = CATEGORIES.map(cat => {
+    const catTasks = tasks.filter(t => t.labels.includes(cat.label));
+    return { label: cat.label, color: cat.color, done: catTasks.filter(t => t.status === "done").length, total: catTasks.length };
+  }).filter(c => c.total > 0);
+
+  const recentlyDone = tasks.filter(t => t.status === "done").slice(0, 3);
+
   return (
     <div className="h-full overflow-y-auto p-6 space-y-4" style={{ fontFamily: "'Inter','Noto Sans KR',sans-serif" }}>
       {/* header */}
@@ -2917,45 +3560,45 @@ function ProgressPage({ onBack }: { onBack: () => void }) {
         <div>
           <BackBtn onBack={onBack} />
           <h1 className="text-xl font-bold text-foreground">진행률 분석</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">완료율 29%의 원인을 분석하고 마감 전 완료 가능성을 판단합니다.</p>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {totalTasks ? `완료율 ${progressPct}%의 원인을 분석하고 완료 가능성을 판단합니다.` : "업무가 등록되면 완료율과 진행 현황을 분석합니다."}
+          </p>
         </div>
-        <button className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white rounded-lg"
-          style={{ background: "linear-gradient(135deg,#7048E8,#4F6EF7)" }}>
-          <Sparkles className="w-4 h-4" /> 진행률 보고서 생성
-        </button>
       </div>
 
       {/* stat cards */}
       <div className="grid grid-cols-4 gap-3">
-        <DetailStatCard label="전체 완료율" value="29%" sub="4 / 14 완료" color="#3B5BDB" icon={TrendingUp} />
-        <DetailStatCard label="완료" value="4개" sub="전체 14개 중" color="#10B981" icon={CheckCircle2} />
-        <DetailStatCard label="목표 완료율" value="100%" sub="12.28 마감 기준" color="#7048E8" icon={CheckSquare} />
-        <DetailStatCard label="남은 기간" value="D-18" sub="이번 주 완료 +2개" color="#F59E0B" icon={Calendar} />
+        <DetailStatCard label="전체 완료율" value={`${progressPct}%`} sub={`${doneTasks} / ${totalTasks} 완료`} color="#3B5BDB" icon={TrendingUp} />
+        <DetailStatCard label="완료" value={doneTasks} sub={`전체 ${totalTasks}개 중`} color="#10B981" icon={CheckCircle2} />
+        <DetailStatCard label="진행 중" value={inProgressTasks} sub="활성 업무" color="#7048E8" icon={Clock} />
+        <DetailStatCard label="블로커" value={blockedTasks} sub="즉시 해결 필요" color="#EF4444" icon={AlertTriangle} />
       </div>
 
       {/* AI box */}
       <AIBox
-        text="현재 주당 완료 속도 2개 기준, 남은 10개 업무 완료에 약 5주 필요합니다. 블로커 2개 해결 + 주당 4개 달성 시 D-18 내 완료 가능합니다."
+        text={totalTasks
+          ? `현재 완료율 ${progressPct}%입니다. 블로커 ${blockedTasks}건을 우선 해결하면 진행 속도를 높일 수 있습니다.`
+          : "아직 등록된 업무가 없습니다. 회의록 AI에서 To-Do를 승인하면 진행률 분석이 표시됩니다."}
         onAsk={() => {}}
       />
 
-      {/* main: circle + AI prediction + assignee */}
-      <div className="grid grid-cols-3 gap-4">
+      {/* main: circle + assignee */}
+      <div className="grid grid-cols-2 gap-4">
         {/* circle progress */}
         <div className="bg-card rounded-xl p-5 border border-border shadow-sm flex flex-col items-center justify-center gap-4">
           <div className="relative">
-            <CircleProgress pct={29} size={156} />
+            <CircleProgress pct={progressPct} size={156} />
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <div className="text-3xl font-bold text-foreground">29%</div>
+              <div className="text-3xl font-bold text-foreground">{progressPct}%</div>
               <div className="text-[11px] text-muted-foreground">완료율</div>
             </div>
           </div>
           <div className="w-full border-t border-border pt-3 space-y-2">
             {[
-              { label: "완료",   count: 4, color: "#10B981" },
-              { label: "진행 중", count: 4, color: "#3B5BDB" },
-              { label: "대기",   count: 4, color: "#C1C9D9" },
-              { label: "블로커", count: 2, color: "#EF4444" },
+              { label: "완료",   count: doneTasks, color: "#10B981" },
+              { label: "진행 중", count: inProgressTasks, color: "#3B5BDB" },
+              { label: "대기",   count: todoTasks, color: "#C1C9D9" },
+              { label: "블로커", count: blockedTasks, color: "#EF4444" },
             ].map(s => (
               <div key={s.label} className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-1.5">
@@ -2966,52 +3609,32 @@ function ProgressPage({ onBack }: { onBack: () => void }) {
               </div>
             ))}
           </div>
-        </div>
-
-        {/* AI prediction */}
-        <div className="flex flex-col gap-3">
-          <div className="bg-card rounded-xl p-4 border border-border shadow-sm flex-1">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: "linear-gradient(135deg,#7048E8,#4F6EF7)" }}>
-                <Sparkles className="w-3.5 h-3.5 text-white" />
-              </div>
-              <span className="text-sm font-semibold text-foreground">AI 완료 예측</span>
+          {recentlyDone.length > 0 && (
+            <div className="w-full border-t border-border pt-3">
+              <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">최근 완료된 업무</div>
+              {recentlyDone.map(t => {
+                const m = MEMBERS.find(me => me.id === t.assignee) ?? MEMBERS[0];
+                return (
+                  <div key={t.id} className="flex items-center gap-2 py-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                    <span className="text-xs text-foreground truncate flex-1">{t.title}</span>
+                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0" style={{ background: m.color }}>{m.initials}</div>
+                  </div>
+                );
+              })}
             </div>
-            <div className="space-y-2">
-              <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs leading-relaxed">
-                <div className="font-semibold mb-1">⚠ 현재 속도 기준: 마감 내 완료 불확실</div>
-                주당 2개 완료 속도로는 남은 10개 처리에 약 5주 필요 (현재 D-18).
-              </div>
-              <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 text-blue-800 text-xs leading-relaxed">
-                <div className="font-semibold mb-1">💡 속도 개선 시: 완료 가능</div>
-                블로커 2개 해결 + 주당 4개 완료 달성 시 D-18 내 100% 완료 가능.
-              </div>
-            </div>
-          </div>
-          <div className="bg-card rounded-xl p-4 border border-border shadow-sm">
-            <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">이번 주 완료된 업무</div>
-            {TASKS.filter(t => t.status === "done").slice(0, 3).map(t => {
-              const m = MEMBERS.find(me => me.id === t.assignee)!;
-              return (
-                <div key={t.id} className="flex items-center gap-2 py-1.5">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                  <span className="text-xs text-foreground truncate flex-1">{t.title}</span>
-                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0" style={{ background: m.color }}>{m.initials}</div>
-                </div>
-              );
-            })}
-          </div>
+          )}
         </div>
 
         {/* assignee completion */}
         <div className="bg-card rounded-xl p-4 border border-border shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div className="text-sm font-semibold text-foreground">담당자별 완료 현황</div>
-            <button className="text-[11px] font-medium text-blue-600 hover:text-blue-700">업무 재배정</button>
-          </div>
+          <div className="text-sm font-semibold text-foreground mb-4">담당자별 완료 현황</div>
+          {perMemberCompletion.length === 0 ? (
+            <div className="text-xs text-muted-foreground text-center py-6">담당 업무가 등록되면 표시됩니다.</div>
+          ) : (
           <div className="space-y-4">
-            {WORKLOAD_DATA.map(m => {
-              const pct = Math.round((m.done / m.total) * 100);
+            {perMemberCompletion.map(m => {
+              const pct = m.total ? Math.round((m.done / m.total) * 100) : 0;
               return (
                 <div key={m.name}>
                   <div className="flex items-center justify-between text-xs mb-1.5">
@@ -3033,59 +3656,34 @@ function ProgressPage({ onBack }: { onBack: () => void }) {
               );
             })}
           </div>
+          )}
         </div>
       </div>
 
-      {/* type + deliverable */}
-      <div className="grid grid-cols-2 gap-4">
-        {/* type completion */}
-        <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-          <div className="px-5 py-3 border-b border-border flex items-center justify-between">
-            <div className="text-sm font-semibold text-foreground">업무 유형별 완료율</div>
-            <button className="text-[11px] font-medium text-blue-600">우선순위 조정</button>
-          </div>
-          <div className="divide-y divide-border">
-            {PROGRESS_BY_TYPE.map(t => {
-              const pct = Math.round((t.done / t.total) * 100);
-              return (
-                <div key={t.type} className="flex items-center gap-3 px-5 py-2.5">
-                  <div className="w-14 text-xs font-medium text-foreground shrink-0">{t.type}</div>
-                  <div className="flex-1 h-1.5 bg-muted rounded-full">
-                    <div className="h-1.5 rounded-full" style={{ width: `${pct}%`, background: t.color }} />
-                  </div>
-                  <span className="text-[10px] text-muted-foreground font-mono w-8 text-right">{t.done}/{t.total}</span>
-                  <span className={`text-[10px] font-bold w-8 text-right ${pct === 100 ? "text-emerald-600" : pct === 0 ? "text-red-500" : "text-amber-600"}`}>{pct}%</span>
-                </div>
-              );
-            })}
-          </div>
+      {/* type completion */}
+      <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-border">
+          <div className="text-sm font-semibold text-foreground">업무 유형별 완료율</div>
         </div>
-
-        {/* deliverable readiness */}
-        <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-          <div className="px-5 py-3 border-b border-border flex items-center justify-between">
-            <div className="text-sm font-semibold text-foreground">산출물 준비율</div>
-            <button className="text-[11px] font-medium text-blue-600">산출물 생성</button>
-          </div>
-          <div className="divide-y divide-border">
-            {DELIVERABLE_READY.map(d => {
-              const color = d.pct === 100 ? "#10B981" : d.pct >= 50 ? "#3B5BDB" : d.pct > 0 ? "#F59E0B" : "#DFE1E6";
-              const badge = d.pct === 100 ? { cls: "bg-emerald-100 text-emerald-600", label: "완료" }
-                : d.pct === 0 ? { cls: "bg-slate-100 text-slate-500", label: "미시작" }
-                : { cls: "bg-amber-100 text-amber-600", label: "작성 중" };
-              return (
-                <div key={d.name} className="flex items-center gap-3 px-5 py-2.5">
-                  <div className="w-20 text-xs font-medium text-foreground shrink-0">{d.name}</div>
-                  <div className="flex-1 h-1.5 bg-muted rounded-full">
-                    <div className="h-1.5 rounded-full transition-all" style={{ width: `${d.pct}%`, background: color }} />
-                  </div>
-                  <span className="text-[10px] text-muted-foreground font-mono w-8 text-right">{d.pct}%</span>
-                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap ${badge.cls}`}>{badge.label}</span>
+        {categoryBreakdown.length === 0 ? (
+          <div className="text-xs text-muted-foreground text-center py-6">업무가 등록되면 유형별 완료율이 표시됩니다.</div>
+        ) : (
+        <div className="divide-y divide-border">
+          {categoryBreakdown.map(c => {
+            const pct = c.total ? Math.round((c.done / c.total) * 100) : 0;
+            return (
+              <div key={c.label} className="flex items-center gap-3 px-5 py-2.5">
+                <div className="w-20 text-xs font-medium text-foreground shrink-0">{c.label}</div>
+                <div className="flex-1 h-1.5 bg-muted rounded-full">
+                  <div className="h-1.5 rounded-full" style={{ width: `${pct}%`, background: c.color }} />
                 </div>
-              );
-            })}
-          </div>
+                <span className="text-[10px] text-muted-foreground font-mono w-8 text-right">{c.done}/{c.total}</span>
+                <span className={`text-[10px] font-bold w-8 text-right ${pct === 100 ? "text-emerald-600" : pct === 0 ? "text-red-500" : "text-amber-600"}`}>{pct}%</span>
+              </div>
+            );
+          })}
         </div>
+        )}
       </div>
     </div>
   );
@@ -3093,6 +3691,21 @@ function ProgressPage({ onBack }: { onBack: () => void }) {
 
 // ─── page 3: blockers ─────────────────────────────────────────────────────────
 function BlockersPage({ onBack }: { onBack: () => void }) {
+  const tasks = useStoredTasks();
+  const blockedTasks = tasks.filter(t => t.status === "blocked");
+  const daysDelayed = (task: Task) => {
+    const daysLeft = getDaysLeft(task.dueDate);
+    return daysLeft !== null && daysLeft < 0 ? Math.abs(daysLeft) : 0;
+  };
+  const avgDelay = blockedTasks.length
+    ? Math.round((blockedTasks.reduce((sum, t) => sum + daysDelayed(t), 0) / blockedTasks.length) * 10) / 10
+    : 0;
+  const highSeverity = blockedTasks.filter(t => t.priority === "high").length;
+
+  const resolveBlocker = (taskId: string) => {
+    saveStoredTasks(getStoredTasks().map(t => t.id === taskId ? { ...t, status: "inprogress" } : t));
+  };
+
   return (
     <div className="h-full overflow-y-auto p-6 space-y-4" style={{ fontFamily: "'Inter','Noto Sans KR',sans-serif" }}>
       {/* header */}
@@ -3102,33 +3715,38 @@ function BlockersPage({ onBack }: { onBack: () => void }) {
           <h1 className="text-xl font-bold text-foreground">블로커 관리</h1>
           <p className="text-sm text-muted-foreground mt-0.5">막힌 업무를 파악하고 해결 담당자와 기한을 지정해 위험을 제거합니다.</p>
         </div>
-        <button className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
-          <Plus className="w-3.5 h-3.5" /> 블로커 추가
-        </button>
       </div>
 
       {/* stat cards */}
       <div className="grid grid-cols-4 gap-3">
-        <DetailStatCard label="현재 블로커" value={BLOCKER_DETAILS.length} sub="해결 대기" color="#EF4444" icon={AlertTriangle} />
-        <DetailStatCard label="심각도 높음" value="2" sub="즉각 조치 필요" color="#EF4444" icon={AlertCircle} />
-        <DetailStatCard label="평균 지연" value="3.5일" sub="발생일 기준" color="#F59E0B" icon={Clock} />
-        <DetailStatCard label="영향받는 업무" value="3개" sub="연쇄 지연 위험" color="#7048E8" icon={Layers} />
+        <DetailStatCard label="현재 블로커" value={blockedTasks.length} sub="해결 대기" color="#EF4444" icon={AlertTriangle} />
+        <DetailStatCard label="심각도 높음" value={highSeverity} sub="즉각 조치 필요" color="#EF4444" icon={AlertCircle} />
+        <DetailStatCard label="평균 지연" value={blockedTasks.length ? `${avgDelay}일` : "—"} sub="마감일 기준" color="#F59E0B" icon={Clock} />
+        <DetailStatCard label="영향받는 업무" value={blockedTasks.length} sub="담당자 확인 필요" color="#7048E8" icon={Layers} />
       </div>
 
       {/* AI box */}
       <AIBox
-        text="BL-01(DB 인덱싱)이 4일째 팀 내 결정 부재로 지속 중입니다. 오늘 30분 긴급 결정 미팅을 강력 추천합니다. BL-02는 axios 인터셉터 전환으로 해결 가능성이 높습니다."
+        text={blockedTasks.length
+          ? `블로커 ${blockedTasks.length}건이 해결 대기 중입니다. 담당자와 함께 원인을 확인하고 필요 시 재배정하세요.`
+          : "현재 블로커가 없습니다. 업무 보드에서 업무를 블로커로 전환하면 이곳에 표시됩니다."}
         onAsk={() => {}}
       />
 
       {/* blocker cards */}
+      {blockedTasks.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border bg-muted/30 p-10 text-center">
+          <AlertTriangle className="w-8 h-8 text-slate-300 mx-auto mb-3" />
+          <div className="text-sm font-semibold text-foreground mb-1">해결 대기 중인 블로커가 없습니다</div>
+          <div className="text-xs text-muted-foreground">업무 보드에서 진행 중 업무를 블로커로 전환하면 여기에서 관리할 수 있습니다.</div>
+        </div>
+      ) : (
       <div className="space-y-4">
-        {BLOCKER_DETAILS.map(b => {
-          const assignee = MEMBERS.find(m => m.id === b.assignee)!;
-          const resolver = b.resolver ? MEMBERS.find(m => m.id === b.resolver) : null;
-          const affected = TASKS.filter(t => b.affectedTaskIds.includes(t.id));
+        {blockedTasks.map(task => {
+          const assignee = MEMBERS.find(m => m.id === task.assignee) ?? MEMBERS[0];
+          const delay = daysDelayed(task);
           return (
-            <div key={b.id} className="bg-card rounded-xl border-2 border-red-200 shadow-sm overflow-hidden">
+            <div key={task.id} className="bg-card rounded-xl border-2 border-red-200 shadow-sm overflow-hidden">
               {/* card header */}
               <div className="flex items-start justify-between px-5 py-3.5 border-b border-red-100 bg-red-50/50">
                 <div className="flex items-start gap-3">
@@ -3137,26 +3755,21 @@ function BlockersPage({ onBack }: { onBack: () => void }) {
                   </div>
                   <div>
                     <div className="flex items-center flex-wrap gap-1.5 mb-1">
-                      <SeverityBadge severity={b.severity} />
-                      <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{b.type}</span>
-                      <span className="text-[10px] font-mono text-muted-foreground">{b.id} · {b.taskId}</span>
+                      <PriorityBadge priority={task.priority} />
+                      {task.labels.map(l => <LabelBadge key={l} label={l} />)}
+                      <span className="text-[10px] font-mono text-muted-foreground">{task.id}</span>
                     </div>
-                    <div className="text-sm font-semibold text-foreground">{b.title}</div>
+                    <div className="text-sm font-semibold text-foreground">{task.title}</div>
                   </div>
                 </div>
-                <span className="text-xs font-medium px-2.5 py-1 rounded-lg bg-red-100 text-red-700 shrink-0 whitespace-nowrap">{b.daysSince}일째 지속</span>
+                <span className="text-xs font-medium px-2.5 py-1 rounded-lg bg-red-100 text-red-700 shrink-0 whitespace-nowrap">
+                  {delay > 0 ? `${delay}일째 지연` : `마감 ${task.dueDate}`}
+                </span>
               </div>
 
               {/* card body */}
               <div className="px-5 py-4 space-y-4">
-                {/* reason */}
-                <div>
-                  <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">막힌 이유</div>
-                  <p className="text-sm text-foreground leading-relaxed">{b.reason}</p>
-                </div>
-
-                {/* meta */}
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                   <div>
                     <div className="text-[10px] text-muted-foreground mb-1.5">담당자</div>
                     <div className="flex items-center gap-1.5">
@@ -3165,65 +3778,32 @@ function BlockersPage({ onBack }: { onBack: () => void }) {
                     </div>
                   </div>
                   <div>
-                    <div className="text-[10px] text-muted-foreground mb-1.5">해결 담당자</div>
-                    {resolver ? (
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold" style={{ background: resolver.color }}>{resolver.initials}</div>
-                        <span className="text-xs font-medium text-foreground">{resolver.name}</span>
-                      </div>
-                    ) : (
-                      <button className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700">
-                        <Plus className="w-3 h-3" /> 지정하기
-                      </button>
-                    )}
+                    <div className="text-[10px] text-muted-foreground mb-1.5">마감일</div>
+                    <span className="text-xs text-foreground">{task.dueDate}</span>
                   </div>
                   <div>
-                    <div className="text-[10px] text-muted-foreground mb-1.5">발생일</div>
-                    <span className="text-xs text-foreground">{b.createdAt}</span>
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-muted-foreground mb-1.5">연결 참고</div>
-                    <button className="text-xs text-blue-600 hover:text-blue-700 underline">{b.link}</button>
-                  </div>
-                </div>
-
-                {/* affected tasks */}
-                <div>
-                  <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">영향받는 업무</div>
-                  <div className="flex flex-wrap gap-2">
-                    {affected.map(t => (
-                      <div key={t.id} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-muted border border-border text-xs">
-                        <span className="font-mono text-muted-foreground">{t.id}</span>
-                        <span className="text-foreground truncate max-w-[150px]">{t.title}</span>
-                        <StatusBadge2 status={t.status} />
-                      </div>
-                    ))}
+                    <div className="text-[10px] text-muted-foreground mb-1.5">우선순위</div>
+                    <PriorityBadge priority={task.priority} />
                   </div>
                 </div>
 
                 {/* AI suggestion */}
                 <div className="rounded-lg p-3 flex items-start gap-2.5 border" style={{ background: "rgba(112,72,232,0.05)", borderColor: "rgba(112,72,232,0.2)" }}>
                   <Sparkles className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: "#7048E8" }} />
-                  <p className="text-xs leading-relaxed" style={{ color: "#5B3DC8" }}>{b.aiSuggestion}</p>
+                  <p className="text-xs leading-relaxed" style={{ color: "#5B3DC8" }}>이 업무는 블로커 상태입니다. 담당자와 원인을 확인하고 해결 후 블로커 해결 완료로 전환하세요.</p>
                 </div>
 
                 {/* actions */}
                 <div className="flex items-center flex-wrap gap-2 pt-1 border-t border-border">
-                  <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg bg-red-500 hover:bg-red-600 transition-colors">
+                  <button onClick={() => resolveBlocker(task.id)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg bg-red-500 hover:bg-red-600 transition-colors">
                     <CheckCheck className="w-3.5 h-3.5" /> 해결 완료
                   </button>
                   <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
                     <Calendar className="w-3.5 h-3.5" /> 회의 안건 추가
                   </button>
                   <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
-                    <Plus className="w-3.5 h-3.5" /> 관련 업무 생성
-                  </button>
-                  <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
                     <MessageSquare className="w-3.5 h-3.5" /> 팀 코멘트
-                  </button>
-                  <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg ml-auto transition-opacity hover:opacity-80"
-                    style={{ background: "rgba(112,72,232,0.12)", color: "#7048E8" }}>
-                    <Sparkles className="w-3.5 h-3.5" /> AI 해결 방법 추천
                   </button>
                 </div>
               </div>
@@ -3231,13 +3811,15 @@ function BlockersPage({ onBack }: { onBack: () => void }) {
           );
         })}
       </div>
+      )}
     </div>
   );
 }
 
 // ─── page 4: in-progress tasks ────────────────────────────────────────────────
 function InProgressPage({ onBack }: { onBack: () => void }) {
-  const inProgressTasks = TASKS.filter(t => t.status === "inprogress");
+  const tasks = useStoredTasks();
+  const inProgressTasks = tasks.filter(t => t.status === "inprogress");
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-4" style={{ fontFamily: "'Inter','Noto Sans KR',sans-serif" }}>
@@ -3268,7 +3850,9 @@ function InProgressPage({ onBack }: { onBack: () => void }) {
 
       {/* AI box */}
       <AIBox
-        text="TF-07(관리자 대시보드)이 3일간 업데이트가 없습니다. 이서연님께 진행 상황 업데이트를 요청하세요. TF-05(결제 연동)의 블로커를 오늘 해결해야 마감 일정을 지킬 수 있습니다."
+        text={inProgressTasks.length
+          ? `현재 진행 중 업무 ${inProgressTasks.length}개가 있습니다. 팀장은 담당자별 진행 상황을 확인하고 지연 위험이 있는 업무를 블로커로 전환할 수 있습니다.`
+          : "현재 진행 중인 업무가 없습니다. 회의록 AI에서 업무를 등록하면 업무 보드에서 상태를 진행 중으로 변경할 수 있습니다."}
         onAsk={() => {}}
       />
 
@@ -3289,8 +3873,8 @@ function InProgressPage({ onBack }: { onBack: () => void }) {
       {/* task cards */}
       <div className="space-y-3">
         {inProgressTasks.map(task => {
-          const member = MEMBERS.find(m => m.id === task.assignee)!;
-          const meta = IN_PROGRESS_META[task.id] ?? { startDate: "12.01", lastUpdate: "오늘", stale: false, riskLevel: "low" as const, nextAction: "진행 중", note: "" };
+          const member = MEMBERS.find(m => m.id === task.assignee) ?? MEMBERS[0];
+          const meta = { startDate: "-", lastUpdate: "-", stale: false, riskLevel: "low" as const, nextAction: "담당자 진행 상황 확인", note: "" };
           const borderColor = meta.riskLevel === "high" ? "#EF4444" : meta.stale ? "#F59E0B" : "#DFE1E6";
           const bgColor    = meta.riskLevel === "high" ? "rgba(239,68,68,0.03)" : meta.stale ? "rgba(245,158,11,0.03)" : "white";
 
@@ -3379,140 +3963,94 @@ function InProgressPage({ onBack }: { onBack: () => void }) {
 
 // ─── page 5: dash progress ────────────────────────────────────────────────────
 function DashProgressPage({ onBack, onGoUrgent }: { onBack: () => void; onGoUrgent: () => void }) {
-  const [period, setPeriod] = useState("전체");
+  const tasks = useStoredTasks();
+  const totalTasks = tasks.length;
+  const doneTasks = tasks.filter(t => t.status === "done").length;
+  const inProgressTasks = tasks.filter(t => t.status === "inprogress").length;
+  const blockedTasks = tasks.filter(t => t.status === "blocked").length;
+  const todoTasks = tasks.filter(t => t.status === "todo").length;
+  const progressPct = totalTasks ? Math.round((doneTasks / totalTasks) * 100) : 0;
 
-  const milestoneStatus = (s: TaskStatus) => {
-    const map = { done: { cls: "bg-emerald-100 text-emerald-700", label: "완료" }, inprogress: { cls: "bg-blue-100 text-blue-700", label: "진행 중" }, todo: { cls: "bg-slate-100 text-slate-500", label: "예정" }, blocked: { cls: "bg-red-100 text-red-700", label: "지연" } };
-    return map[s];
-  };
+  const categoryBreakdown = CATEGORIES.map(cat => {
+    const catTasks = tasks.filter(t => t.labels.includes(cat.label));
+    return { label: cat.label, color: cat.color, done: catTasks.filter(t => t.status === "done").length, total: catTasks.length };
+  }).filter(c => c.total > 0);
+
+  const upcoming = tasks
+    .filter(t => t.status !== "done")
+    .map(t => ({ task: t, daysLeft: getDaysLeft(t.dueDate) }))
+    .sort((a, b) => (a.daysLeft ?? Infinity) - (b.daysLeft ?? Infinity))
+    .slice(0, 5);
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-4" style={{ fontFamily: "'Inter','Noto Sans KR',sans-serif" }}>
       <div className="flex items-start justify-between">
-        <div><BackBtn onBack={onBack} /><h1 className="text-xl font-bold text-foreground">전체 진행률</h1><p className="text-sm text-muted-foreground mt-0.5">프로젝트 일정 대비 진행 현황을 분석하고 지연 위험을 파악합니다.</p></div>
+        <div><BackBtn onBack={onBack} /><h1 className="text-xl font-bold text-foreground">전체 진행률</h1><p className="text-sm text-muted-foreground mt-0.5">프로젝트 진행 현황을 분석하고 지연 위험을 파악합니다.</p></div>
         <div className="flex items-center gap-2">
           <button onClick={onGoUrgent} className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-red-200 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors"><AlertTriangle className="w-3.5 h-3.5" />지연 업무 바로가기</button>
-          <button className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><FileText className="w-3.5 h-3.5" />리포트 PDF</button>
-          <button className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-white rounded-lg" style={{ background: "linear-gradient(135deg,#7048E8,#4F6EF7)" }}><Sparkles className="w-3.5 h-3.5" />AI 요약 요청</button>
         </div>
       </div>
 
       <div className="grid grid-cols-4 gap-3">
-        <DetailStatCard label="전체 완료율" value="29%" sub="4 / 14 완료" color="#3B5BDB" icon={TrendingUp} />
-        <DetailStatCard label="계획 대비" value="-11%" sub="목표보다 낮음" color="#EF4444" icon={AlertTriangle} />
-        <DetailStatCard label="지연 업무" value="3개" sub="즉시 검토 필요" color="#EF4444" icon={Clock} />
-        <DetailStatCard label="마감 D-day" value="D-18" sub="2024.12.28" color="#F59E0B" icon={Calendar} />
+        <DetailStatCard label="전체 완료율" value={`${progressPct}%`} sub={`${doneTasks} / ${totalTasks} 완료`} color="#3B5BDB" icon={TrendingUp} />
+        <DetailStatCard label="진행 중" value={inProgressTasks} sub="활성 업무" color="#7048E8" icon={Clock} />
+        <DetailStatCard label="블로커" value={blockedTasks} sub="즉시 검토 필요" color="#EF4444" icon={AlertTriangle} />
+        <DetailStatCard label="대기" value={todoTasks} sub="시작 전 업무" color="#F59E0B" icon={Layers} />
       </div>
 
-      <AIBox text="테스트 단계가 계획보다 3일 지연되고 있습니다. TF-13(DB 인덱싱) 블로커가 해결되지 않으면 개발 완료가 12.15를 넘길 수 있습니다. 담당자 재배정 또는 범위 축소를 검토하세요." onAsk={() => {}} />
+      <AIBox text={totalTasks
+        ? `현재 완료율 ${progressPct}%, 블로커 ${blockedTasks}건입니다. 블로커를 우선 해결하면 전체 진행 속도를 높일 수 있습니다.`
+        : "아직 등록된 업무가 없습니다. 회의록 AI에서 To-Do를 승인하면 전체 진행률이 표시됩니다."} onAsk={() => {}} />
 
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-muted-foreground font-medium">기간 필터</span>
-        {["전체", "이번 주", "이번 달", "발표 전까지"].map(p => (
-          <button key={p} onClick={() => setPeriod(p)} className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${period === p ? "bg-blue-600 text-white border-blue-600" : "bg-card border-border text-muted-foreground hover:border-slate-300"}`}>{p}</button>
-        ))}
-        <div className="ml-auto flex items-center gap-2">
-          <span className="flex items-center gap-1 text-xs text-muted-foreground"><div className="w-2.5 h-0.5 rounded" style={{ background: "#3B5BDB" }} />실제 진행률</span>
-          <span className="flex items-center gap-1 text-xs text-muted-foreground"><div className="w-2.5 h-0.5 rounded border border-dashed border-slate-400" />계획 진행률</span>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-3 gap-4">
-        {/* Planned vs Actual chart */}
-        <div className="col-span-2 bg-card rounded-xl p-5 border border-border shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div className="text-sm font-semibold text-foreground">계획 대비 실제 진행률</div>
-            <div className="text-xs text-muted-foreground">기준: 주별 완료 업무 수</div>
-          </div>
-          <div className="h-52">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={PLANNED_VS_ACTUAL} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="planGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop key="p1" offset="5%" stopColor="#C1C9D9" stopOpacity={0.2} />
-                    <stop key="p2" offset="95%" stopColor="#C1C9D9" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="actGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop key="a1" offset="5%" stopColor="#3B5BDB" stopOpacity={0.2} />
-                    <stop key="a2" offset="95%" stopColor="#3B5BDB" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid key="cg" strokeDasharray="3 3" stroke="rgba(0,0,0,0.05)" />
-                <XAxis key="x" dataKey="week" tick={{ fontSize: 10, fill: "#8892A4" }} />
-                <YAxis key="y" tick={{ fontSize: 10, fill: "#8892A4" }} />
-                <Tooltip key="tt" contentStyle={{ fontSize: 12, borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }} />
-                <Area key="plan" type="monotone" dataKey="planned" name="계획" stroke="#C1C9D9" strokeWidth={2} strokeDasharray="4 2" fill="url(#planGrad)" />
-                <Area key="actual" type="monotone" dataKey="actual" name="실제" stroke="#3B5BDB" strokeWidth={2} fill="url(#actGrad)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="mt-3 p-2.5 rounded-lg bg-amber-50 border border-amber-200 flex items-center gap-2">
-            <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-            <span className="text-xs text-amber-700">12/2 이후 실제 진행률이 계획보다 <strong>11% 낮아졌습니다.</strong> 블로커 해결이 시급합니다.</span>
-          </div>
-        </div>
-
-        {/* Stage progress */}
+      <div className="grid grid-cols-2 gap-4">
+        {/* Category progress */}
         <div className="bg-card rounded-xl p-5 border border-border shadow-sm">
-          <div className="text-sm font-semibold text-foreground mb-4">단계별 진행 상태</div>
+          <div className="text-sm font-semibold text-foreground mb-4">카테고리별 진행 상태</div>
+          {categoryBreakdown.length === 0 ? (
+            <div className="text-xs text-muted-foreground text-center py-6">업무가 등록되면 카테고리별 진행 상태가 표시됩니다.</div>
+          ) : (
           <div className="space-y-3.5">
-            {STAGES.map(s => (
-              <div key={s.name}>
-                <div className="flex items-center justify-between text-xs mb-1.5">
-                  <span className="font-medium text-foreground">{s.name}</span>
-                  <span className={`font-semibold ${s.pct === 100 ? "text-emerald-600" : s.pct >= 50 ? "text-blue-600" : s.pct > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{s.pct}%</span>
-                </div>
-                <div className="w-full h-2 bg-muted rounded-full">
-                  <div className="h-2 rounded-full transition-all" style={{ width: `${s.pct}%`, background: s.color }} />
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="mt-4 pt-3 border-t border-border">
-            <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">상태 범례</div>
-            {[{ color: "#10B981", label: "완료·양호" }, { color: "#3B5BDB", label: "진행 중" }, { color: "#F59E0B", label: "지연 위험" }, { color: "#C1C9D9", label: "미시작" }].map(l => (
-              <div key={l.label} className="flex items-center gap-1.5 text-xs text-muted-foreground py-0.5">
-                <div className="w-2 h-2 rounded-full" style={{ background: l.color }} />{l.label}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Milestone table */}
-      <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-border">
-          <div className="text-sm font-semibold text-foreground">마일스톤 진행 현황</div>
-          <button className="text-xs font-medium text-blue-600 hover:text-blue-700">+ 마일스톤 추가</button>
-        </div>
-        <table className="w-full text-sm">
-          <thead><tr className="border-b border-border bg-muted/40">
-            {["ID", "마일스톤", "마감일", "상태", "진행률", "관련 업무", ""].map(h => (
-              <th key={h} className="px-4 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{h}</th>
-            ))}
-          </tr></thead>
-          <tbody className="divide-y divide-border">
-            {MILESTONES.map(m => {
-              const st = milestoneStatus(m.status);
+            {categoryBreakdown.map(c => {
+              const pct = c.total ? Math.round((c.done / c.total) * 100) : 0;
               return (
-                <tr key={m.id} className="hover:bg-muted/30 transition-colors">
-                  <td className="px-4 py-3 font-mono text-[10px] text-muted-foreground">{m.id}</td>
-                  <td className="px-4 py-3 text-xs font-medium text-foreground">{m.name}</td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground">{m.date}</td>
-                  <td className="px-4 py-3"><span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${st.cls}`}>{st.label}</span></td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-20 h-1.5 bg-muted rounded-full"><div className="h-1.5 rounded-full" style={{ width: `${m.progress}%`, background: m.progress === 100 ? "#10B981" : m.progress > 0 ? "#3B5BDB" : "#C1C9D9" }} /></div>
-                      <span className="text-xs font-semibold text-foreground">{m.progress}%</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground">{m.tasks}개</td>
-                  <td className="px-4 py-3"><button className="text-[11px] font-medium text-blue-600 hover:text-blue-700">업무 보기</button></td>
-                </tr>
+                <div key={c.label}>
+                  <div className="flex items-center justify-between text-xs mb-1.5">
+                    <span className="font-medium text-foreground">{c.label}</span>
+                    <span className={`font-semibold ${pct === 100 ? "text-emerald-600" : pct >= 50 ? "text-blue-600" : pct > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{pct}%</span>
+                  </div>
+                  <div className="w-full h-2 bg-muted rounded-full">
+                    <div className="h-2 rounded-full transition-all" style={{ width: `${pct}%`, background: c.color }} />
+                  </div>
+                </div>
               );
             })}
-          </tbody>
-        </table>
+          </div>
+          )}
+        </div>
+
+        {/* Upcoming tasks */}
+        <div className="bg-card rounded-xl p-5 border border-border shadow-sm">
+          <div className="text-sm font-semibold text-foreground mb-4">마감 임박 업무</div>
+          {upcoming.length === 0 ? (
+            <div className="text-xs text-muted-foreground text-center py-6">진행 중인 업무가 없습니다.</div>
+          ) : (
+          <div className="space-y-3">
+            {upcoming.map(({ task, daysLeft }) => {
+              const m = MEMBERS.find(me => me.id === task.assignee) ?? MEMBERS[0];
+              return (
+                <div key={task.id} className="flex items-center gap-2.5">
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0" style={{ background: m.color }}>{m.initials}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-medium text-foreground truncate">{task.title}</div>
+                    <div className="text-[10px] text-muted-foreground">{m.name} · 마감 {task.dueDate}</div>
+                  </div>
+                  <span className={`text-xs font-bold shrink-0 ${daysLeft !== null && daysLeft < 0 ? "text-red-600" : daysLeft !== null && daysLeft <= 3 ? "text-amber-600" : "text-muted-foreground"}`}>{formatDaysLeft(daysLeft)}</span>
+                </div>
+              );
+            })}
+          </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -3520,28 +4058,31 @@ function DashProgressPage({ onBack, onGoUrgent }: { onBack: () => void; onGoUrge
 
 // ─── page 6: urgent tasks ─────────────────────────────────────────────────────
 function UrgentTasksPage({ onBack }: { onBack: () => void }) {
-  const [selected, setSelected] = useState<string | null>("TF-13");
+  const tasks = useStoredTasks();
+  const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [assigneeFilter, setAssigneeFilter] = useState("전체");
 
-  const urgentTasks = TASKS.filter(t => t.status !== "done").filter(t => {
+  const urgentTasks = tasks.filter(t => t.status !== "done").filter(t => {
     const mq = !search || t.title.toLowerCase().includes(search.toLowerCase());
     const ma = assigneeFilter === "전체" || MEMBERS.find(m => m.id === t.assignee)?.name === assigneeFilter;
     return mq && ma;
   });
+  const getUrgency = (task: Task) => getUrgencyFromDaysLeft(getDaysLeft(task.dueDate));
 
   const groups = [
+    { label: "⚫ 이미 지연", urgency: "overdue", color: "#6B7280", bg: "bg-slate-50 border-slate-200" },
     { label: "🔴 오늘 마감", urgency: "today",  color: "#EF4444", bg: "bg-red-50 border-red-200" },
     { label: "🟠 3일 이내",  urgency: "3day",   color: "#F97316", bg: "bg-orange-50 border-orange-200" },
     { label: "🟡 7일 이내",  urgency: "week",   color: "#F59E0B", bg: "bg-amber-50 border-amber-200" },
-    { label: "⚫ 이미 지연", urgency: "overdue", color: "#6B7280", bg: "bg-slate-50 border-slate-200" },
+    { label: "🟢 여유 있음", urgency: "normal", color: "#10B981", bg: "bg-emerald-50 border-emerald-200" },
   ];
 
-  const selectedTask = TASKS.find(t => t.id === selected);
-  const selectedMeta = selected ? URGENT_META[selected] : null;
-  const selectedMember = selectedTask ? MEMBERS.find(m => m.id === selectedTask.assignee)! : null;
+  const selectedTask = tasks.find(t => t.id === selected);
+  const selectedDaysLeft = selectedTask ? getDaysLeft(selectedTask.dueDate) : null;
+  const selectedMember = selectedTask ? (MEMBERS.find(m => m.id === selectedTask.assignee) ?? MEMBERS[0]) : null;
 
-  const urgencyCount = (u: string) => urgentTasks.filter(t => URGENT_META[t.id]?.urgency === u).length;
+  const urgencyCount = (u: string) => urgentTasks.filter(t => getUrgency(t) === u).length;
 
   return (
     <div className="h-full overflow-hidden flex flex-col p-6 gap-4" style={{ fontFamily: "'Inter','Noto Sans KR',sans-serif" }}>
@@ -3560,7 +4101,7 @@ function UrgentTasksPage({ onBack }: { onBack: () => void }) {
         <DetailStatCard label="이미 지연" value={urgencyCount("overdue")} sub="즉시 담당자 확인" color="#6B7280" icon={AlertTriangle} />
       </div>
 
-      <AIBox text="TF-13(DB 인덱싱)과 TF-14(결제 오류 처리)가 블로커 상태로 D-5, D-6 마감을 앞두고 있습니다. 오늘 내 팀 전체 긴급 회의를 소집하거나 해결 담당자를 즉시 지정하세요." onAsk={() => {}} />
+      <AIBox text={urgentTasks.length ? `마감 전 업무 ${urgentTasks.length}개가 남아 있습니다. 팀장은 담당자별 마감일을 확인하고 필요 시 리마인드 또는 일정 조정을 진행하세요.` : "마감 임박 업무가 없습니다. 회의록 AI에서 업무를 등록하면 마감일 기준으로 자동 분류됩니다."} onAsk={() => {}} />
 
       <div className="flex items-center gap-2 shrink-0 flex-wrap">
         <div className="relative">
@@ -3577,15 +4118,15 @@ function UrgentTasksPage({ onBack }: { onBack: () => void }) {
         {/* Task list */}
         <div className="flex-1 overflow-y-auto space-y-3">
           {groups.map(g => {
-            const tasks = urgentTasks.filter(t => URGENT_META[t.id]?.urgency === g.urgency);
+            const tasks = urgentTasks.filter(t => getUrgency(t) === g.urgency);
             if (!tasks.length) return null;
             return (
               <div key={g.urgency}>
                 <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-semibold mb-2 ${g.bg}`} style={{ color: g.color }}>{g.label} ({tasks.length})</div>
                 <div className="space-y-2">
                   {tasks.map(task => {
-                    const member = MEMBERS.find(m => m.id === task.assignee)!;
-                    const meta = URGENT_META[task.id];
+                    const member = MEMBERS.find(m => m.id === task.assignee) ?? MEMBERS[0];
+                    const daysLeft = getDaysLeft(task.dueDate);
                     const isSelected = selected === task.id;
                     return (
                       <div key={task.id} onClick={() => setSelected(task.id)}
@@ -3602,7 +4143,7 @@ function UrgentTasksPage({ onBack }: { onBack: () => void }) {
                           <div className="text-[10px] text-muted-foreground mt-0.5">{member.name} · 마감 {task.dueDate}</div>
                         </div>
                         <div className="shrink-0 text-center">
-                          <div className="text-lg font-bold" style={{ color: g.color }}>D-{meta?.daysLeft}</div>
+                          <div className="text-lg font-bold" style={{ color: g.color }}>{formatDaysLeft(daysLeft)}</div>
                           <div className="text-[9px] text-muted-foreground">남은 일수</div>
                         </div>
                       </div>
@@ -3631,7 +4172,7 @@ function UrgentTasksPage({ onBack }: { onBack: () => void }) {
                 </div>
                 <div><div className="text-[10px] text-muted-foreground mb-1">우선순위</div><PriorityBadge priority={selectedTask.priority} /></div>
                 <div><div className="text-[10px] text-muted-foreground mb-1">마감일</div><span className="font-semibold text-foreground">{selectedTask.dueDate}</span></div>
-                <div><div className="text-[10px] text-muted-foreground mb-1">남은 시간</div><span className="font-bold" style={{ color: selectedMeta && selectedMeta.daysLeft <= 3 ? "#EF4444" : "#F59E0B" }}>D-{selectedMeta?.daysLeft}</span></div>
+                <div><div className="text-[10px] text-muted-foreground mb-1">남은 시간</div><span className="font-bold" style={{ color: selectedDaysLeft !== null && selectedDaysLeft <= 3 ? "#EF4444" : "#F59E0B" }}>{formatDaysLeft(selectedDaysLeft)}</span></div>
               </div>
               <div className="flex flex-wrap gap-1">{selectedTask.labels.map(l => <LabelBadge key={l} label={l} />)}</div>
               <div className="space-y-2 pt-2 border-t border-border">
@@ -3653,19 +4194,30 @@ function UrgentTasksPage({ onBack }: { onBack: () => void }) {
 
 // ─── page 7: workload ─────────────────────────────────────────────────────────
 function WorkloadPage({ onBack }: { onBack: () => void }) {
+  const tasks = useStoredTasks();
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
 
   const memberTasks = (id: string) => ({
-    total:    TASKS.filter(t => t.assignee === id).length,
-    done:     TASKS.filter(t => t.assignee === id && t.status === "done").length,
-    inprog:   TASKS.filter(t => t.assignee === id && t.status === "inprogress").length,
-    blocked:  TASKS.filter(t => t.assignee === id && t.status === "blocked").length,
-    todo:     TASKS.filter(t => t.assignee === id && t.status === "todo").length,
-    list:     TASKS.filter(t => t.assignee === id),
+    total:    tasks.filter(t => t.assignee === id).length,
+    done:     tasks.filter(t => t.assignee === id && t.status === "done").length,
+    inprog:   tasks.filter(t => t.assignee === id && t.status === "inprogress").length,
+    blocked:  tasks.filter(t => t.assignee === id && t.status === "blocked").length,
+    todo:     tasks.filter(t => t.assignee === id && t.status === "todo").length,
+    list:     tasks.filter(t => t.assignee === id),
   });
 
-  const overallBalance = "보통";
-  const aiRec = "최동혁님의 진행 중 업무가 4개로 가장 많고 블로커 2개가 포함되어 있습니다. TF-12(보안 점검 보고서)를 박지수님에게 재배정하는 것을 추천합니다.";
+  const overloadedMembers = MEMBERS.filter(m => {
+    const t = memberTasks(m.id);
+    return t.blocked > 0 && t.inprog >= 2;
+  });
+  const mostLoaded = MEMBERS.map(m => ({ m, t: memberTasks(m.id) })).sort((a, b) => b.t.inprog - a.t.inprog)[0];
+  const avgPerMember = MEMBERS.length ? (tasks.length / MEMBERS.length) : 0;
+  const overallBalance = tasks.length === 0 ? "데이터 없음" : overloadedMembers.length > 0 ? "재배정 필요" : "양호";
+  const aiRec = tasks.length === 0
+    ? "아직 등록된 업무가 없습니다. 회의록 AI에서 To-Do를 승인하면 팀원별 업무량이 표시됩니다."
+    : mostLoaded && mostLoaded.t.inprog > 0
+      ? `${mostLoaded.m.name}님의 진행 중 업무가 ${mostLoaded.t.inprog}개로 가장 많습니다.${mostLoaded.t.blocked > 0 ? ` 블로커 ${mostLoaded.t.blocked}개가 포함되어 있어 재배정을 검토하세요.` : ""}`
+      : "현재 팀원별 업무량이 고르게 분배되어 있습니다.";
 
   const barData = MEMBERS.map(m => {
     const t = memberTasks(m.id);
@@ -3684,9 +4236,9 @@ function WorkloadPage({ onBack }: { onBack: () => void }) {
 
       <div className="grid grid-cols-4 gap-3">
         <DetailStatCard label="팀원 수" value={`${MEMBERS.length}명`} sub="팀장 포함" color="#3B5BDB" icon={Users} />
-        <DetailStatCard label="1인 평균 업무" value="3.5개" sub="진행 중 기준" color="#7048E8" icon={Layers} />
-        <DetailStatCard label="과부하 위험" value="1명" sub="최동혁님" color="#EF4444" icon={AlertTriangle} />
-        <DetailStatCard label="업무 균형" value={overallBalance} sub="재배정 검토 필요" color="#F59E0B" icon={BarChart3} />
+        <DetailStatCard label="1인 평균 업무" value={`${avgPerMember.toFixed(1)}개`} sub="전체 기준" color="#7048E8" icon={Layers} />
+        <DetailStatCard label="과부하 위험" value={`${overloadedMembers.length}명`} sub={overloadedMembers.length ? overloadedMembers.map(m => m.name).join(", ") : "없음"} color="#EF4444" icon={AlertTriangle} />
+        <DetailStatCard label="업무 균형" value={overallBalance} sub={tasks.length === 0 ? "업무 등록 후 표시" : overloadedMembers.length ? "재배정 검토 필요" : "안정적"} color="#F59E0B" icon={BarChart3} />
       </div>
 
       {/* AI recommendation */}
@@ -3725,7 +4277,7 @@ function WorkloadPage({ onBack }: { onBack: () => void }) {
           <div className="space-y-4">
             {MEMBERS.map(m => {
               const t = memberTasks(m.id);
-              const pct = Math.round((t.done / t.total) * 100);
+              const pct = t.total ? Math.round((t.done / t.total) * 100) : 0;
               const isOverload = t.blocked > 0 && t.inprog >= 2;
               return (
                 <div key={m.id}>
@@ -3823,60 +4375,58 @@ function WorkloadPage({ onBack }: { onBack: () => void }) {
 
 // ─── page 8: activity ─────────────────────────────────────────────────────────
 const ACTIVITY_ICONS: Record<ActivityType, { icon: any; color: string; bg: string; label: string }> = {
-  commit:      { icon: GitCommit,      color: "#6B7280", bg: "#F4F6FA",    label: "커밋" },
-  pr:          { icon: GitPullRequest, color: "#3B5BDB", bg: "#EEF1FB",   label: "PR" },
-  merge:       { icon: GitMerge,       color: "#10B981", bg: "#ECFDF5",   label: "머지" },
   task_create: { icon: Plus,           color: "#7048E8", bg: "rgba(112,72,232,0.1)", label: "업무 생성" },
-  task_update: { icon: RefreshCw,      color: "#3B5BDB", bg: "#EEF1FB",   label: "상태 변경" },
   meeting:     { icon: FileAudio,      color: "#7048E8", bg: "rgba(112,72,232,0.1)", label: "회의록" },
   ai:          { icon: Sparkles,       color: "#7048E8", bg: "rgba(112,72,232,0.15)", label: "AI" },
-  deliverable: { icon: Package,        color: "#10B981", bg: "#ECFDF5",   label: "산출물" },
-  comment:     { icon: MessageSquare,  color: "#8892A4", bg: "#F4F6FA",   label: "댓글" },
-  file:        { icon: FileText,       color: "#F59E0B", bg: "#FFFBEB",   label: "파일" },
 };
 
 function ActivityPage({ onBack }: { onBack: () => void }) {
+  const tasks = useStoredTasks();
+  const meetings = useStoredMeetings();
   const [typeFilter, setTypeFilter] = useState("전체");
   const [memberFilter, setMemberFilter] = useState("전체");
   const [search, setSearch] = useState("");
 
-  const typeFilters = ["전체", "업무", "GitHub", "회의록", "AI", "산출물", "댓글"];
+  const activityLog: Activity[] = [
+    ...meetings.flatMap(m => [
+      { id: `meeting-${m.id}`, type: "meeting" as ActivityType, actor: "회의록 AI", time: m.date, message: `${m.title} 회의록 업로드`, target: m.title },
+      ...(m.status === "processed" ? [{ id: `ai-${m.id}`, type: "ai" as ActivityType, actor: "AI", time: m.date, message: `${m.title} AI 분석 완료`, target: m.title }] : []),
+    ]),
+    ...tasks.map(task => {
+      const member = MEMBERS.find(mem => mem.id === task.assignee);
+      return { id: `task-${task.id}`, type: "task_create" as ActivityType, actor: member?.name ?? "팀장", time: `마감 ${task.dueDate}`, message: `${task.title} 업무 등록`, target: task.id };
+    }),
+  ];
+
+  const typeFilters = ["전체", "업무", "회의록", "AI"];
   const typeMap: Record<string, ActivityType[]> = {
-    "업무":   ["task_create", "task_update"],
-    "GitHub": ["commit", "pr", "merge"],
+    "업무":   ["task_create"],
     "회의록": ["meeting"],
     "AI":     ["ai"],
-    "산출물": ["deliverable", "file"],
-    "댓글":   ["comment"],
   };
 
-  const filtered = ACTIVITY_LOG.filter(a => {
+  const filtered = activityLog.filter(a => {
     const mt = typeFilter === "전체" || typeMap[typeFilter]?.includes(a.type);
     const mm = memberFilter === "전체" || a.actor === memberFilter;
     const ms = !search || a.message.toLowerCase().includes(search.toLowerCase());
     return mt && mm && ms;
   });
 
-  const todayCount = ACTIVITY_LOG.filter(a => ["방금 전", "1시간 전", "3시간 전", "5시간 전", "6시간 전"].includes(a.time)).length;
-  const weekCount = ACTIVITY_LOG.length;
-  const githubCount = ACTIVITY_LOG.filter(a => ["commit", "pr", "merge"].includes(a.type)).length;
-  const aiCount = ACTIVITY_LOG.filter(a => a.type === "ai" || a.actor === "AI").length;
+  const taskCount = activityLog.filter(a => a.type === "task_create").length;
+  const meetingCount = activityLog.filter(a => a.type === "meeting").length;
+  const aiCount = activityLog.filter(a => a.type === "ai").length;
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-4" style={{ fontFamily: "'Inter','Noto Sans KR',sans-serif" }}>
       <div className="flex items-start justify-between">
         <div><BackBtn onBack={onBack} /><h1 className="text-xl font-bold text-foreground">최근 활동</h1><p className="text-sm text-muted-foreground mt-0.5">팀 전체 활동을 타임라인으로 확인하고 중요 변경사항을 파악합니다.</p></div>
-        <div className="flex items-center gap-2">
-          <button className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><FileText className="w-3.5 h-3.5" />활동 로그 내보내기</button>
-          <button className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-white rounded-lg" style={{ background: "linear-gradient(135deg,#7048E8,#4F6EF7)" }}><Sparkles className="w-3.5 h-3.5" />AI 주간 요약 생성</button>
-        </div>
       </div>
 
       <div className="grid grid-cols-4 gap-3">
-        <DetailStatCard label="오늘 활동" value={todayCount} sub="오늘 기준" color="#3B5BDB" icon={Zap} />
-        <DetailStatCard label="이번 주 전체" value={weekCount} sub="최근 5일" color="#7048E8" icon={TrendingUp} />
-        <DetailStatCard label="GitHub 활동" value={githubCount} sub="커밋·PR·머지" color="#10B981" icon={Github} />
-        <DetailStatCard label="AI 생성" value={aiCount} sub="자동 생성 항목" color="#7048E8" icon={Sparkles} />
+        <DetailStatCard label="전체 활동" value={activityLog.length} sub="누적 기록" color="#3B5BDB" icon={Zap} />
+        <DetailStatCard label="업무 등록" value={taskCount} sub="회의록 AI + 직접 생성" color="#7048E8" icon={Plus} />
+        <DetailStatCard label="회의록 업로드" value={meetingCount} sub="누적 건수" color="#10B981" icon={FileAudio} />
+        <DetailStatCard label="AI 분석 완료" value={aiCount} sub="자동 생성 항목" color="#7048E8" icon={Sparkles} />
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -3884,7 +4434,7 @@ function ActivityPage({ onBack }: { onBack: () => void }) {
           <button key={f} onClick={() => setTypeFilter(f)} className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${typeFilter === f ? "bg-blue-600 text-white border-blue-600" : "bg-card border-border text-muted-foreground hover:border-slate-300"}`}>{f}</button>
         ))}
         <select value={memberFilter} onChange={e => setMemberFilter(e.target.value)} className="ml-2 text-xs border border-border rounded-lg px-3 py-2 bg-card text-foreground outline-none">
-          <option>전체</option>{MEMBERS.map(m => <option key={m.id}>{m.name}</option>)}<option>AI</option>
+          <option>전체</option>{MEMBERS.map(m => <option key={m.id}>{m.name}</option>)}<option>회의록 AI</option><option>AI</option>
         </select>
         <div className="relative ml-auto">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
@@ -3892,79 +4442,51 @@ function ActivityPage({ onBack }: { onBack: () => void }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        {/* Timeline */}
-        <div className="col-span-2 space-y-1">
-          {filtered.map((a, i) => {
-            const meta = ACTIVITY_ICONS[a.type];
-            const IconComp = meta.icon;
-            const actorMember = MEMBERS.find(m => m.name === a.actor);
-            const isLast = i === filtered.length - 1;
-            return (
-              <div key={a.id} className="flex gap-3">
-                {/* timeline line */}
-                <div className="flex flex-col items-center shrink-0">
-                  <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: meta.bg }}>
-                    <IconComp className="w-3.5 h-3.5" style={{ color: meta.color }} />
-                  </div>
-                  {!isLast && <div className="w-0.5 flex-1 bg-border my-1" />}
+      <div className="space-y-1">
+        {filtered.map((a, i) => {
+          const meta = ACTIVITY_ICONS[a.type];
+          const IconComp = meta.icon;
+          const actorMember = MEMBERS.find(m => m.name === a.actor);
+          const isLast = i === filtered.length - 1;
+          return (
+            <div key={a.id} className="flex gap-3">
+              {/* timeline line */}
+              <div className="flex flex-col items-center shrink-0">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: meta.bg }}>
+                  <IconComp className="w-3.5 h-3.5" style={{ color: meta.color }} />
                 </div>
-                {/* content */}
-                <div className={`flex-1 bg-card border border-border rounded-xl p-3 hover:shadow-sm transition-shadow cursor-pointer mb-2`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded`} style={{ background: meta.bg, color: meta.color }}>{meta.label}</span>
-                        {actorMember && (
-                          <div className="flex items-center gap-1">
-                            <div className="w-4 h-4 rounded-full flex items-center justify-center text-white text-[8px] font-bold" style={{ background: actorMember.color }}>{actorMember.initials}</div>
-                            <span className="text-[10px] font-medium text-foreground">{a.actor}</span>
-                          </div>
-                        )}
-                        {!actorMember && <span className="text-[10px] font-medium" style={{ color: meta.color }}>{a.actor}</span>}
-                      </div>
-                      <div className="text-xs text-foreground leading-relaxed">{a.message}</div>
-                      {a.target && <div className="mt-1"><span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{a.target}</span></div>}
+                {!isLast && <div className="w-0.5 flex-1 bg-border my-1" />}
+              </div>
+              {/* content */}
+              <div className="flex-1 bg-card border border-border rounded-xl p-3 hover:shadow-sm transition-shadow mb-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: meta.bg, color: meta.color }}>{meta.label}</span>
+                      {actorMember && (
+                        <div className="flex items-center gap-1">
+                          <div className="w-4 h-4 rounded-full flex items-center justify-center text-white text-[8px] font-bold" style={{ background: actorMember.color }}>{actorMember.initials}</div>
+                          <span className="text-[10px] font-medium text-foreground">{a.actor}</span>
+                        </div>
+                      )}
+                      {!actorMember && <span className="text-[10px] font-medium" style={{ color: meta.color }}>{a.actor}</span>}
                     </div>
-                    <span className="text-[10px] text-muted-foreground whitespace-nowrap shrink-0">{a.time}</span>
+                    <div className="text-xs text-foreground leading-relaxed">{a.message}</div>
+                    {a.target && <div className="mt-1"><span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{a.target}</span></div>}
                   </div>
+                  <span className="text-[10px] text-muted-foreground whitespace-nowrap shrink-0">{a.time}</span>
                 </div>
               </div>
-            );
-          })}
-          {filtered.length === 0 && (
-            <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">해당 활동이 없습니다.</div>
-          )}
-        </div>
-
-        {/* AI weekly summary */}
-        <div className="space-y-3">
-          <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-border" style={{ background: "rgba(112,72,232,0.05)" }}>
-              <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: "linear-gradient(135deg,#7048E8,#4F6EF7)" }}><Sparkles className="w-3 h-3 text-white" /></div>
-              <span className="text-sm font-semibold text-foreground">AI 주간 활동 요약</span>
             </div>
-            <div className="p-4 space-y-3 text-xs text-muted-foreground leading-relaxed">
-              <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 text-blue-800"><div className="font-semibold mb-1">📊 이번 주 활동 패턴</div>이번 주 활동은 개발 업무(GitHub 커밋 5건)와 회의록 기반 업무 생성에 집중되어 있습니다.</div>
-              <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800"><div className="font-semibold mb-1">⚠ 상대적으로 부족한 영역</div>발표자료 작업이 1건에 그쳤습니다. 마감 D-18을 고려해 이번 주부터 발표 준비를 병행하는 것을 추천합니다.</div>
-              <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800"><div className="font-semibold mb-1">✅ 잘 되고 있는 점</div>회의록 업로드 후 AI 자동 분석이 2건 완료되었습니다. To-Do 자동 생성 활용도가 높습니다.</div>
-            </div>
+          );
+        })}
+        {filtered.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-40 text-center text-muted-foreground">
+            <Zap className="w-8 h-8 text-slate-300 mb-3" />
+            <div className="text-sm font-semibold text-foreground mb-1">아직 활동 기록이 없습니다</div>
+            <div className="text-xs">회의록 분석 또는 업무 등록 후 활동이 표시됩니다.</div>
           </div>
-          <div className="bg-card rounded-xl border border-border shadow-sm p-4">
-            <div className="text-sm font-semibold text-foreground mb-3">팀원별 활동량</div>
-            {MEMBERS.map(m => {
-              const cnt = ACTIVITY_LOG.filter(a => a.actor === m.name).length;
-              const maxCnt = 8;
-              return (
-                <div key={m.id} className="flex items-center gap-2 mb-2">
-                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0" style={{ background: m.color }}>{m.initials}</div>
-                  <div className="flex-1 h-1.5 bg-muted rounded-full"><div className="h-1.5 rounded-full" style={{ width: `${(cnt / maxCnt) * 100}%`, background: m.color }} /></div>
-                  <span className="text-xs text-muted-foreground w-6 text-right">{cnt}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -4253,8 +4775,8 @@ function StepIndicator({ current, total }: { current: number; total: number }) {
   );
 }
 
-function OnboardingScreen({ userName, onDone }: { userName: string; onDone: () => void }) {
-  const [step, setStep] = useState(0); // 0-3
+function OnboardingScreen({ userName, onDone, initialStep = 0 }: { userName: string; onDone: () => void; initialStep?: number }) {
+  const [step, setStep] = useState(Math.min(Math.max(initialStep, 0), 3)); // 0-3
   const [projectType, setProjectType] = useState("");
   const [customType, setCustomType] = useState("");
   const [teamSize, setTeamSize] = useState(4);
@@ -4580,12 +5102,31 @@ const TAB_TITLES: Record<Tab, string> = {
   mypage: "마이페이지",
 };
 
+const APP_TABS: Tab[] = ["dashboard", "board", "meetings", "deliverables", "github", "contributors", "mypage"];
+const DETAIL_PAGES: Exclude<DetailPage, null>[] = ["all-tasks", "progress", "blockers", "inprogress", "dash-progress", "urgent", "workload", "activity"];
+
+const initialScreenFromParams = (): Screen => {
+  const screen = getDesignParam("screen");
+  if (screen === "signup" || screen === "onboarding" || screen === "dashboard") return screen;
+  return "login";
+};
+
+const initialTabFromParams = (): Tab => {
+  const tab = getDesignParam("tab");
+  return APP_TABS.includes(tab as Tab) ? (tab as Tab) : "dashboard";
+};
+
+const initialDetailFromParams = (): DetailPage => {
+  const detail = getDesignParam("detail");
+  return DETAIL_PAGES.includes(detail as Exclude<DetailPage, null>) ? (detail as DetailPage) : null;
+};
+
 export default function App() {
-  const [screen, setScreen] = useState<Screen>("login");
+  const [screen, setScreen] = useState<Screen>(initialScreenFromParams);
   const [signupName, setSignupName] = useState("");
-  const [activeTab, setActiveTab] = useState<Tab>("dashboard");
-  const [detailPage, setDetailPage] = useState<DetailPage>(null);
-  const [aiOpen, setAIOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<Tab>(initialTabFromParams);
+  const [detailPage, setDetailPage] = useState<DetailPage>(initialDetailFromParams);
+  const [aiOpen, setAIOpen] = useState(getDesignParam("ai") === "1");
   const [searchOpen, setSearchOpen] = useState(false);
 
   const handleTabSelect = (tab: Tab) => { setActiveTab(tab); setDetailPage(null); };
@@ -4609,8 +5150,9 @@ export default function App() {
   if (screen === "onboarding") {
     return (
       <OnboardingScreen
-        userName={signupName}
+        userName={signupName || "김민준"}
         onDone={() => setScreen("dashboard")}
+        initialStep={getDesignStep("onboardingStep")}
       />
     );
   }
@@ -4694,15 +5236,11 @@ export default function App() {
           {activeTab === "dashboard" && detailPage === "workload"      && <WorkloadPage    onBack={() => setDetailPage(null)} />}
           {activeTab === "dashboard" && detailPage === "activity"      && <ActivityPage    onBack={() => setDetailPage(null)} />}
           {activeTab === "board" && <BoardView />}
-          {activeTab === "meetings" && <MeetingsView />}
+          {activeTab === "meetings" && <MeetingsView onGoBoard={() => handleTabSelect("board")} />}
           {activeTab === "deliverables" && <DeliverablesView />}
           {activeTab === "github" && <GithubView />}
           {activeTab === "contributors" && <ContributorsView />}
-          {activeTab === "mypage" && (
-            <Suspense fallback={<div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">마이페이지 로딩 중...</div>}>
-              <MyPage />
-            </Suspense>
-          )}
+          {activeTab === "mypage" && <MyPage />}
         </main>
       </div>
 

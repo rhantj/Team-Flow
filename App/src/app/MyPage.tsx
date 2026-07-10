@@ -1,3 +1,4 @@
+/* eslint-disable */
 import { useState } from "react";
 import {
   User, Shield, Settings, Bell, LogOut, Github, ChevronRight,
@@ -7,21 +8,125 @@ import {
   Calendar, Layers, ArrowRight, AlertCircle, Users, RefreshCw,
   Link2, Target, Award
 } from "lucide-react";
-import {
-  StatusBadge, DelivBadge, SectionTitle, ActIcon,
-  MEMBER_USER, MY_TASKS, MY_DELIVERABLES, MY_ACTIVITIES, MY_FEEDBACKS,
-  PUBLIC_SCORE, REVIEWER_USER, REVIEWER_TEAMS, CONTRIB_REPORTS, REVIEWER_ACTIVITIES,
-} from "./demoData";
 
 // ─── local types ──────────────────────────────────────────────────────────────
 export type MyPageRole = "member" | "reviewer";
 
+// ─── member mock data ─────────────────────────────────────────────────────────
+const MEMBER_USER = {
+  name: "이서연", email: "seo.yeon@university.ac.kr",
+  affiliation: "컴퓨터공학과 3학년", field: "프론트엔드 / UX 설계",
+  project: "스마트 주차 관리 시스템", github: "seo-yeon-dev",
+  initials: "이", color: "#7048E8", joinedAt: "2024.09.15",
+};
+
+const MY_TASKS = [
+  { id: "TF-04", title: "모바일 예약 화면 구현",      status: "done"       as const, priority: "medium" as const, dueDate: "12.10", cat: "프론트" },
+  { id: "TF-07", title: "관리자 대시보드 통계 모듈",   status: "inprogress" as const, priority: "medium" as const, dueDate: "12.19", cat: "프론트" },
+  { id: "TF-10", title: "시스템 부하 테스트",          status: "todo"       as const, priority: "medium" as const, dueDate: "12.23", cat: "QA" },
+];
+
+const MY_DELIVERABLES = [
+  { id: "d1", type: "발표자료", title: "최종 발표 PPT 초안", status: "draft", updatedAt: "12.10" },
+  { id: "d2", type: "보고서",   title: "중간 진행 보고서",   status: "done",  updatedAt: "12.05" },
+];
+
+const MY_ACTIVITIES = [
+  { type: "merge",   msg: "PR #17 머지: 모바일 예약 화면 UI 완성",       time: "어제" },
+  { type: "commit",  msg: "feat: 관리자 통계 차트 컴포넌트 추가",         time: "5시간 전" },
+  { type: "comment", msg: "TF-11 README 작성 방향 코멘트 남김",           time: "어제" },
+  { type: "meeting", msg: "6차 정기 회의 참석",                           time: "12.10" },
+  { type: "file",    msg: "발표자료 초안 PPT 파일 업로드",                 time: "2일 전" },
+  { type: "pr",      msg: "PR #12: 실시간 대시보드 UI 생성",               time: "3일 전" },
+];
+
+const MY_FEEDBACKS = [
+  { from: "김민준 (팀장)", date: "12.10", content: "모바일 화면 UI 퀄리티가 좋습니다. 예약 플로우가 직관적으로 잘 구현되었어요.", isPublic: true, type: "leader" },
+  { from: "AI 활동 분석",  date: "12.09", content: "이번 주 PR 2건을 머지하고 회의록 To-Do를 90% 이상 완수했습니다.",          isPublic: true, type: "ai" },
+];
+
+// 공개된 평가 결과 (심사자가 공개 설정한 경우만)
+const PUBLIC_SCORE = { revealed: true, score: 88, grade: "B+", from: "박현수 교수", date: "12.12", comment: "프론트엔드 구현 퀄리티가 우수하며 팀 내 협업 기여도가 높습니다." };
+
+// ─── reviewer mock data ───────────────────────────────────────────────────────
+const REVIEWER_USER = {
+  name: "박현수 교수", email: "hspark@university.ac.kr",
+  affiliation: "한국대학교 컴퓨터공학과", subject: "캡스톤디자인 2024-2",
+  initials: "박", color: "#3B5BDB",
+};
+
 type EvalStatus = "pending" | "evaluating" | "done" | "published";
 const EVAL_STATUS_META: Record<EvalStatus, { label: string; cls: string }> = {
-  pending: { label: "평가 전", cls: "bg-slate-100 text-slate-500" },
-  evaluating: { label: "평가 중", cls: "bg-amber-100 text-amber-600" },
-  done: { label: "평가 완료", cls: "bg-blue-100 text-blue-600" },
-  published: { label: "공개 완료", cls: "bg-emerald-100 text-emerald-600" },
+  pending:    { label: "평가 전",   cls: "bg-slate-100 text-slate-500" },
+  evaluating: { label: "평가 중",   cls: "bg-amber-100 text-amber-600" },
+  done:       { label: "평가 완료", cls: "bg-blue-100 text-blue-600" },
+  published:  { label: "공개 완료", cls: "bg-emerald-100 text-emerald-600" },
+};
+
+const REVIEWER_TEAMS = [
+  { id: "T1", name: "스마트 주차 관리 시스템", leader: "김민준", members: 4, progress: 71, evalStatus: "evaluating" as EvalStatus, deliverables: 3, github: true, submitted: 2, type: "캡스톤" },
+  { id: "T2", name: "AI 기반 식단 추천 앱",    leader: "정민아", members: 3, progress: 54, evalStatus: "pending"    as EvalStatus, deliverables: 1, github: true, submitted: 0, type: "캡스톤" },
+  { id: "T3", name: "실시간 버스 도착 알리미",  leader: "이준혁", members: 5, progress: 88, evalStatus: "published"  as EvalStatus, deliverables: 5, github: true, submitted: 5, type: "캡스톤" },
+  { id: "T4", name: "스터디 매칭 플랫폼",      leader: "최지현", members: 4, progress: 42, evalStatus: "pending"    as EvalStatus, deliverables: 0, github: false, submitted: 0, type: "캡스톤" },
+];
+
+const CONTRIB_REPORTS = [
+  { memberId:"1", name:"김민준", role:"팀장", color:"#3B5BDB", todoDone:8, todoTotal:10, meetings:6, commits:35, prs:6,
+    aiSummary:"팀장으로서 프로젝트 전반을 이끌며 AI 모델 개발에 집중 기여. 업무 완료율 80%, 커밋 비중 최고.",
+    evidence:["To-Do #3,#6,#9,#12", "PR #5,#9,#14", "12.10 회의록"], score:92, isPublic:true,
+    categories:{ task:85, meeting:90, docs:80, dev:95, collab:88 } },
+  { memberId:"2", name:"이서연", role:"팀원",  color:"#7048E8", todoDone:3, todoTotal:3,  meetings:6, commits:18, prs:4,
+    aiSummary:"프론트엔드 전반 담당. UI/UX 설계와 발표자료 준비에 기여. 회의 참석률 100%.",
+    evidence:["To-Do #4,#7", "PR #12,#17", "11.26, 12.10 회의록"], score:88, isPublic:false,
+    categories:{ task:100, meeting:100, docs:85, dev:80, collab:90 } },
+  { memberId:"3", name:"박지수", role:"팀원",  color:"#10B981", todoDone:3, todoTotal:3,  meetings:5, commits:22, prs:5,
+    aiSummary:"백엔드 API와 DB 설계 주도. 안정적 서버 환경 구축. 문서화 작업 적극 참여.",
+    evidence:["To-Do #2,#11", "PR #8,#13", "12.03 회의록"], score:85, isPublic:false,
+    categories:{ task:100, meeting:83, docs:90, dev:88, collab:82 } },
+  { memberId:"4", name:"최동혁", role:"팀원",  color:"#F59E0B", todoDone:1, todoTotal:3,  meetings:4, commits:12, prs:3,
+    aiSummary:"결제 연동 개발 중 블로커 이슈 발생으로 일정 지연. 현재 적극 해결 중. 개발 의지 높음.",
+    evidence:["To-Do #5,#14", "PR #18(진행중)", "12.10 회의록 블로커 언급"], score:72, isPublic:false,
+    categories:{ task:33, meeting:67, docs:60, dev:65, collab:75 } },
+];
+
+const REVIEWER_ACTIVITIES = [
+  { team: "스마트 주차 관리 시스템", action: "개인 코멘트 작성 완료",   date: "12.12" },
+  { team: "실시간 버스 도착 알리미",  action: "최종 평가 점수 공개 완료", date: "12.11" },
+  { team: "스마트 주차 관리 시스템", action: "기여도 리포트 검토",       date: "12.10" },
+  { team: "AI 기반 식단 추천 앱",    action: "산출물 검토 시작",         date: "12.09" },
+];
+
+// ─── shared small helpers ─────────────────────────────────────────────────────
+const StatusBadge = ({ status }: { status: "todo" | "inprogress" | "done" | "blocked" }) => {
+  const m = { done:{ cls:"bg-emerald-100 text-emerald-700",l:"완료"}, inprogress:{cls:"bg-blue-100 text-blue-700",l:"진행 중"}, todo:{cls:"bg-slate-100 text-slate-600",l:"대기"}, blocked:{cls:"bg-red-100 text-red-700",l:"블로커"} };
+  return <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${m[status].cls}`}>{m[status].l}</span>;
+};
+
+const DelivBadge = ({ status }: { status: string }) => {
+  const m: Record<string,string> = { done:"bg-emerald-100 text-emerald-600", draft:"bg-blue-100 text-blue-600", pending:"bg-slate-100 text-slate-500" };
+  const l: Record<string,string> = { done:"완료", draft:"초안", pending:"생성 전" };
+  return <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${m[status]??m.pending}`}>{l[status]??status}</span>;
+};
+
+const SectionTitle = ({ children }: { children: React.ReactNode }) => (
+  <div className="text-sm font-bold text-foreground mb-3">{children}</div>
+);
+
+const ActIcon = ({ type }: { type: string }) => {
+  const map: Record<string,{ Icon: any; color: string; bg: string }> = {
+    commit:  { Icon: GitCommit,      color:"#6B7280", bg:"#F4F6FA" },
+    pr:      { Icon: GitPullRequest, color:"#3B5BDB", bg:"#EEF1FB" },
+    merge:   { Icon: GitMerge,       color:"#10B981", bg:"#ECFDF5" },
+    comment: { Icon: MessageSquare,  color:"#8892A4", bg:"#F4F6FA" },
+    meeting: { Icon: FileAudio,      color:"#7048E8", bg:"rgba(112,72,232,0.1)" },
+    file:    { Icon: FileText,       color:"#F59E0B", bg:"#FFFBEB" },
+  };
+  const { Icon, color, bg } = map[type] ?? map.comment;
+  return (
+    <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ background: bg }}>
+      <Icon className="w-3.5 h-3.5" style={{ color }} />
+    </div>
+  );
 };
 
 // ─── Member My Page ───────────────────────────────────────────────────────────
@@ -575,7 +680,8 @@ function ReviewerMyPage({ onSwitch }: { onSwitch: () => void }) {
 
 // ─── Main MyPage export ───────────────────────────────────────────────────────
 export function MyPage() {
-  const [role, setRole] = useState<MyPageRole>("member");
+  const initialRole = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("mypageRole") === "reviewer" ? "reviewer" : "member";
+  const [role, setRole] = useState<MyPageRole>(initialRole);
   return role === "member"
     ? <MemberMyPage onSwitch={() => setRole("reviewer")} />
     : <ReviewerMyPage onSwitch={() => setRole("member")} />;
