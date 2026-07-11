@@ -10,6 +10,8 @@ import type { Meeting, UploadFlow, UploadType, GenTodo, SavedMeetingRecord } fro
 import type { CatId, Priority, Task } from "../../models/task";
 import { analyzeMeeting } from "../../meetingAiApi";
 import type { MeetingAiResult } from "../../meetingAiTypes";
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
 import {
   LayoutDashboard,
   Columns3,
@@ -39,8 +41,48 @@ import {
 
 const CURRENT_USER_ROLE: "leader" | "member" = "leader";
 
-const escapeHtml = (value: string): string =>
-  value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char] ?? char));
+const groupTodosByAssignee = (list: GenTodo[], resolveAssignee: (todo: GenTodo) => string): GenTodo[] => {
+  const UNASSIGNED_KEY = "__unassigned__";
+  const order: string[] = [];
+  const groups = new Map<string, GenTodo[]>();
+  list.forEach(todo => {
+    const key = resolveAssignee(todo) || UNASSIGNED_KEY;
+    if (!groups.has(key)) { groups.set(key, []); order.push(key); }
+    groups.get(key)!.push(todo);
+  });
+  const assignedOrder = order.filter(key => key !== UNASSIGNED_KEY);
+  const finalOrder = groups.has(UNASSIGNED_KEY) ? [...assignedOrder, UNASSIGNED_KEY] : assignedOrder;
+  return finalOrder.flatMap(key => groups.get(key)!);
+};
+
+const buildTodoRegistrationKey = (meetingIdentifier: string, title: string, assignee: string, dueDate: string): string =>
+  `${meetingIdentifier.trim()}::${title.trim()}::${assignee}::${dueDate.trim()}`;
+
+// 회의 상세 화면(meeting.todos)의 "이름: 업무내용 (마감일)" 문자열 포맷을 파싱한다.
+const parseMeetingTodoLine = (line: string): { assigneeName: string; title: string; dueDate: string } => {
+  const separatorIndex = line.indexOf(": ");
+  if (separatorIndex === -1) return { assigneeName: "미배정", title: line, dueDate: "" };
+  const assigneeName = line.slice(0, separatorIndex).trim() || "미배정";
+  const rest = line.slice(separatorIndex + 2).trim();
+  const dueMatch = rest.match(/\s\(([\d.]+)\)$/);
+  const dueDate = dueMatch ? dueMatch[1] : "";
+  const title = dueMatch ? rest.slice(0, dueMatch.index).trim() : rest;
+  return { assigneeName, title, dueDate };
+};
+
+const groupMeetingTodoLines = (lines: string[]): string[] => {
+  const UNASSIGNED = "미배정";
+  const order: string[] = [];
+  const groups = new Map<string, string[]>();
+  lines.forEach(line => {
+    const key = parseMeetingTodoLine(line).assigneeName || UNASSIGNED;
+    if (!groups.has(key)) { groups.set(key, []); order.push(key); }
+    groups.get(key)!.push(line);
+  });
+  const assignedOrder = order.filter(key => key !== UNASSIGNED);
+  const finalOrder = groups.has(UNASSIGNED) ? [...assignedOrder, UNASSIGNED] : assignedOrder;
+  return finalOrder.flatMap(key => groups.get(key)!);
+};
 
 const DOCUMENT_ANALYZE_STAGES = [
   "파일 업로드 완료", "문서 텍스트 추출 중",
@@ -181,7 +223,11 @@ export function MeetingsView() {
   const [newTodoError, setNewTodoError] = useState<string | null>(null);
   const [saveMeetingMessage, setSaveMeetingMessage] = useState<string | null>(null);
   const [originalViewMessage, setOriginalViewMessage] = useState<string | null>(null);
+  const [pdfExportMessage, setPdfExportMessage] = useState<string | null>(null);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [registerMessage, setRegisterMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const pdfCaptureRef = useRef<HTMLDivElement | null>(null);
   const analyzeStages = getAnalyzeStages(uploadType);
   const canAddManualTodo = CURRENT_USER_ROLE === "leader";
 
@@ -199,6 +245,8 @@ export function MeetingsView() {
   }, [uploadFlow, analyzeStages.length]);
 
   const meeting = meetings.find(m => m.id === selected);
+  // meetingId가 있으면 우선 사용, 없으면(review 화면에서 아직 meetings에 반영 전 등) meetTitle로 대체.
+  const meetingIdentifier = meeting?.id || meetTitle;
 
   // ── Upload type metadata ─────────────────────────────────────────────────────
   const UPLOAD_TYPES = [
@@ -218,6 +266,20 @@ export function MeetingsView() {
   const assignedCount = generatedTodos.filter(t => Boolean(getAssignee(t))).length;
   const nextActions = generatedTodos.slice(0, 3).map(t => t.title);
   const reviewTodos = [...generatedTodos, ...manualTodos];
+  // 담당자 기준으로 묶어서 표시 (같은 담당자 업무가 연속 배치되도록) — 표시 순서만 바뀌고 원본 배열/등록 로직은 그대로 유지.
+  const groupedGeneratedTodos = groupTodosByAssignee(generatedTodos, getAssignee);
+  const isReviewBatchAlreadyRegistered = reviewTodos.length > 0 && reviewTodos.every(todo => {
+    const key = buildTodoRegistrationKey(meetingIdentifier, todo.title, getAssignee(todo), getDueDate(todo));
+    return getStoredTasks().some(task => buildTodoRegistrationKey(task.sourceMeetingTitle ?? "", task.title, task.assignee, task.dueDate) === key);
+  });
+  // 회의 상세 화면(meeting.todos, 문자열 배열)용 그룹 정렬 + 등록 여부 계산.
+  const groupedMeetingTodos = meeting?.todos ? groupMeetingTodoLines(meeting.todos) : [];
+  const isMeetingTodosRegistered = Boolean(meeting?.todos?.length) && meeting!.todos!.every(line => {
+    const parsed = parseMeetingTodoLine(line);
+    const assigneeId = MEMBERS.find(m => m.name === parsed.assigneeName)?.id ?? MEMBERS[0].id;
+    const key = buildTodoRegistrationKey(meetingIdentifier, parsed.title, assigneeId, parsed.dueDate);
+    return getStoredTasks().some(task => buildTodoRegistrationKey(task.sourceMeetingTitle ?? "", task.title, task.assignee, task.dueDate) === key);
+  });
 
   const handleAddManualTodo = () => {
     if (!newTodoTitle.trim() || !newTodoAssignee || !newTodoDueDate) {
@@ -278,40 +340,45 @@ export function MeetingsView() {
     setTimeout(() => setOriginalViewMessage(null), 2500);
   };
 
-  const handleExportPdf = () => {
-    if (!analysisResult) return;
-    const printWindow = window.open("", "_blank", "noopener,noreferrer,width=800,height=1000");
-    if (!printWindow) return;
-    const participantsText = partIds.map(id => MEMBERS.find(m => m.id === id)?.name ?? id).join(", ");
-    const decisionsHtml = analysisResult.decisions.map(d => `<li>${escapeHtml(d)}</li>`).join("");
-    const risksHtml = analysisResult.risks.map(r => `<li>${escapeHtml(r)}</li>`).join("");
-    const todosHtml = reviewTodos.map(t => {
-      const assigneeName = MEMBERS.find(m => m.id === getAssignee(t))?.name ?? "미배정";
-      return `<li>${escapeHtml(t.title)} - ${escapeHtml(assigneeName)} (${escapeHtml(getDueDate(t))})</li>`;
-    }).join("");
-    const docTitle = `회의록_${meetTitle}_${meetDate}`;
-    printWindow.document.write(`
-      <!DOCTYPE html><html><head><meta charset="utf-8" /><title>${escapeHtml(docTitle)}</title>
-      <style>
-        body { font-family: 'Inter','Noto Sans KR',sans-serif; padding: 32px; color:#1a1a1a; }
-        h1 { font-size: 20px; margin-bottom: 4px; }
-        .meta { font-size: 12px; color:#666; margin-bottom: 20px; }
-        h2 { font-size: 14px; margin-top: 24px; margin-bottom: 8px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
-        ul { margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.6; }
-        p { font-size: 13px; line-height: 1.6; }
-      </style>
-      </head><body>
-        <h1>${escapeHtml(meetTitle)}</h1>
-        <div class="meta">${escapeHtml(meetDate)} · ${escapeHtml(meetKind)} · 참석자 ${escapeHtml(participantsText)}</div>
-        <h2>회의 요약</h2><p>${escapeHtml(analysisResult.summary)}</p>
-        <h2>핵심 결정사항</h2><ul>${decisionsHtml || "<li>결정사항이 없습니다.</li>"}</ul>
-        <h2>생성된 To-Do</h2><ul>${todosHtml || "<li>생성된 업무가 없습니다.</li>"}</ul>
-        <h2>위험 요소</h2><ul>${risksHtml || "<li>감지된 위험 요소가 없습니다.</li>"}</ul>
-      </body></html>
-    `);
-    printWindow.document.close();
-    printWindow.focus();
-    printWindow.print();
+  const handleExportPdf = async () => {
+    if (!analysisResult) {
+      setPdfExportMessage("분석 결과가 없어 PDF로 저장할 수 없습니다.");
+      setTimeout(() => setPdfExportMessage(null), 2500);
+      return;
+    }
+    const target = pdfCaptureRef.current;
+    if (!target || isExportingPdf) return;
+
+    setIsExportingPdf(true);
+    try {
+      const canvas = await html2canvas(target, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({ unit: "pt", format: "a4" });
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = pageWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      let heightLeft = imgHeight;
+      let position = 0;
+      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+      while (heightLeft > 0) {
+        position -= pageHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+
+      const dateForFile = (meetDate || getTodayIsoDate()).replace(/-/g, "");
+      const safeTitle = (meetTitle.trim() || "회의록").replace(/[\\/:*?"<>|]/g, "_");
+      pdf.save(`회의록_${safeTitle}_${dateForFile}.pdf`);
+    } catch {
+      setPdfExportMessage("PDF 생성 중 오류가 발생했습니다. 다시 시도해주세요.");
+      setTimeout(() => setPdfExportMessage(null), 2500);
+    } finally {
+      setIsExportingPdf(false);
+    }
   };
 
   const handleFileSelect = (file: File | undefined) => {
@@ -387,9 +454,26 @@ export function MeetingsView() {
   };
 
   const registerSelectedTodos = () => {
+    const existingTasks = getStoredTasks();
+    const existingKeys = new Set(
+      existingTasks.map(task => buildTodoRegistrationKey(task.sourceMeetingTitle ?? "", task.title, task.assignee, task.dueDate))
+    );
+
     const now = Date.now();
     const selectedGeneratedTodos = reviewTodos.filter(todo => selTodos.includes(todo.id));
-    const createdTasks: Task[] = selectedGeneratedTodos.map((todo, index) => {
+    const newTodos = selectedGeneratedTodos.filter(todo => {
+      const assignee = getAssignee(todo) || MEMBERS[0].id;
+      const key = buildTodoRegistrationKey(meetingIdentifier, todo.title, assignee, getDueDate(todo));
+      return !existingKeys.has(key);
+    });
+
+    if (selectedGeneratedTodos.length > 0 && newTodos.length === 0) {
+      setRegisterMessage("이미 등록된 업무입니다.");
+      setTimeout(() => setRegisterMessage(null), 2500);
+      return;
+    }
+
+    const createdTasks: Task[] = newTodos.map((todo, index) => {
       const cat = getCat(todo.category);
       const sourceLabel = todo.source === "MEETING_AI" ? "회의록 AI" : "직접 추가";
       return {
@@ -400,13 +484,55 @@ export function MeetingsView() {
         assignee: getAssignee(todo) || MEMBERS[0].id,
         dueDate: getDueDate(todo),
         labels: [sourceLabel, cat.label],
+        sourceMeetingTitle: meetingIdentifier,
       };
     });
 
     if (createdTasks.length > 0) {
-      saveStoredTasks([...createdTasks, ...getStoredTasks()]);
+      saveStoredTasks([...createdTasks, ...existingTasks]);
     }
     setUploadFlow("done");
+  };
+
+  // 회의 상세 화면(meeting.todos, 문자열 배열)에서 "업무로 등록" 클릭 시 실행.
+  const handleRegisterMeetingTodos = () => {
+    if (!meeting || !meeting.todos || meeting.todos.length === 0) return;
+    const existingTasks = getStoredTasks();
+    const existingKeys = new Set(
+      existingTasks.map(task => buildTodoRegistrationKey(task.sourceMeetingTitle ?? "", task.title, task.assignee, task.dueDate))
+    );
+
+    const parsedTodos = meeting.todos.map(line => {
+      const parsed = parseMeetingTodoLine(line);
+      const assigneeId = MEMBERS.find(m => m.name === parsed.assigneeName)?.id ?? MEMBERS[0].id;
+      return { ...parsed, assigneeId };
+    });
+
+    const newTodos = parsedTodos.filter(todo => {
+      const key = buildTodoRegistrationKey(meetingIdentifier, todo.title, todo.assigneeId, todo.dueDate);
+      return !existingKeys.has(key);
+    });
+
+    if (newTodos.length === 0) {
+      setRegisterMessage("이미 등록된 업무입니다.");
+      setTimeout(() => setRegisterMessage(null), 2500);
+      return;
+    }
+
+    const now = Date.now();
+    const createdTasks: Task[] = newTodos.map((todo, index) => ({
+      id: `AI-${now}-${String(index + 1).padStart(2, "0")}`,
+      title: todo.title,
+      status: "todo",
+      priority: "medium",
+      assignee: todo.assigneeId,
+      dueDate: todo.dueDate,
+      labels: ["회의록 AI"],
+      sourceMeetingTitle: meetingIdentifier,
+    }));
+    saveStoredTasks([...createdTasks, ...existingTasks]);
+    setRegisterMessage("업무 보드에 등록되었습니다.");
+    setTimeout(() => setRegisterMessage(null), 2500);
   };
 
   // ── Analyzing screen ────────────────────────────────────────────────────────
@@ -546,9 +672,10 @@ export function MeetingsView() {
           <div className="flex flex-col items-end gap-1">
             <div className="flex items-center gap-2">
               <button onClick={handleViewOriginal} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card rounded-lg hover:bg-muted transition-colors"><Eye className="w-3.5 h-3.5" />원본 보기</button>
-              <button onClick={handleExportPdf} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card rounded-lg hover:bg-muted transition-colors"><FileText className="w-3.5 h-3.5" />PDF 저장</button>
+              <button onClick={handleExportPdf} disabled={!analysisResult || isExportingPdf} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card rounded-lg hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-card"><FileText className="w-3.5 h-3.5" />{isExportingPdf ? "PDF 생성 중..." : "PDF 저장"}</button>
             </div>
             {originalViewMessage && <div className="text-[10px] text-amber-600">{originalViewMessage}</div>}
+            {pdfExportMessage && <div className="text-[10px] text-amber-600">{pdfExportMessage}</div>}
           </div>
         </div>
 
@@ -601,7 +728,7 @@ export function MeetingsView() {
                 <ListChecks className="w-3.5 h-3.5" />역할 분배 검토
               </button>
             </div>
-            {generatedTodos.map(todo => {
+            {groupedGeneratedTodos.map(todo => {
               const assigneeId = getAssignee(todo);
               const m = MEMBERS.find(me => me.id === assigneeId);
               return (
@@ -657,6 +784,44 @@ export function MeetingsView() {
           </div>
         )}
       </div>
+
+      {/* PDF 캡처용 숨김 영역: 화면에는 보이지 않고 html2canvas가 이 DOM을 캡처해 PDF로 저장한다.
+          Tailwind 클래스/CSS 변수(oklch 등) 대신 인라인 스타일만 사용 — html2canvas가 최신 CSS 색상 함수를 못 읽는 문제를 피하기 위함. */}
+      <div style={{ position: "fixed", top: 0, left: "-10000px", width: "760px" }}>
+        <div ref={pdfCaptureRef} style={{ background: "#ffffff", padding: "40px", width: "760px", fontFamily: "'Malgun Gothic','Apple SD Gothic Neo',sans-serif", color: "#1a1a1a" }}>
+          <h1 style={{ fontSize: "22px", fontWeight: 700, margin: "0 0 4px" }}>{meetTitle}</h1>
+          <div style={{ fontSize: "12px", color: "#666666", marginBottom: "24px" }}>
+            {meetDate} · {meetKind} · 참석자 {partIds.map(id => MEMBERS.find(m => m.id === id)?.name ?? id).join(", ")}
+          </div>
+
+          <h2 style={{ fontSize: "15px", fontWeight: 700, margin: "20px 0 8px", borderBottom: "1px solid #dddddd", paddingBottom: "4px" }}>회의 요약</h2>
+          <p style={{ fontSize: "13px", lineHeight: 1.7, margin: 0 }}>{analysisResult.summary}</p>
+
+          <h2 style={{ fontSize: "15px", fontWeight: 700, margin: "20px 0 8px", borderBottom: "1px solid #dddddd", paddingBottom: "4px" }}>핵심 결정사항</h2>
+          <ul style={{ fontSize: "13px", lineHeight: 1.7, margin: 0, paddingLeft: "20px" }}>
+            {analysisResult.decisions.length
+              ? analysisResult.decisions.map((d, i) => <li key={i}>{d}</li>)
+              : <li>결정사항이 없습니다.</li>}
+          </ul>
+
+          <h2 style={{ fontSize: "15px", fontWeight: 700, margin: "20px 0 8px", borderBottom: "1px solid #dddddd", paddingBottom: "4px" }}>생성된 To-Do</h2>
+          <ul style={{ fontSize: "13px", lineHeight: 1.7, margin: 0, paddingLeft: "20px" }}>
+            {reviewTodos.length
+              ? reviewTodos.map(t => {
+                  const assigneeName = MEMBERS.find(m => m.id === getAssignee(t))?.name ?? "미배정";
+                  return <li key={t.id}>{t.title} - {assigneeName} ({getDueDate(t) || "마감일 미정"})</li>;
+                })
+              : <li>생성된 업무가 없습니다.</li>}
+          </ul>
+
+          <h2 style={{ fontSize: "15px", fontWeight: 700, margin: "20px 0 8px", borderBottom: "1px solid #dddddd", paddingBottom: "4px" }}>위험 요소</h2>
+          <ul style={{ fontSize: "13px", lineHeight: 1.7, margin: 0, paddingLeft: "20px" }}>
+            {analysisResult.risks.length
+              ? analysisResult.risks.map((r, i) => <li key={i}>{r}</li>)
+              : <li>감지된 위험 요소가 없습니다.</li>}
+          </ul>
+        </div>
+      </div>
     </div>
     );
   };
@@ -677,17 +842,28 @@ export function MeetingsView() {
               <h1 className="text-xl font-bold text-foreground">역할 분배 검토</h1>
               <p className="text-sm text-muted-foreground mt-0.5">팀장이 확인하고 승인한 업무만 업무 보드에 등록됩니다.</p>
             </div>
-            <div className="flex items-center gap-2">
-              <button onClick={() => setShowUnassigned(v => !v)}
-                className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border transition-all ${showUnassigned ? "border-amber-400 bg-amber-50 text-amber-700" : "border-border bg-card text-muted-foreground hover:border-slate-300"}`}>
-                <AlertTriangle className="w-3.5 h-3.5" />미배정만 보기 {showUnassigned && <span className="bg-amber-200 text-amber-800 px-1 rounded text-[10px]">{unassignedCount}</span>}
-              </button>
-              <button onClick={registerSelectedTodos}
-                disabled={approvedCount === 0}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50"
-                style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
-                <CheckCircle2 className="w-4 h-4" />{approvedCount}개 업무 보드에 등록
-              </button>
+            <div className="flex flex-col items-end gap-1">
+              <div className="flex items-center gap-2">
+                <button onClick={() => setShowUnassigned(v => !v)}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border transition-all ${showUnassigned ? "border-amber-400 bg-amber-50 text-amber-700" : "border-border bg-card text-muted-foreground hover:border-slate-300"}`}>
+                  <AlertTriangle className="w-3.5 h-3.5" />미배정만 보기 {showUnassigned && <span className="bg-amber-200 text-amber-800 px-1 rounded text-[10px]">{unassignedCount}</span>}
+                </button>
+                {isReviewBatchAlreadyRegistered ? (
+                  <button onClick={() => { setUploadFlow(null); navigate("/board"); }}
+                    className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity"
+                    style={{ background:"linear-gradient(135deg,#10B981,#059669)" }}>
+                    <CheckCircle2 className="w-4 h-4" />등록 완료 · 업무보드 확인
+                  </button>
+                ) : (
+                  <button onClick={registerSelectedTodos}
+                    disabled={approvedCount === 0}
+                    className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50"
+                    style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
+                    <CheckCircle2 className="w-4 h-4" />{approvedCount}개 업무 보드에 등록
+                  </button>
+                )}
+              </div>
+              {registerMessage && <div className="text-[11px] text-amber-600">{registerMessage}</div>}
             </div>
           </div>
 
@@ -1143,15 +1319,23 @@ export function MeetingsView() {
                     <CheckSquare className="w-4 h-4" style={{ color: "var(--primary)" }} />
                     <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">생성된 To-Do</div>
                   </div>
-                  <button
-                    onClick={() => analysisResult && setUploadFlow("review")}
-                    disabled={!analysisResult}
-                    className="text-xs font-medium text-blue-600 hover:text-blue-700 disabled:text-slate-400 disabled:cursor-not-allowed">
-                    업무로 등록
-                  </button>
+                  {isMeetingTodosRegistered ? (
+                    <button onClick={() => { navigate("/board"); }}
+                      className="text-xs font-medium text-emerald-600 hover:text-emerald-700">
+                      등록 완료 · 업무보드 확인
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleRegisterMeetingTodos}
+                      disabled={meeting.todos.length === 0}
+                      className="text-xs font-medium text-blue-600 hover:text-blue-700 disabled:text-slate-400 disabled:cursor-not-allowed">
+                      업무로 등록
+                    </button>
+                  )}
                 </div>
+                {registerMessage && <div className="text-[11px] text-amber-600 mb-2">{registerMessage}</div>}
                 <ul className="space-y-2">
-                  {meeting.todos.map((t, i) => (
+                  {groupedMeetingTodos.map((t, i) => (
                     <li key={i} className="flex items-start gap-2 text-sm text-foreground">
                       <Circle className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
                       {t}
