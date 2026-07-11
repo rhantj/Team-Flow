@@ -580,7 +580,8 @@ function ReviewerMyPage({ onSwitch }: { onSwitch: () => void }) {
 
 // ─── Main MyPage export ───────────────────────────────────────────────────────
 export function MyPage() {
-  const [role, setRole] = useState<MyPageRole>("member");
+  const initialRole = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("mypageRole") === "reviewer" ? "reviewer" : "member";
+  const [role, setRole] = useState<MyPageRole>(initialRole);
   return role === "member"
     ? <MemberMyPage onSwitch={() => setRole("reviewer")} />
     : <ReviewerMyPage onSwitch={() => setRole("member")} />;

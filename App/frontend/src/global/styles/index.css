@@ -1,3 +1,21 @@
 @import './fonts.css';
 @import './tailwind.css';
 @import './theme.css';
+
+html.capture-canvas,
+html.capture-canvas body,
+html.capture-canvas #root {
+  width: 624px;
+  min-width: 624px;
+  height: 1100px;
+  min-height: 1100px;
+  overflow: hidden;
+  background: #f4f6fa;
+}
+
+html.capture-canvas #root > * {
+  width: 1440px !important;
+  height: 1100px !important;
+  transform: translate(var(--capture-x, 0), var(--capture-y, 0));
+  transform-origin: top left;
+}

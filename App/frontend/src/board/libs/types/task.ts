@@ -6,6 +6,7 @@ export type DetailPage = "all-tasks" | "progress" | "blockers" | "inprogress" | 
 export interface Task {
   id: string; title: string; status: TaskStatus; priority: Priority;
   assignee: string; dueDate: string; labels: string[];
+  sourceMeetingTitle?: string;
 }
 
 export type CatId = "planning"|"research"|"ux-ui"|"design"|"frontend"|"backend"|"ai-ml"|"data"|"db"|"devops"|"github"|"qa"|"security"|"docs"|"presentation"|"deliverable"|"operation"|"other";
