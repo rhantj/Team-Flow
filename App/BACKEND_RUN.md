@@ -5,18 +5,18 @@
 ## 0. 백엔드 기준 버전
 
 - **Spring Boot**: 3.5.16
-- **Java**: 21 LTS (`App/backend_spring/pom.xml`의 `java.version`, Dockerfile 베이스 이미지 모두 21로 통일)
-- **빌드 도구**: Maven (`App/backend_spring/mvnw` Maven Wrapper 포함, 버전 3.9.9 고정)
-- **Railway 배포**: `App/backend_spring/Dockerfile`도 Java 21 이미지(`maven:3.9-eclipse-temurin-21`, `eclipse-temurin:21-jre`) 사용
+- **Java**: 21 LTS (`App/backend_spring/build.gradle`의 toolchain, Dockerfile 베이스 이미지 모두 21로 통일)
+- **빌드 도구**: Gradle (`App/backend_spring/gradlew` Gradle Wrapper 포함, 버전 9.5.1 고정)
+- **Railway 배포**: `App/backend_spring/Dockerfile`도 Java 21 이미지(`eclipse-temurin:21-jdk` 빌드 스테이지, `eclipse-temurin:21-jre` 런타임) 사용
 
-로컬에 Maven Wrapper로 빌드하려면:
+로컬에 Gradle Wrapper로 빌드하려면:
 
 ```bash
 cd App/backend_spring
-./mvnw clean package
+./gradlew clean bootJar
 ```
 
-저장소 루트 스크립트(`App/scripts/build_spring_backend.sh`, `App/scripts/run_spring_backend.sh`)를 쓰는 기존 방식도 그대로 동작한다 (`.tools/apache-maven-3.9.9` 우선 사용, 없으면 시스템 `mvn` 사용).
+저장소 루트 스크립트(`App/scripts/build_spring_backend.sh`, `App/scripts/run_spring_backend.sh`)를 쓰는 방식도 동일하게 동작한다 (내부적으로 `App/backend_spring`으로 이동해 `./gradlew`를 실행).
 
 ## 1. AI FastAPI 서버
 
@@ -34,7 +34,7 @@ http://127.0.0.1:8000/api/v1/health
 
 ## 2. Spring Boot 메인 백엔드
 
-로컬 Maven을 설치한 뒤 실행한다 (`.tools/apache-maven-3.9.9`가 없으면 시스템에 설치된 `mvn`을 사용한다).
+Gradle Wrapper가 필요한 Gradle 배포판을 자동으로 내려받아 실행한다 (별도 로컬 설치 불필요, JDK 21만 있으면 된다).
 
 ```bash
 bash App/scripts/run_spring_backend.sh

@@ -244,12 +244,12 @@ stop.sh
 session-report*
 
 # 회의록 AI / Spring Boot / FastAPI 로컬 개발 도구 및 산출물 (실행에 불필요)
-.m2/
-.tools/
+.gradle/
 figma_export/
 prototype/
 output/
-App/backend_spring/target/
+App/backend_spring/build/
+App/backend_spring/.gradle/
 App/scripts/.dev-logs/
 
 # 발표자료/산출물/압축파일 (실행에 불필요, src/backend/ai-fastapi 소스에는 해당 확장자 없음)

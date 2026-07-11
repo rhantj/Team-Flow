@@ -1,15 +1,17 @@
 # 회의록 AI Spring Boot 백엔드 배포용 이미지.
 # 빌드 컨텍스트는 backend_spring/ 디렉터리 기준이다 (docker build -f backend_spring/Dockerfile backend_spring).
-FROM maven:3.9-eclipse-temurin-21 AS build
+FROM eclipse-temurin:21-jdk AS build
 WORKDIR /app
-COPY pom.xml .
-RUN mvn -B dependency:go-offline
+COPY gradlew .
+COPY gradle ./gradle
+COPY build.gradle settings.gradle .
+RUN ./gradlew --no-daemon dependencies > /dev/null 2>&1 || true
 COPY src ./src
-RUN mvn -B clean package -DskipTests
+RUN ./gradlew --no-daemon clean bootJar -x test
 
 FROM eclipse-temurin:21-jre
 WORKDIR /app
-COPY --from=build /app/target/*.jar app.jar
+COPY --from=build /app/build/libs/*.jar app.jar
 
 ENV PORT=8080
 EXPOSE 8080

@@ -27,7 +27,7 @@ cleanup() {
   sleep 1
   # 프로세스 트리 누락 대비 안전망 (mvn이 자식 JVM을, uvicorn --reload가 워커를 남기는 경우)
   pkill -f "uvicorn app.main:app" 2>/dev/null
-  pkill -f "spring-boot:run" 2>/dev/null
+  pkill -f "gradlew.*bootRun" 2>/dev/null
   pkill -f "$APP_DIR/frontend/node_modules/.*vite" 2>/dev/null
   wait 2>/dev/null
   echo "모두 종료됨."
