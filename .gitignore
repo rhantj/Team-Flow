@@ -249,7 +249,8 @@ session-report*
 figma_export/
 prototype/
 output/
-backend-spring/target/
+App/backend_spring/target/
+App/scripts/.dev-logs/
 
 # 발표자료/산출물/압축파일 (실행에 불필요, src/backend/ai-fastapi 소스에는 해당 확장자 없음)
 *.pdf
