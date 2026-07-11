@@ -5,7 +5,7 @@ WORKDIR /app
 COPY gradlew .
 COPY gradle ./gradle
 COPY build.gradle settings.gradle .
-RUN ./gradlew --no-daemon dependencies > /dev/null 2>&1 || true
+RUN ./gradlew --no-daemon dependencies
 COPY src ./src
 RUN ./gradlew --no-daemon clean bootJar -x test
 

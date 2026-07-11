@@ -18,6 +18,8 @@ cd App/backend_spring
 
 저장소 루트 스크립트(`App/scripts/build_spring_backend.sh`, `App/scripts/run_spring_backend.sh`)를 쓰는 방식도 동일하게 동작한다 (내부적으로 `App/backend_spring`으로 이동해 `./gradlew`를 실행).
 
+**오프라인/사내망 제약**: `./gradlew`는 최초 실행 시 `gradle/wrapper/gradle-wrapper.properties`에 명시된 Gradle 9.5.1 배포판을 `services.gradle.org`에서 내려받고, `build.gradle`의 `foojay-resolver-convention` 플러그인은 JDK 21 toolchain이 로컬에 없으면 자동으로 내려받는다. 둘 다 인터넷 연결이 필요하며, 사내망/폐쇄망에서는 사전에 Gradle 9.5.1과 JDK 21을 직접 설치해두거나 사내 미러 저장소를 `gradle-wrapper.properties`/`settings.gradle`에 설정해야 한다 (이전 Maven Wrapper 방식도 동일한 제약이 있었음 — 이번 전환으로 새로 생긴 문제는 아니다).
+
 ## 1. AI FastAPI 서버
 
 실제 앱은 `App/backend_fastapi/app/main.py`에 있다.
