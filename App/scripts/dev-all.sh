@@ -16,6 +16,14 @@ mkdir -p "$LOG_DIR"
 
 PIDS=()
 
+# package.json의 packageManager(pnpm 버전 고정)가 실제로 적용되도록 corepack 활성화
+# (macOS/Windows 환경별 pnpm 버전 차이로 인한 의존성 정책 불일치 방지)
+if command -v corepack >/dev/null 2>&1; then
+  corepack enable >/dev/null 2>&1 || echo "corepack enable 실패 (권한 문제일 수 있음, 무시하고 진행)"
+else
+  echo "corepack이 설치되어 있지 않습니다. Node.js 16.9+ 에는 기본 내장되어 있으니 Node 버전을 확인하세요."
+fi
+
 cleanup() {
   echo ""
   echo "종료 중... 전체 프로세스 그룹을 정리합니다."
