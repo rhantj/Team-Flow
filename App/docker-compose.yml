@@ -65,7 +65,10 @@ services:
         condition: service_started
 
   backend-fastapi:
-    build: ./backend_fastapi
+    build:
+      # requirements.txt가 저장소 루트에 있어서(App/backend_fastapi가 아니라) 빌드 컨텍스트를 루트로 잡는다
+      context: ..
+      dockerfile: App/backend_fastapi/Dockerfile
     container_name: workflow-backend-fastapi
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-root}@db:5432/${POSTGRES_DB:-workflow}
