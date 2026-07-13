@@ -1,5 +1,9 @@
 # 새 프로젝트용 docker-compose.yml 초안
 # 사용법: cp .env.example .env  →  docker compose up -d
+#
+# 주의: 아래 ${POSTGRES_PASSWORD:-root} 등의 기본값은 로컬 개발 편의를 위한 예시일 뿐이다.
+# 서버(OCI 등)에 배포할 땐 반드시 .env에 실제 값(POSTGRES_PASSWORD, JWT_SECRET 등)을 채워서
+# 이 기본값이 그대로 쓰이지 않게 할 것.
 services:
   db:
     image: postgres:17
