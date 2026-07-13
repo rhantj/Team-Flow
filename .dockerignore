@@ -1,0 +1,11 @@
+# backend-fastapi 빌드 컨텍스트가 저장소 루트라서, 여기서 관련 없는 것들을 제외한다
+.git
+App/frontend
+App/backend_spring
+App/scripts
+document_고무서
+docs
+*.md
+.venv
+__pycache__
+*.pyc

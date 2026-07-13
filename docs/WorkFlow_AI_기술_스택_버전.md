@@ -41,7 +41,7 @@ DB/Redis docker compose up -d
 
 | 기술 | 버전 |
 |---|---|
-| Python | 3.12.10 |
+| Python | 3.12.13 |
 | FastAPI | 0.139.0 |
 | Pydantic | 2.13.4 (+ pydantic-settings 2.14.2) |
 | Uvicorn | 0.51.0 |
@@ -72,7 +72,7 @@ DB/Redis docker compose up -d
 | KoBERT/KLUE-BERT | `klue/bert-base` 권장 (Transformers 4.48 호환, 활발히 관리됨) |
 | Whisper | faster-whisper 1.2.1 |
 
-**호환성 근거**: NumPy 2.5는 scikit-learn 1.6 / XGBoost 3.2 / LightGBM 4.6 / Transformers 4.48 전부와 호환 확인(`pip check` 통과, `numpy 2.0 미지원` 이슈는 이 조합에서 해당 없음). Tokenizers는 Transformers 설치 시 자동으로 맞는 버전이 딸려옴. 전체 조합을 실제 venv(Python 3.12.10)에 설치해 임포트 충돌 없음을 검증함.
+**호환성 근거**: NumPy 2.5는 scikit-learn 1.6 / XGBoost 3.2 / LightGBM 4.6 / Transformers 4.48 전부와 호환 확인(`pip check` 통과, `numpy 2.0 미지원` 이슈는 이 조합에서 해당 없음). Tokenizers는 Transformers 설치 시 자동으로 맞는 버전이 딸려옴. 전체 조합을 실제 venv(Python 3.12.13)에 설치해 임포트 충돌 없음을 검증함.
 
 > FFmpeg(faster-whisper 오디오 처리용)는 pip 패키지가 아닌 OS 바이너리라 별도 설치가 필요합니다. 이 컴퓨터엔 아직 없음 — Windows는 `winget install ffmpeg` 또는 `choco install ffmpeg`로 설치하세요.
 
@@ -121,7 +121,7 @@ DB/Redis docker compose up -d
 ---
 
 ## 이번에 새로 설치/검증한 것
-`ai-backend/.venv`(Python 3.12.10)에 아래를 실제로 설치하고 `pip check`로 충돌 없음을 확인했습니다:
+`ai-backend/.venv`(Python 3.12.13)에 아래를 실제로 설치하고 `pip check`로 충돌 없음을 확인했습니다:
 - `numpy==2.5.1`, `xgboost==3.2.0` *(신규)*
 - `python-pptx==1.0.2`, `reportlab==5.0.0` *(신규, `requirements.txt`에 추가)*
 - 기존 `requirements-ml.txt` 전체(`faster-whisper`, `scikit-learn`, `lightgbm`, `transformers`, `ollama`) 재설치 확인

@@ -1,3 +1,6 @@
+# Local-only pnpm override (bypasses minimumReleaseAge supply-chain policy) — never commit
+App/frontend/.npmrc
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -230,6 +233,8 @@ __pycache__/
 bot.py
 actions-runner
 .claude
+# CLAUDE.md 파일 깃에 안 올라가게 설정
+CLAUDE.md
 
 # auto-pr.yml/claude-review job이 실행 중 생성하는 임시 파일
 diff.txt
@@ -242,3 +247,18 @@ stop.sh
 
 .serena
 session-report*
+
+# 회의록 AI / Spring Boot / FastAPI 로컬 개발 도구 및 산출물 (실행에 불필요)
+.gradle/
+figma_export/
+prototype/
+output/
+App/backend_spring/build/
+App/backend_spring/.gradle/
+App/scripts/.dev-logs/
+
+# 발표자료/산출물/압축파일 (실행에 불필요, src/backend/ai-fastapi 소스에는 해당 확장자 없음)
+*.pdf
+*.pptx
+*.png
+*.zip
