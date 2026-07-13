@@ -14,7 +14,6 @@ jobs:
       OCI_CLI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
       OCI_CLI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
       OCI_CLI_REGION: ${{ secrets.OCI_CLI_REGION }}
-      OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_CLI_KEY_CONTENT }}
       OCI_SUBNET_ID: ${{ secrets.OCI_SUBNET_ID }}
       OCI_SSH_PUBLIC_KEY: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
       INSTANCE_DISPLAY_NAME: workflow-ai-oci
@@ -24,6 +23,13 @@ jobs:
     steps:
       - name: Install OCI CLI
         run: pip install --upgrade oci-cli
+
+      - name: Write OCI API key file
+        run: |
+          mkdir -p "$HOME/.oci"
+          printf '%s\n' "${{ secrets.OCI_CLI_KEY_CONTENT }}" > "$HOME/.oci/key.pem"
+          chmod 600 "$HOME/.oci/key.pem"
+          echo "OCI_CLI_KEY_FILE=$HOME/.oci/key.pem" >> "$GITHUB_ENV"
 
       - name: Skip if instance already exists
         id: check
