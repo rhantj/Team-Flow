@@ -262,6 +262,7 @@ App/scripts/.dev-logs/
 *.pdf
 *.pptx
 *.png
+!docs/*.png
 *.zip
 
 # 인프라 식별자(OCID 등) 포함 - 절대 커밋 금지
