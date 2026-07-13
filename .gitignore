@@ -263,3 +263,6 @@ App/scripts/.dev-logs/
 *.pptx
 *.png
 *.zip
+
+# 인프라 식별자(OCID 등) 포함 - 절대 커밋 금지
+.github/workflows/OCI_SECRETS_SETUP.md
