@@ -21,6 +21,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+#fs05/이은주 아래 1줄 app 호출
+app.include_router(workload_router)
 
 @app.get("/")
 def root():
