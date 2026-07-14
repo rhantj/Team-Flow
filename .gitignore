@@ -256,6 +256,7 @@ figma_export/
 prototype/
 output/
 App/backend_spring/build/
+App/backend_spring/bin/
 App/backend_spring/.gradle/
 App/scripts/.dev-logs/
 backend-spring/target/
@@ -267,4 +268,8 @@ backend-spring/target/
 
 # main에 없는 개인 작업 문서 (팀원 개인 노트, 커밋 대상 아님 - 삭제하지 않고 로컬 보존)
 docs/fs7_naming_convention.md
+!docs/*.png
 *.zip
+
+# 인프라 식별자(OCID 등) 포함 - 절대 커밋 금지
+.github/workflows/OCI_SECRETS_SETUP.md

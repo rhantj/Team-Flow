@@ -1,5 +1,8 @@
 import type { Task } from "../types/task";
 import type { Meeting, SavedMeetingRecord } from "../../../meetings/libs/types/meeting";
+import { TASKS } from "../mock/tasks";
+import { MEETINGS } from "../../../meetings/libs/mock/meetings";
+
 export const TASK_STORAGE_KEY = "workflow-ai.tasks";
 export const MEETING_STORAGE_KEY = "workflow-ai.meetings";
 export const TASKS_UPDATED_EVENT = "workflow-ai:tasks-updated";
@@ -25,8 +28,8 @@ function writeStoredArray<T>(key: string, eventName: string, value: T[]): void {
   window.dispatchEvent(new Event(eventName));
 }
 
-export const getStoredTasks = () => readStoredArray<Task>(TASK_STORAGE_KEY, []);
-export const getStoredMeetings = () => readStoredArray<Meeting>(MEETING_STORAGE_KEY, []);
+export const getStoredTasks = () => readStoredArray<Task>(TASK_STORAGE_KEY, TASKS);
+export const getStoredMeetings = () => readStoredArray<Meeting>(MEETING_STORAGE_KEY, MEETINGS);
 export const saveStoredTasks = (tasks: Task[]) => writeStoredArray(TASK_STORAGE_KEY, TASKS_UPDATED_EVENT, tasks);
 export const saveStoredMeetings = (meetings: Meeting[]) => writeStoredArray(MEETING_STORAGE_KEY, MEETINGS_UPDATED_EVENT, meetings);
 
