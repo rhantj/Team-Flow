@@ -2,7 +2,7 @@ import { useNavigate } from "react-router";
 import { BackBtn } from "../../../global/component/BackBtn";
 import { CircleProgress } from "../../../global/component/CircleProgress";
 import { AIBox } from "../../../ai/components/AIBox";
-import { TASKS } from "../../../board/libs/mock/tasks";
+import { useStoredTasks } from "../../../global/hooks/useStoredTasks";
 import { PROGRESS_HISTORY, PLANNED_VS_ACTUAL, PROGRESS_BY_TYPE } from "../../libs/mock/workload";
 import { MILESTONES } from "../../libs/mock/milestones";
 import { getDoneCount, getProgressPercent } from "../../../board/libs/utils/taskService";
@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 
 export function ProgressPage() {
+  const TASKS = useStoredTasks();
   const navigate = useNavigate();
   const onBack = () => navigate("/dashboard");
   return (

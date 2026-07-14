@@ -1,4 +1,4 @@
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router";
 import { Sparkles } from "lucide-react";
 import { Sidebar } from "./Sidebar";
@@ -6,10 +6,18 @@ import { Header } from "./Header";
 import { AIAssistant } from "../../../ai/screen/AIAssistant";
 import type { Tab } from "../../../board/libs/types/task";
 
+const OPEN_AI_ASSISTANT_EVENT = "workflow-ai:open-ai-assistant";
+
 export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const [aiOpen, setAIOpen] = useState(false);
+
+  useEffect(() => {
+    const open = () => setAIOpen(true);
+    window.addEventListener(OPEN_AI_ASSISTANT_EVENT, open);
+    return () => window.removeEventListener(OPEN_AI_ASSISTANT_EVENT, open);
+  }, []);
 
   const activeTab = (location.pathname.split("/").filter(Boolean)[0] ?? "dashboard") as Tab;
 

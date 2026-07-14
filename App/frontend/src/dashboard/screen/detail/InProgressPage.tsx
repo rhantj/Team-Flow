@@ -2,7 +2,8 @@ import { useNavigate } from "react-router";
 import { BackBtn } from "../../../global/component/BackBtn";
 import { TaskStatusPill } from "../../../board/components/TaskStatusPill";
 import { PriorityBadge } from "../../../board/components/PriorityBadge";
-import { TASKS, IN_PROGRESS_META } from "../../../board/libs/mock/tasks";
+import { IN_PROGRESS_META } from "../../../board/libs/mock/tasks";
+import { useStoredTasks } from "../../../global/hooks/useStoredTasks";
 import { MEMBERS } from "../../../global/lib/mock/members";
 import {
   Sparkles,
@@ -19,6 +20,7 @@ import {
 } from "lucide-react";
 
 export function InProgressPage() {
+  const TASKS = useStoredTasks();
   const navigate = useNavigate();
   const onBack = () => navigate("/dashboard");
   const inProgressTasks = TASKS.filter(t => t.status === "inprogress");

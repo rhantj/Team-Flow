@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router";
 import { CatTag } from "../components/CatTag";
 import { TaskStatusPill } from "../components/TaskStatusPill";
 import { PriorityBadge } from "../components/PriorityBadge";
@@ -7,7 +8,21 @@ import { getCat } from "../libs/utils/taskService";
 import { CATEGORIES, TASK_CAT, CAT_EXTRA, BOARD_COLS } from "../libs/mock/tasks";
 import { MEMBERS } from "../../global/lib/mock/members";
 import { useStoredTasks } from "../../global/hooks/useStoredTasks";
-import type { Priority, TaskStatus } from "../libs/types/task";
+import { getStoredTasks, saveStoredTasks } from "../libs/utils/localStore";
+import { useStoredComments, addComment, addNotification, addActivity } from "../libs/utils/activityStore";
+import type { ChecklistItem, Priority, Task, TaskStatus } from "../libs/types/task";
+
+const DEFAULT_CHECKLIST_LABELS = ["설계 문서 확인", "구현 완료", "코드 리뷰 완료", "QA 통과"];
+
+const buildDefaultChecklist = (taskId: string, status: TaskStatus): ChecklistItem[] =>
+  DEFAULT_CHECKLIST_LABELS.map((label, i) => ({
+    id: `${taskId}-CHK-${i}`,
+    label,
+    done: status === "done" && i < 3,
+  }));
+
+const CURRENT_USER = MEMBERS[0];
+const STATUS_LABELS: Record<TaskStatus, string> = { todo: "할 일", inprogress: "진행 중", blocked: "보류/블로커", done: "완료" };
 import {
   FileAudio,
   Sparkles,
@@ -35,6 +50,8 @@ import {
 
 export function BoardView() {
   const TASKS = useStoredTasks();
+  const comments = useStoredComments();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selId, setSelId] = useState<string|null>(null);
   const [showModal, setShowModal] = useState(false);
   const [step, setStep] = useState(0);
@@ -49,14 +66,72 @@ export function BoardView() {
   const [fCriteria, setFCriteria] = useState("");
   const [panelTab, setPanelTab] = useState<"info"|"cat"|"activity"|"ai">("info");
   const [newComment, setNewComment] = useState("");
+  const [commentSentMessage, setCommentSentMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
   const selTask = selId ? TASKS.find(t => t.id === selId) : null;
   const taskCat = selTask ? (TASK_CAT[selTask.id] ?? "other") : "other";
   const catDef = getCat(taskCat);
+  const taskComments = selTask ? comments.filter(c => c.taskId === selTask.id) : [];
+  const checklist = selTask?.checklist ?? (selTask ? buildDefaultChecklist(selTask.id, selTask.status) : []);
+
+  const showToast = (message: string) => { setToast(message); setTimeout(() => setToast(null), 2200); };
 
   const openModal = (status: TaskStatus) => {
     setFStatus(status); setSelCat(""); setStep(0); setShowModal(true);
     setFTitle(""); setFDesc(""); setFDue(""); setFPriority("medium"); setFCriteria("");
+  };
+
+  useEffect(() => {
+    if (searchParams.get("openAdd") === "1") {
+      openModal("todo");
+      const next = new URLSearchParams(searchParams);
+      next.delete("openAdd");
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const updateTask = (taskId: string, patch: Partial<Task>) => {
+    const next = getStoredTasks().map(t => t.id === taskId ? { ...t, ...patch } : t);
+    saveStoredTasks(next);
+  };
+
+  const toggleChecklistItem = (itemId: string) => {
+    if (!selTask) return;
+    const updated = checklist.map(item => item.id === itemId ? { ...item, done: !item.done } : item);
+    updateTask(selTask.id, { checklist: updated });
+  };
+
+  const NEXT_STATUS: Record<TaskStatus, TaskStatus | null> = {
+    todo: "inprogress", inprogress: "done", blocked: "inprogress", done: null,
+  };
+
+  const handleQuickAction = (label: string, isPrimary: boolean) => {
+    if (!selTask) return;
+    if (isPrimary) {
+      const nextStatus = selTask.status === "done" ? "inprogress" : NEXT_STATUS[selTask.status];
+      if (nextStatus) {
+        updateTask(selTask.id, { status: nextStatus });
+        addActivity(`'${selTask.title}' 상태를 '${STATUS_LABELS[nextStatus]}'(으)로 변경`, CURRENT_USER.name, "status");
+        showToast(`${label} 완료`);
+        return;
+      }
+    }
+    showToast("준비 중인 기능입니다.");
+  };
+
+  const handleSendComment = () => {
+    if (!selTask || !newComment.trim()) return;
+    addComment(selTask.id, CURRENT_USER.id, CURRENT_USER.name, newComment.trim());
+    const assignee = MEMBERS.find(m => m.id === selTask.assignee);
+    if (assignee) {
+      addNotification(assignee.id, `${CURRENT_USER.name} 팀장이 '${selTask.title}' 업무에 코멘트를 남겼습니다.`, selTask.id);
+    }
+    addActivity(`'${selTask.title}' 업무에 코멘트를 남겼습니다: "${newComment.trim().slice(0, 40)}"`, CURRENT_USER.name, "comment");
+    setNewComment("");
+    setCommentSentMessage("코멘트 전송 완료");
+    setTimeout(() => setCommentSentMessage(null), 2200);
   };
 
   // ── per-status action sets ──────────────────────────────────────────────────
@@ -135,7 +210,12 @@ export function BoardView() {
   };
 
   return (
-    <div className="h-full flex overflow-hidden" style={{ fontFamily:"'Inter','Noto Sans KR',sans-serif" }}>
+    <div className="h-full flex overflow-hidden relative" style={{ fontFamily:"'Inter','Noto Sans KR',sans-serif" }}>
+      {toast && (
+        <div className="fixed top-4 right-6 z-[60] px-4 py-2.5 rounded-xl text-xs font-semibold text-white shadow-lg" style={{ background: "#1C2333" }}>
+          {toast}
+        </div>
+      )}
 
       {/* ── Kanban board ── */}
       <div className={`flex gap-4 p-5 overflow-x-auto transition-all ${selTask ? "flex-1 min-w-0" : "w-full"}`}>
@@ -242,7 +322,7 @@ export function BoardView() {
                     ? { background: "#FEF2F2", color: "#EF4444", border: "1px solid #FECACA" }
                     : undefined;
                   return (
-                    <button key={a.label}
+                    <button key={a.label} onClick={() => handleQuickAction(a.label, Boolean(a.primary))}
                       className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold rounded-lg transition-all hover:opacity-90 ${!style ? "border border-border bg-card text-foreground hover:bg-muted" : ""}`}
                       style={style}>
                       <Icon className="w-3 h-3" />{a.label}
@@ -305,13 +385,15 @@ export function BoardView() {
                   </div>
                   {/* Checklist */}
                   <div className="pt-2 border-t border-border">
-                    <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">체크리스트</div>
-                    {[["설계 문서 확인",true],["구현 완료",selTask.status==="done"],["코드 리뷰 완료",selTask.status==="done"],["QA 통과",false]].map(([label, done]) => (
-                      <div key={label as string} className="flex items-center gap-2 py-1">
-                        <div className={`w-4 h-4 rounded border flex items-center justify-center ${done ? "bg-emerald-500 border-emerald-500" : "border-border"}`}>
-                          {done && <Check className="w-2.5 h-2.5 text-white" />}
+                    <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                      체크리스트 <span className="normal-case font-normal">({checklist.filter(c => c.done).length}/{checklist.length})</span>
+                    </div>
+                    {checklist.map(item => (
+                      <div key={item.id} onClick={() => toggleChecklistItem(item.id)} className="flex items-center gap-2 py-1 cursor-pointer select-none">
+                        <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${item.done ? "bg-emerald-500 border-emerald-500" : "border-border hover:border-blue-400"}`}>
+                          {item.done && <Check className="w-2.5 h-2.5 text-white" />}
                         </div>
-                        <span className={`text-xs ${done ? "line-through text-muted-foreground" : "text-foreground"}`}>{label as string}</span>
+                        <span className={`text-xs ${item.done ? "line-through text-muted-foreground" : "text-foreground"}`}>{item.label}</span>
                       </div>
                     ))}
                   </div>
@@ -333,7 +415,7 @@ export function BoardView() {
                       </div>
                     ))}
                   </div>
-                  <button className="w-full flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold rounded-xl border border-purple-200 hover:opacity-90 transition-opacity"
+                  <button onClick={() => showToast("준비 중인 기능입니다.")} className="w-full flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold rounded-xl border border-purple-200 hover:opacity-90 transition-opacity"
                     style={{ background:"rgba(112,72,232,0.08)", color:"#7048E8" }}>
                     <Sparkles className="w-3.5 h-3.5" />{aiBtn}
                   </button>
@@ -344,6 +426,18 @@ export function BoardView() {
               {panelTab === "activity" && (
                 <div className="space-y-3">
                   <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">활동 기록</div>
+                  {taskComments.map(c => (
+                    <div key={c.id} className="flex items-start gap-2.5">
+                      <div className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0 mt-0.5" style={{ background: CURRENT_USER.color }}>
+                        {c.authorName[0]}
+                      </div>
+                      <div>
+                        <span className="text-[11px] font-semibold text-foreground">{c.authorName}</span>
+                        <span className="text-[10px] text-muted-foreground ml-1.5">{new Date(c.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                        <div className="text-xs text-muted-foreground mt-0.5">{c.text}</div>
+                      </div>
+                    </div>
+                  ))}
                   {[
                     { actor:"김민준",  time:"3시간 전", msg:`상태를 '${selTask.status==="inprogress"?"진행 중":"완료"}'으로 변경`, type:"status" },
                     { actor:"회의록 AI", time:"어제",   msg:"6차 회의에서 이 업무가 자동 생성되었습니다.", type:"ai" },
@@ -372,10 +466,11 @@ export function BoardView() {
                       <textarea value={newComment} onChange={e => setNewComment(e.target.value)} rows={2}
                         placeholder="팀원에게 피드백이나 코멘트를 남기세요..."
                         className="flex-1 text-xs rounded-lg border border-border bg-input-background px-3 py-2 outline-none focus:border-blue-400 resize-none" />
-                      <button onClick={() => setNewComment("")} className="self-end p-2 rounded-lg text-white shrink-0" style={{ background:"var(--primary)" }}>
+                      <button onClick={handleSendComment} disabled={!newComment.trim()} className="self-end p-2 rounded-lg text-white shrink-0 disabled:opacity-40" style={{ background:"var(--primary)" }}>
                         <Send className="w-3.5 h-3.5" />
                       </button>
                     </div>
+                    {commentSentMessage && <div className="text-[10px] text-emerald-600 mt-1.5">{commentSentMessage}</div>}
                   </div>
                 </div>
               )}
@@ -402,7 +497,7 @@ export function BoardView() {
                       </p>
                     </div>
                   )}
-                  <button className="w-full py-2.5 text-xs font-semibold rounded-xl border border-purple-200 flex items-center justify-center gap-1.5 hover:opacity-90 transition-opacity"
+                  <button onClick={() => showToast("준비 중인 기능입니다.")} className="w-full py-2.5 text-xs font-semibold rounded-xl border border-purple-200 flex items-center justify-center gap-1.5 hover:opacity-90 transition-opacity"
                     style={{ background:"rgba(112,72,232,0.1)", color:"#7048E8" }}>
                     <Sparkles className="w-3.5 h-3.5" />체크리스트 자동 생성
                   </button>
@@ -573,7 +668,24 @@ export function BoardView() {
                     className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-muted-foreground border border-border rounded-xl hover:bg-muted transition-colors">
                     <ArrowLeft className="w-4 h-4" />{step===0?"취소":"이전"}
                   </button>
-                  <button onClick={() => setStep(step+1)} disabled={step===0 && !selCat}
+                  <button onClick={() => {
+                      if (step === 2) {
+                        const now = Date.now();
+                        const cat = selCat === "other" ? "other" : selCat;
+                        const newTask: Task = {
+                          id: `TASK-${now}`,
+                          title: fTitle.trim() || `${getCat(cat).label} 업무`,
+                          status: fStatus,
+                          priority: fPriority,
+                          assignee: fAssignee,
+                          dueDate: fDue ? fDue.slice(5).replace("-", ".") : "미정",
+                          labels: [customCat.trim() || getCat(cat).label],
+                        };
+                        saveStoredTasks([newTask, ...getStoredTasks()]);
+                        addActivity(`'${newTask.title}' 업무를 새로 추가했습니다.`, CURRENT_USER.name, "task-created");
+                      }
+                      setStep(step+1);
+                    }} disabled={step===0 && !selCat}
                     className="flex items-center gap-1.5 px-5 py-2 text-sm font-semibold text-white rounded-xl disabled:opacity-40 hover:opacity-90 transition-opacity"
                     style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
                     {step===2?"업무 생성 완료":"다음 단계"}<ArrowRight className="w-4 h-4" />

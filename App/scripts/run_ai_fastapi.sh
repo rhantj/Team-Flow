@@ -15,5 +15,5 @@ else
 fi
 
 python -m pip --version >/dev/null 2>&1 || python -m ensurepip --upgrade
-python -m pip install -r "$ROOT_DIR/../requirements.txt"
+python -m pip install -r "$ROOT_DIR/backend_fastapi/requirements.txt"
 exec python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000

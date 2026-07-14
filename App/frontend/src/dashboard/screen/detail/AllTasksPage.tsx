@@ -6,7 +6,8 @@ import { AIBox } from "../../../ai/components/AIBox";
 import { TaskStatusPill } from "../../../board/components/TaskStatusPill";
 import { PriorityBadge } from "../../../board/components/PriorityBadge";
 import { SourceBadge } from "../../../github/components/SourceBadge";
-import { TASKS, TASK_SOURCES } from "../../../board/libs/mock/tasks";
+import { TASK_SOURCES } from "../../../board/libs/mock/tasks";
+import { useStoredTasks } from "../../../global/hooks/useStoredTasks";
 import { MEMBERS } from "../../../global/lib/mock/members";
 import type { TaskStatus } from "../../../board/libs/types/task";
 import {
@@ -24,6 +25,7 @@ import {
 export function AllTasksPage() {
   const navigate = useNavigate();
   const onBack = () => navigate("/dashboard");
+  const TASKS = useStoredTasks();
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("전체");
   const [sortBy, setSortBy] = useState("마감일");

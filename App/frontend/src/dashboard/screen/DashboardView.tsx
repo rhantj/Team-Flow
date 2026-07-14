@@ -2,20 +2,42 @@ import { useNavigate } from "react-router";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area,
 } from "recharts";
-import { Sparkles, Layers, TrendingUp, AlertTriangle, Clock, Calendar, BarChart3, Zap, GitPullRequest, GitCommit, GitMerge } from "lucide-react";
+import { Sparkles, Layers, TrendingUp, AlertTriangle, Clock, Calendar, BarChart3, Zap, GitPullRequest, GitCommit, GitMerge, Plus, Upload, Package, Github, Columns3, Users } from "lucide-react";
 import { StatCard } from "../../global/component/StatCard";
 import { Avatar } from "../../global/component/Avatar";
 import { StatusIcon } from "../../global/component/StatusIcon";
-import { TASKS } from "../../board/libs/mock/tasks";
+import { useStoredTasks } from "../../global/hooks/useStoredTasks";
+import { useStoredActivity } from "../../board/libs/utils/activityStore";
 import { MEMBERS } from "../../global/lib/mock/members";
 import { GITHUB } from "../../github/libs/mock/github";
 import { WORKLOAD_DATA, PROGRESS_HISTORY } from "../libs/mock/workload";
 import { getDoneCount, getProgressPercent, getBlockedCount, getInProgressCount } from "../../board/libs/utils/taskService";
 import type { DetailPage } from "../../board/libs/types/task";
+import { useState } from "react";
+
+const OPEN_AI_ASSISTANT_EVENT = "workflow-ai:open-ai-assistant";
+
+const formatRelativeTime = (iso: string): string => {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return "방금 전";
+  if (minutes < 60) return `${minutes}분 전`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}시간 전`;
+  return `${Math.floor(hours / 24)}일 전`;
+};
 
 export function DashboardView() {
   const navigate = useNavigate();
   const onCardClick = (p: DetailPage) => navigate(`/dashboard/${p}`);
+  const TASKS = useStoredTasks();
+  const recentActivity = useStoredActivity();
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = (message: string) => {
+    setToast(message);
+    setTimeout(() => setToast(null), 2200);
+  };
 
   const totalTasks = TASKS.length;
   const doneTasks = getDoneCount(TASKS);
@@ -23,8 +45,25 @@ export function DashboardView() {
   const atRisk = getBlockedCount(TASKS);
   const inProgress = getInProgressCount(TASKS);
 
+  const QUICK_ACTIONS = [
+    { label: "새 업무 추가", icon: Plus, color: "#3B5BDB", onClick: () => navigate("/board?openAdd=1") },
+    { label: "회의록 업로드", icon: Upload, color: "#7048E8", onClick: () => navigate("/meetings?upload=1") },
+    { label: "산출물 생성", icon: Package, color: "#0F766E", onClick: () => navigate("/deliverables") },
+    { label: "GitHub 연동", icon: Github, color: "#374151", onClick: () => navigate("/github") },
+    { label: "AI 어시스턴트 열기", icon: Sparkles, color: "#F59E0B", onClick: () => window.dispatchEvent(new Event(OPEN_AI_ASSISTANT_EVENT)) },
+    { label: "업무 보드 이동", icon: Columns3, color: "#0EA5E9", onClick: () => navigate("/board") },
+    { label: "미배정 업무 보기", icon: Users, color: "#EC4899", onClick: () => navigate("/dashboard/all-tasks") },
+    { label: "마감 임박 업무 보기", icon: Clock, color: "#EF4444", onClick: () => navigate("/dashboard/urgent") },
+  ];
+
   return (
-    <div className="p-6 space-y-6 overflow-y-auto h-full" style={{ fontFamily: "'Inter', 'Noto Sans KR', sans-serif" }}>
+    <div className="p-6 space-y-6 overflow-y-auto h-full relative" style={{ fontFamily: "'Inter', 'Noto Sans KR', sans-serif" }}>
+      {toast && (
+        <div className="fixed top-4 right-6 z-50 px-4 py-2.5 rounded-xl text-xs font-semibold text-white shadow-lg" style={{ background: "#1C2333" }}>
+          {toast}
+        </div>
+      )}
+
       {/* AI Recommendation Banner */}
       <div className="rounded-xl p-4 flex items-start gap-3" style={{ background: "linear-gradient(135deg, #7048E8 0%, #4F6EF7 100%)" }}>
         <Sparkles className="w-5 h-5 text-white shrink-0 mt-0.5" />
@@ -32,9 +71,28 @@ export function DashboardView() {
           <div className="text-sm font-semibold text-white">AI 추천 액션</div>
           <div className="text-xs text-purple-100 mt-0.5">최동혁님의 결제 연동 작업이 3일 지연 위험입니다. 오늘 중 코드 리뷰를 진행하고 블로커를 해소하는 것을 추천합니다.</div>
         </div>
-        <button className="text-xs font-medium text-white bg-white/20 px-3 py-1.5 rounded-lg hover:bg-white/30 transition-colors shrink-0">
+        <button onClick={() => showToast("준비 중인 기능입니다.")} className="text-xs font-medium text-white bg-white/20 px-3 py-1.5 rounded-lg hover:bg-white/30 transition-colors shrink-0">
           자세히
         </button>
+      </div>
+
+      {/* Quick actions */}
+      <div className="bg-card rounded-xl p-4 shadow-sm border border-border">
+        <div className="text-sm font-semibold text-foreground mb-3">빠른 액션</div>
+        <div className="grid grid-cols-4 gap-2">
+          {QUICK_ACTIONS.map(action => {
+            const Icon = action.icon;
+            return (
+              <button key={action.label} onClick={action.onClick}
+                className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-border bg-card hover:shadow-sm hover:border-slate-300 transition-all text-left">
+                <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: `${action.color}18` }}>
+                  <Icon className="w-3.5 h-3.5" style={{ color: action.color }} />
+                </div>
+                <span className="text-xs font-medium text-foreground leading-tight">{action.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Stat cards */}
@@ -148,7 +206,18 @@ export function DashboardView() {
             <Zap className="w-4 h-4 text-muted-foreground" />
           </div>
           <div className="space-y-3">
-            {GITHUB.slice(0, 5).map((g, i) => (
+            {recentActivity.slice(0, 3).map(entry => (
+              <div key={entry.id} className="flex items-start gap-2.5">
+                <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5" style={{ background: "rgba(112,72,232,0.12)" }}>
+                  <Sparkles className="w-3 h-3" style={{ color: "#7048E8" }} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs text-foreground font-medium truncate">{entry.message}</div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">{entry.actorName} · {formatRelativeTime(entry.createdAt)}</div>
+                </div>
+              </div>
+            ))}
+            {GITHUB.slice(0, Math.max(0, 5 - recentActivity.length)).map((g, i) => (
               <div key={i} className="flex items-start gap-2.5">
                 <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5" style={{ background: g.type === "pr" ? "#EEF1FB" : g.type === "merge" ? "#ECFDF5" : "#F4F6FA" }}>
                   {g.type === "pr" && <GitPullRequest className="w-3 h-3" style={{ color: "#3B5BDB" }} />}

@@ -58,6 +58,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-workflow}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-root}
+      WORKFLOW_AI_FASTAPI_URL: http://backend-fastapi:8000
     ports:
       - "8080:8080"
     depends_on:
@@ -70,7 +71,7 @@ services:
 
   backend-fastapi:
     build:
-      # requirements.txt가 저장소 루트에 있어서(App/backend_fastapi가 아니라) 빌드 컨텍스트를 루트로 잡는다
+      # Dockerfile이 App/backend_fastapi/app 소스도 함께 COPY하므로 빌드 컨텍스트를 루트로 잡는다
       context: ..
       dockerfile: App/backend_fastapi/Dockerfile
     container_name: workflow-backend-fastapi

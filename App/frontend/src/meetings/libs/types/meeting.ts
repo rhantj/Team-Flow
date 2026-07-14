@@ -4,6 +4,9 @@ export interface Meeting {
   id: string; title: string; date: string; duration: string; status: "processed" | "processing" | "pending";
   summary?: string; decisions?: string[]; todos?: string[]; risks?: string[];
   analysisSource?: "fastapi" | "spring-fallback";
+  fileName?: string;
+  uploadedAt?: string;
+  analyzedAt?: string;
 }
 
 export type UploadFlow = null | "modal" | "analyzing" | "results" | "review" | "done";

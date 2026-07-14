@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import { BackBtn } from "../../../global/component/BackBtn";
 import { TaskStatusPill } from "../../../board/components/TaskStatusPill";
-import { TASKS } from "../../../board/libs/mock/tasks";
+import { useStoredTasks } from "../../../global/hooks/useStoredTasks";
 import { MEMBERS } from "../../../global/lib/mock/members";
 import { WORKLOAD_DATA } from "../../libs/mock/workload";
 import {
@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 
 export function WorkloadPage() {
+  const TASKS = useStoredTasks();
   const navigate = useNavigate();
   const onBack = () => navigate("/dashboard");
   const [selectedMember, setSelectedMember] = useState<string | null>(null);

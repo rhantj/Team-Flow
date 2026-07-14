@@ -14,6 +14,7 @@ export function getDoneCount(tasks: Task[] = TASKS): number {
 }
 
 export function getProgressPercent(tasks: Task[] = TASKS): number {
+  if (tasks.length === 0) return 0;
   return Math.round((getDoneCount(tasks) / tasks.length) * 100);
 }
 

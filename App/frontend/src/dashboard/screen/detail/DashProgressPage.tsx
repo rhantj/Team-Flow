@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { BackBtn } from "../../../global/component/BackBtn";
-import { TASKS } from "../../../board/libs/mock/tasks";
+import { useStoredTasks } from "../../../global/hooks/useStoredTasks";
 import { PROGRESS_HISTORY, STAGES } from "../../libs/mock/workload";
 import { MILESTONES } from "../../libs/mock/milestones";
 import {
@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 
 export function DashProgressPage() {
+  const TASKS = useStoredTasks();
   const navigate = useNavigate();
   const onBack = () => navigate("/dashboard");
   const onGoUrgent = () => navigate("/dashboard/urgent");

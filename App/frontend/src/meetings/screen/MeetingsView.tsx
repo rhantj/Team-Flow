@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { CatTag } from "../../board/components/CatTag";
 import { PriorityBadge } from "../../board/components/PriorityBadge";
 import { getCat } from "../../board/libs/utils/taskService";
 import { getStoredMeetings, getSavedMeetings, saveSavedMeetings, getStoredTasks, saveStoredTasks, saveStoredMeetings } from "../../board/libs/utils/localStore";
+import { addActivity } from "../../board/libs/utils/activityStore";
 import { MEMBERS } from "../../global/lib/mock/members";
 import { CATEGORIES } from "../../board/libs/mock/tasks";
 import type { Meeting, UploadFlow, UploadType, GenTodo, SavedMeetingRecord } from "../libs/types/meeting";
@@ -186,10 +187,77 @@ const getTodayIsoDate = () => {
 };
 
 const stripFileExtension = (fileName: string) => fileName.replace(/\.[^/.]+$/, "");
+const TEXT_PREVIEW_EXTENSIONS = new Set(["txt", "md", "csv", "json", "log"]);
+const getFileExtension = (fileName: string) => (fileName.split(".").pop() ?? "").toLowerCase();
+
+// UTF-8로 우선 디코딩하고, 깨진 바이트가 있으면(주로 EUC-KR/CP949로 저장된 옛 한글 문서) euc-kr로 재시도한다.
+const decodeTextFile = async (file: File): Promise<string> => {
+  const buffer = await file.arrayBuffer();
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch {
+    try {
+      return new TextDecoder("euc-kr").decode(buffer);
+    } catch {
+      return new TextDecoder("utf-8").decode(buffer);
+    }
+  }
+};
+
+// 외부 라이브러리 없이 docx(zip) 안의 word/document.xml만 추출해 태그를 제거한 순수 텍스트로 변환한다.
+const extractDocxText = async (file: File): Promise<string> => {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const view = new DataView(bytes.buffer);
+  let offset = 0;
+  while (offset < bytes.length - 4) {
+    if (view.getUint32(offset, true) !== 0x04034b50) { offset++; continue; }
+    const compressionMethod = view.getUint16(offset + 8, true);
+    const compressedSize = view.getUint32(offset + 18, true);
+    const nameLen = view.getUint16(offset + 26, true);
+    const extraLen = view.getUint16(offset + 28, true);
+    const nameStart = offset + 30;
+    const name = new TextDecoder().decode(bytes.subarray(nameStart, nameStart + nameLen));
+    const dataStart = nameStart + nameLen + extraLen;
+    if (name === "word/document.xml") {
+      const compressed = bytes.subarray(dataStart, dataStart + compressedSize);
+      let xmlBytes: Uint8Array;
+      if (compressionMethod === 0) {
+        xmlBytes = compressed;
+      } else {
+        const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+        xmlBytes = new Uint8Array(await new Response(stream).arrayBuffer());
+      }
+      const xml = new TextDecoder("utf-8").decode(xmlBytes);
+      return xml
+        .replace(/<\/w:p>/g, "\n")
+        .replace(/<w:tab\/>/g, "\t")
+        .replace(/<[^>]+>/g, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+    }
+    offset = dataStart + compressedSize;
+  }
+  throw new Error("document.xml not found");
+};
 const formatDisplayDate = (date: string) => (date || getTodayIsoDate()).replace(/-/g, ".");
+// 마감일 입력을 "MM.DD" 형식으로 자동 포맷한다 — 숫자만 받아 2자리 입력 시 자동으로 "." 삽입, 4자리 초과 무시.
+const formatMMDDInput = (raw: string): string => {
+  const digits = raw.replace(/\D/g, "").slice(0, 4);
+  if (digits.length <= 2) return digits;
+  return `${digits.slice(0, 2)}.${digits.slice(2)}`;
+};
+
+const formatDateTime = (iso?: string) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const datePart = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
+  const timePart = d.toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit", hour12: true });
+  return `${datePart} ${timePart}`;
+};
 
 export function MeetingsView() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [meetings, setMeetings] = useState<Meeting[]>(getStoredMeetings);
   const [selected, setSelected] = useState<string|null>("m1");
   const [uploadFlow, setUploadFlow] = useState<UploadFlow>(null);
@@ -223,6 +291,7 @@ export function MeetingsView() {
   const [newTodoError, setNewTodoError] = useState<string | null>(null);
   const [saveMeetingMessage, setSaveMeetingMessage] = useState<string | null>(null);
   const [originalViewMessage, setOriginalViewMessage] = useState<string | null>(null);
+  const [originalPreview, setOriginalPreview] = useState<{ kind: "text"; content: string; fileName: string } | { kind: "unsupported"; fileName: string } | null>(null);
   const [pdfExportMessage, setPdfExportMessage] = useState<string | null>(null);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [registerMessage, setRegisterMessage] = useState<string | null>(null);
@@ -243,6 +312,16 @@ export function MeetingsView() {
     }, 70);
     return () => clearInterval(iv);
   }, [uploadFlow, analyzeStages.length]);
+
+  useEffect(() => {
+    if (searchParams.get("upload") === "1") {
+      setUploadFlow("modal"); setModalStep(0); setUploadType(null);
+      const next = new URLSearchParams(searchParams);
+      next.delete("upload");
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const meeting = meetings.find(m => m.id === selected);
   // meetingId가 있으면 우선 사용, 없으면(review 화면에서 아직 meetings에 반영 전 등) meetTitle로 대체.
@@ -330,14 +409,28 @@ export function MeetingsView() {
     setTimeout(() => setSaveMeetingMessage(null), 2500);
   };
 
-  const handleViewOriginal = () => {
-    if (selectedFile) {
-      const url = URL.createObjectURL(selectedFile);
-      window.open(url, "_blank", "noopener,noreferrer");
+  const handleViewOriginal = async () => {
+    if (!selectedFile) {
+      setOriginalViewMessage("원본 파일이 없습니다.");
+      setTimeout(() => setOriginalViewMessage(null), 2500);
       return;
     }
-    setOriginalViewMessage("원본 파일 URL이 없습니다.");
-    setTimeout(() => setOriginalViewMessage(null), 2500);
+    const ext = getFileExtension(selectedFile.name);
+    if (TEXT_PREVIEW_EXTENSIONS.has(ext)) {
+      const content = await decodeTextFile(selectedFile);
+      setOriginalPreview({ kind: "text", content, fileName: selectedFile.name });
+      return;
+    }
+    if (ext === "docx") {
+      try {
+        const content = await extractDocxText(selectedFile);
+        setOriginalPreview({ kind: "text", content, fileName: selectedFile.name });
+      } catch {
+        setOriginalPreview({ kind: "unsupported", fileName: selectedFile.name });
+      }
+      return;
+    }
+    setOriginalPreview({ kind: "unsupported", fileName: selectedFile.name });
   };
 
   const handleExportPdf = async () => {
@@ -396,6 +489,7 @@ export function MeetingsView() {
       setAnalysisError("분석할 회의록 파일을 먼저 업로드해주세요.");
       return;
     }
+    const uploadedAt = new Date().toISOString();
     const title = meetTitle.trim() || stripFileExtension(selectedFile.name);
     setMeetTitle(title);
     setAnalysisResult(null);
@@ -435,6 +529,9 @@ export function MeetingsView() {
         }),
         risks: response.analysis.risks,
         analysisSource: source,
+        fileName: selectedFile?.name,
+        uploadedAt,
+        analyzedAt: new Date().toISOString(),
       };
       setAnalysisResult(response.analysis);
       setSelTodos(apiTodos.map(t => t.id));
@@ -490,6 +587,7 @@ export function MeetingsView() {
 
     if (createdTasks.length > 0) {
       saveStoredTasks([...createdTasks, ...existingTasks]);
+      addActivity(`회의록 AI로 '${meetingIdentifier}'의 업무 ${createdTasks.length}건을 업무보드에 등록했습니다.`, "김민준", "meeting-registered");
     }
     setUploadFlow("done");
   };
@@ -531,6 +629,7 @@ export function MeetingsView() {
       sourceMeetingTitle: meetingIdentifier,
     }));
     saveStoredTasks([...createdTasks, ...existingTasks]);
+    addActivity(`회의록 AI로 '${meetingIdentifier}'의 업무 ${createdTasks.length}건을 업무보드에 등록했습니다.`, "김민준", "meeting-registered");
     setRegisterMessage("업무 보드에 등록되었습니다.");
     setTimeout(() => setRegisterMessage(null), 2500);
   };
@@ -822,6 +921,34 @@ export function MeetingsView() {
           </ul>
         </div>
       </div>
+
+      {/* 원본 보기 모달 */}
+      {originalPreview && (
+        <>
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50" onClick={() => setOriginalPreview(null)} />
+          <div className="fixed inset-0 flex items-center justify-center z-50 p-4" onClick={e => e.stopPropagation()}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col">
+              <div className="flex items-center justify-between px-5 py-3.5 border-b border-border shrink-0">
+                <div className="text-sm font-bold text-foreground truncate">{originalPreview.fileName}</div>
+                <button onClick={() => setOriginalPreview(null)} className="p-1.5 hover:bg-muted rounded-lg transition-colors shrink-0"><X className="w-4 h-4 text-muted-foreground" /></button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-5">
+                {originalPreview.kind === "text" ? (
+                  <pre className="text-xs text-foreground leading-relaxed" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'JetBrains Mono','Noto Sans KR',monospace" }}>
+                    {originalPreview.content}
+                  </pre>
+                ) : (
+                  <div className="flex flex-col items-center justify-center text-center py-10 text-muted-foreground">
+                    <FileText className="w-10 h-10 mb-3 text-slate-300" />
+                    <div className="text-sm font-semibold text-foreground mb-1">이 파일 형식은 원본 미리보기를 지원하지 않습니다.</div>
+                    <div className="text-xs">저장된 파일명: {originalPreview.fileName}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
     );
   };
@@ -920,8 +1047,10 @@ export function MeetingsView() {
                       <td className="px-3 py-3">
                         <input
                           type="text"
+                          inputMode="numeric"
+                          placeholder="MM.DD"
                           value={getDueDate(todo)}
-                          onChange={e => setTodoDueDates(p => ({ ...p, [todo.id]: e.target.value }))}
+                          onChange={e => setTodoDueDates(p => ({ ...p, [todo.id]: formatMMDDInput(e.target.value) }))}
                           className="text-xs rounded-lg border border-border bg-card px-2 py-1.5 outline-none focus:border-blue-400 w-16 text-center"
                         />
                       </td>
@@ -1288,6 +1417,12 @@ export function MeetingsView() {
               </div>
               <h2 className="text-lg font-bold text-foreground">{meeting.title}</h2>
               <div className="text-xs text-muted-foreground mt-0.5">{meeting.date} · {meeting.duration}</div>
+              {(meeting.uploadedAt || meeting.analyzedAt) && (
+                <div className="text-[10px] text-muted-foreground mt-1 space-x-3">
+                  {meeting.uploadedAt && <span>업로드 {formatDateTime(meeting.uploadedAt)}</span>}
+                  {meeting.analyzedAt && <span>분석 완료 {formatDateTime(meeting.analyzedAt)}</span>}
+                </div>
+              )}
             </div>
 
             <div className="bg-card rounded-xl p-5 border border-border shadow-sm">

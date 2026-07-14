@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { BackBtn } from "../../../global/component/BackBtn";
+import { DetailStatCard } from "../../../global/component/DetailStatCard";
 import { TaskStatusPill } from "../../../board/components/TaskStatusPill";
 import { PriorityBadge } from "../../../board/components/PriorityBadge";
-import { TASKS, URGENT_META } from "../../../board/libs/mock/tasks";
+import { URGENT_META } from "../../../board/libs/mock/tasks";
+import { useStoredTasks } from "../../../global/hooks/useStoredTasks";
 import { MEMBERS } from "../../../global/lib/mock/members";
 import {
   Sparkles,
@@ -19,6 +21,7 @@ import {
 } from "lucide-react";
 
 export function UrgentTasksPage() {
+  const TASKS = useStoredTasks();
   const navigate = useNavigate();
   const onBack = () => navigate("/dashboard");
   const [selected, setSelected] = useState<string | null>("TF-13");

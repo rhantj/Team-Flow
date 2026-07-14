@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router";
 import { BackBtn } from "../../../global/component/BackBtn";
 import { SeverityBadge } from "../../../github/components/SeverityBadge";
-import { TASKS } from "../../../board/libs/mock/tasks";
+import { useStoredTasks } from "../../../global/hooks/useStoredTasks";
 import { MEMBERS } from "../../../global/lib/mock/members";
 import { BLOCKER_DETAILS } from "../../libs/mock/blockers";
 import {
@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 export function BlockersPage() {
+  const TASKS = useStoredTasks();
   const navigate = useNavigate();
   const onBack = () => navigate("/dashboard");
   return (
