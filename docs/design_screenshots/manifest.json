@@ -1,0 +1,417 @@
+{
+  "count": 34,
+  "size": [
+    1440,
+    1100
+  ],
+  "pages": [
+    {
+      "index": 1,
+      "title": "로그인",
+      "slug": "login",
+      "file": "01-login.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/01-login.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=login",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 2,
+      "title": "회원가입",
+      "slug": "signup",
+      "file": "02-signup.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/02-signup.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=signup",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 3,
+      "title": "온보딩 1 - 프로젝트 목적",
+      "slug": "onboarding-01-project-type",
+      "file": "03-onboarding-01-project-type.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/03-onboarding-01-project-type.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=onboarding&onboardingStep=0",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 4,
+      "title": "온보딩 2 - 팀원 설정",
+      "slug": "onboarding-02-team-size",
+      "file": "04-onboarding-02-team-size.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/04-onboarding-02-team-size.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=onboarding&onboardingStep=1",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 5,
+      "title": "온보딩 3 - 팀장 지정",
+      "slug": "onboarding-03-leader",
+      "file": "05-onboarding-03-leader.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/05-onboarding-03-leader.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=onboarding&onboardingStep=2",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 6,
+      "title": "온보딩 4 - 초대 링크",
+      "slug": "onboarding-04-invite-links",
+      "file": "06-onboarding-04-invite-links.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/06-onboarding-04-invite-links.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=onboarding&onboardingStep=3",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 7,
+      "title": "대시보드",
+      "slug": "dashboard-home",
+      "file": "07-dashboard-home.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/07-dashboard-home.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=dashboard",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 8,
+      "title": "대시보드 상세 - 전체 업무",
+      "slug": "dashboard-all-tasks",
+      "file": "08-dashboard-all-tasks.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/08-dashboard-all-tasks.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=dashboard&detail=all-tasks",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 9,
+      "title": "대시보드 상세 - 진행률 분석",
+      "slug": "dashboard-progress-analysis",
+      "file": "09-dashboard-progress-analysis.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/09-dashboard-progress-analysis.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=dashboard&detail=progress",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 10,
+      "title": "대시보드 상세 - 블로커 관리",
+      "slug": "dashboard-blockers",
+      "file": "10-dashboard-blockers.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/10-dashboard-blockers.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=dashboard&detail=blockers",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 11,
+      "title": "대시보드 상세 - 진행 중 업무",
+      "slug": "dashboard-in-progress",
+      "file": "11-dashboard-in-progress.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/11-dashboard-in-progress.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=dashboard&detail=inprogress",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 12,
+      "title": "대시보드 상세 - 전체 진행률",
+      "slug": "dashboard-overall-progress",
+      "file": "12-dashboard-overall-progress.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/12-dashboard-overall-progress.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=dashboard&detail=dash-progress",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 13,
+      "title": "대시보드 상세 - 마감 임박 업무",
+      "slug": "dashboard-urgent-tasks",
+      "file": "13-dashboard-urgent-tasks.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/13-dashboard-urgent-tasks.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=dashboard&detail=urgent",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 14,
+      "title": "대시보드 상세 - 팀원별 업무량",
+      "slug": "dashboard-workload",
+      "file": "14-dashboard-workload.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/14-dashboard-workload.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=dashboard&detail=workload",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 15,
+      "title": "대시보드 상세 - 최근 활동",
+      "slug": "dashboard-activity",
+      "file": "15-dashboard-activity.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/15-dashboard-activity.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=dashboard&detail=activity",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 16,
+      "title": "업무 보드",
+      "slug": "board-home",
+      "file": "16-board-home.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/16-board-home.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=board",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 17,
+      "title": "업무 보드 - 업무 상세",
+      "slug": "board-task-detail",
+      "file": "17-board-task-detail.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/17-board-task-detail.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=board&boardTask=TF-05",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 18,
+      "title": "업무 보드 - 새 업무 추가",
+      "slug": "board-new-task-modal",
+      "file": "18-board-new-task-modal.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/18-board-new-task-modal.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=board&boardModal=1&boardStep=0",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 19,
+      "title": "회의록 AI",
+      "slug": "meetings-home",
+      "file": "19-meetings-home.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/19-meetings-home.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=meetings",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 20,
+      "title": "회의록 AI - 업로드 유형 선택",
+      "slug": "meetings-upload-type",
+      "file": "20-meetings-upload-type.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/20-meetings-upload-type.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=meetings&meetingFlow=modal&meetingModalStep=0",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 21,
+      "title": "회의록 AI - 업로드 정보 입력",
+      "slug": "meetings-upload-form",
+      "file": "21-meetings-upload-form.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/21-meetings-upload-form.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=meetings&meetingFlow=modal&meetingModalStep=1&uploadType=document",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 22,
+      "title": "회의록 AI - 분석 진행",
+      "slug": "meetings-analyzing",
+      "file": "22-meetings-analyzing.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/22-meetings-analyzing.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=meetings&meetingFlow=analyzing&uploadType=audio",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 23,
+      "title": "회의록 AI - 분석 결과",
+      "slug": "meetings-results",
+      "file": "23-meetings-results.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/23-meetings-results.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=meetings&meetingFlow=results&uploadType=document",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 24,
+      "title": "회의록 AI - 역할 분배 검토",
+      "slug": "meetings-role-review",
+      "file": "24-meetings-role-review.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/24-meetings-role-review.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=meetings&meetingFlow=review&uploadType=document",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 25,
+      "title": "회의록 AI - 업무 등록 완료",
+      "slug": "meetings-done",
+      "file": "25-meetings-done.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/25-meetings-done.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=meetings&meetingFlow=done&uploadType=document",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 26,
+      "title": "산출물 생성",
+      "slug": "deliverables-home",
+      "file": "26-deliverables-home.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/26-deliverables-home.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=deliverables",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 27,
+      "title": "산출물 생성 - 상세 정보",
+      "slug": "deliverables-detail",
+      "file": "27-deliverables-detail.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/27-deliverables-detail.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=deliverables&delivCard=D1&delivPanel=info",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 28,
+      "title": "산출물 생성 - AI 미리보기",
+      "slug": "deliverables-ai-preview",
+      "file": "28-deliverables-ai-preview.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/28-deliverables-ai-preview.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=deliverables&delivCard=D1&delivPanel=preview",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 29,
+      "title": "산출물 생성 - 초안 생성 중",
+      "slug": "deliverables-generating",
+      "file": "29-deliverables-generating.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/29-deliverables-generating.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=deliverables&delivGenerating=1",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 30,
+      "title": "GitHub 연동",
+      "slug": "github-integration",
+      "file": "30-github-integration.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/30-github-integration.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=github",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 31,
+      "title": "기여도 분석 - 팀원 접근",
+      "slug": "contributors-locked",
+      "file": "31-contributors-locked.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/31-contributors-locked.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=contributors",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 32,
+      "title": "마이페이지 - 팀원",
+      "slug": "mypage-member",
+      "file": "32-mypage-member.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/32-mypage-member.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=mypage&mypageRole=member",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 33,
+      "title": "마이페이지 - 심사자",
+      "slug": "mypage-reviewer",
+      "file": "33-mypage-reviewer.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/33-mypage-reviewer.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=mypage&mypageRole=reviewer",
+      "size": [
+        1440,
+        1100
+      ]
+    },
+    {
+      "index": 34,
+      "title": "AI 어시스턴트",
+      "slug": "ai-assistant",
+      "file": "34-ai-assistant.jpg",
+      "path": "/Users/tina/Project/WorkFlow_AI/design_screenshots/34-ai-assistant.jpg",
+      "sourceUrl": "http://127.0.0.1:5197/?capture=1&v=4&screen=dashboard&tab=dashboard&ai=1",
+      "size": [
+        1440,
+        1100
+      ]
+    }
+  ]
+}
