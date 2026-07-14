@@ -23,8 +23,8 @@
 | FR-03 | 업무 보드 (상태별 칸반·카테고리 UI·담당자/마감일) | **유소은 (FS-6)** | 박지수 (FS-2) | React, Spring Boot |
 | FR-04 | 회의록 업로드 (문서 업로드·텍스트 추출·AI 분석) | **박지수 (FS-2)** | 고무서 (FS-4) | LLM, File Parser |
 | FR-05 | To-Do 자동 생성 (업무 추출·담당자 후보·미배정 처리) | **박지수 (FS-2)** | 고무서 (FS-4) | LLM, Function Calling |
-| FR-06 | 대시보드 (진행률·마감 임박·업무량·최근 활동) | **허영주 (FS-3)** | 박상준 (FS-1) | DB Aggregation, Chart UI |
-| AI-1 | ML 지연 위험도 예측 (정상/주의/위험) | **허영주 (FS-3)** | 박상준 (FS-1) | scikit-learn/LightGBM |
+| FR-06 | 대시보드 (진행률·마감 임박·업무량·최근 활동) | **허영주 (FS-3)** | 유소은 (FS-6) | DB Aggregation, Chart UI |
+| AI-1 | ML 지연 위험도 예측 (정상/주의/위험) | **허영주 (FS-3)** | 유소은 (FS-6) | scikit-learn/LightGBM |
 | FR-07 | ML 업무 편중 점수 (팀원별 과부하 점수) | **이은주 (FS-5)** | 허영주 (FS-3) | Regression/Classification |
 | FR-08 | AI Assistant / RAG (프로젝트 맥락 Q&A·출처 표시) | **고무서 (FS-4)** | 이은주 (FS-5) | LLM, RAG, pgvector |
 | FR-09 | 심사자 기여도 리포트 기본 (업무/회의/문서 기반) | **곽진아 (FS-7)** | 박상준 (FS-3) | DB Aggregation, LLM |
