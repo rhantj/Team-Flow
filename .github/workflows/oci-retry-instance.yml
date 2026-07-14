@@ -18,8 +18,8 @@ jobs:
       OCI_SSH_PUBLIC_KEY: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
       INSTANCE_DISPLAY_NAME: workflow-ai-oci
       SHAPE: VM.Standard.A1.Flex
-      OCPUS: 4
-      MEMORY_GBS: 24
+      OCPUS: 1
+      MEMORY_GBS: 6
     steps:
       - name: Install OCI CLI
         run: pip install --upgrade oci-cli
