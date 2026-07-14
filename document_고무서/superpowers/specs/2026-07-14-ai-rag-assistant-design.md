@@ -47,9 +47,14 @@ PostgreSQL 17 (Supabase) + pgvector
 - 현재 `MeetingAnalysisService`(FS-2 소유)는 in-memory 저장뿐이고, `TaskController`/`TaskService`(FS-6/FS-2 소유)는 아직 미착수 상태 — 지금 시점엔 직접 충돌 없음.
 - 향후 두 팀원이 각자의 저장 로직을 완성할 때, `/ai/rag/ingest`를 호출 계약(contract)으로 문서화해두고 각자 한 줄 호출을 추가하도록 안내한다. 고무서가 FS-2/FS-6 파일을 직접 수정하지 않는 것을 원칙으로 한다.
 
+**DB 호스팅 전환 예정**
+- 현재는 Supabase PostgreSQL을 사용하지만, 추후 OCI(Oracle Cloud Infrastructure)에 다른 서비스들과 함께 자체 PostgreSQL을 올릴 예정이며 그쪽으로 이전한다.
+- pgvector는 표준 PostgreSQL 확장이라 OCI 자체 호스팅 PostgreSQL 17에도 동일하게 설치 가능 — 마이그레이션 시 `CREATE EXTENSION vector` + 스키마/데이터 덤프-복원만 필요하고 RAG 코드(FastAPI 쿼리·서비스 로직)는 변경 없이 그대로 동작한다.
+- 연결 정보는 `pydantic-settings`로 환경변수화되어 있으므로(컨벤션 준수), 전환 시 `.env`의 `DATABASE_URL`만 교체하면 된다.
+
 ## 3. DB 마이그레이션 (선행 작업)
 
-Supabase에 `document_chunks.embedding`이 JSONB로 이미 생성돼 있음(데이터 없음 확인됨). VECTOR 타입으로 교체하는 마이그레이션을 RAG 개발의 첫 단계로 수행한다.
+Supabase에 `document_chunks.embedding`이 JSONB로 이미 생성돼 있음(데이터 없음 확인됨). VECTOR 타입으로 교체하는 마이그레이션을 RAG 개발의 첫 단계로 수행한다. (아래는 현재 Supabase 기준이며, 추후 OCI 자체 PostgreSQL로 이전 시 동일 DDL을 재실행하면 된다.)
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
