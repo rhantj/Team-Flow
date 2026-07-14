@@ -7,6 +7,9 @@ from fastapi import FastAPI, File, Form, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+#fs05/이은주 아래 2줄 라우터 등록
+from ml_workload_score.app.routers.workload_router import router as workload_router
+app.include_router(workload_router)
 
 app = FastAPI(title="WorkFlow AI FastAPI", version="0.1.0")
 
