@@ -7,6 +7,7 @@ from fastapi import FastAPI, File, Form, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from ml_workload_score.app.routers.workload_router import router as workload_router
 
 app = FastAPI(title="WorkFlow AI FastAPI", version="0.1.0")
 
@@ -17,6 +18,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(workload_router)
 
 
 @app.get("/")
