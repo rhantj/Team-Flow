@@ -1,12 +1,27 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { ChevronRight, Search, Calendar, Bell, Plus } from "lucide-react";
+import { ChevronRight, Search, Calendar, Bell, LogOut } from "lucide-react";
 import { MEMBERS } from "../../lib/mock/members";
 import { TAB_TITLES } from "../../lib/constants/nav";
 import type { Tab } from "../../../board/libs/types/task";
 import { useStoredNotifications, markNotificationsRead } from "../../../board/libs/utils/activityStore";
+import { useAuth, type AppRole } from "../../hooks/useAuth";
 
 const CURRENT_USER = MEMBERS[0];
+
+const ROLE_LABELS: Record<AppRole, string> = {
+  ADMIN: "관리자",
+  LEADER: "팀장",
+  MEMBER: "팀원",
+  JUDGE: "심사자",
+};
+
+const ROLE_COLORS: Record<AppRole, string> = {
+  ADMIN: "#0F172A",
+  LEADER: "#3B5BDB",
+  MEMBER: "#10B981",
+  JUDGE: "#7048E8",
+};
 
 const DETAIL_TITLES: Record<string, string> = {
   "all-tasks": "전체 업무 관리", "progress": "진행률 분석",
@@ -20,6 +35,8 @@ export function Header() {
   const location = useLocation();
   const [searchOpen, setSearchOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const { currentProjectName, currentProjectRole, logout } = useAuth();
+  const role = currentProjectRole ?? "LEADER";
   const allNotifications = useStoredNotifications();
   const myNotifications = allNotifications.filter(n => n.recipientId === CURRENT_USER.id);
   const unreadCount = myNotifications.filter(n => !n.read).length;
@@ -27,13 +44,20 @@ export function Header() {
   const segments = location.pathname.split("/").filter(Boolean);
   const activeTab = (segments[0] ?? "dashboard") as Tab;
   const detailPage = segments[1] ?? null;
+  const handleLogout = () => {
+    logout();
+    navigate("/login", { replace: true });
+  };
 
   return (
     <header className="h-14 bg-card border-b border-border flex items-center justify-between px-6 shrink-0 shadow-sm">
-      <div className="flex items-center gap-2 text-sm">
+      <div className="flex items-center gap-2 text-sm min-w-0">
         <span className="text-muted-foreground">TeamFlow AI</span>
         <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
-        <span className="text-muted-foreground">스마트 주차 관리 시스템</span>
+        <span className="text-muted-foreground truncate max-w-[220px]">{currentProjectName || "스마트 주차 관리 시스템"}</span>
+        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-white" style={{ background: ROLE_COLORS[role] }}>
+          {ROLE_LABELS[role]}
+        </span>
         <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
         {detailPage ? (
           <>
@@ -62,9 +86,21 @@ export function Header() {
         </div>
 
         <div className="relative">
-          <button onClick={() => { setNotifOpen(v => !v); if (!notifOpen) markNotificationsRead(); }} className="relative p-2 rounded-lg hover:bg-muted transition-colors">
-            <Bell className="w-4 h-4 text-muted-foreground" />
-            {unreadCount > 0 && <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-red-500 rounded-full" />}
+          <button
+            onClick={() => { setNotifOpen(v => !v); if (!notifOpen) markNotificationsRead(); }}
+            className={`relative h-10 min-w-10 px-2.5 rounded-xl border shadow-sm transition-all flex items-center justify-center ${
+              notifOpen
+                ? "border-blue-400 bg-blue-100 text-blue-700"
+                : "border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 hover:border-blue-300"
+            }`}
+            aria-label="알림"
+          >
+            <Bell className="w-5 h-5" />
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center border-2 border-card">
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </span>
+            )}
           </button>
           {notifOpen && (
             <>
@@ -95,9 +131,12 @@ export function Header() {
           ))}
         </div>
 
-        <button onClick={() => navigate("/board?openAdd=1")} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white text-xs font-medium transition-opacity hover:opacity-90"
-          style={{ background: "var(--primary)" }}>
-          <Plus className="w-3.5 h-3.5" /> 업무 추가
+        <button
+          onClick={handleLogout}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-card text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors"
+        >
+          <LogOut className="w-4 h-4" />
+          로그아웃
         </button>
       </div>
     </header>
