@@ -49,6 +49,20 @@ class DatabaseUrlPropertyMapperTest {
     }
 
     @Test
+    void prefersPrivateDatabaseUrlOverPublicCandidates() {
+        Map<String, String> properties = DatabaseUrlPropertyMapper.toSpringProperties(Map.of(
+            "DATABASE_URL", "postgresql://public:secret@containers-us-west.railway.app:5432/railway",
+            "DATABASE_PRIVATE_URL", "postgresql://private:secret@postgres.railway.internal:5432/railway"
+        ));
+
+        assertEquals(
+            "jdbc:postgresql://postgres.railway.internal:5432/railway",
+            properties.get("spring.datasource.url")
+        );
+        assertEquals("private", properties.get("spring.datasource.username"));
+    }
+
+    @Test
     void replacesLocalhostSpringDatasourceUrlWithRailwayDatabaseUrl() {
         Map<String, String> properties = DatabaseUrlPropertyMapper.toSpringProperties(Map.of(
             "SPRING_DATASOURCE_URL", "jdbc:postgresql://localhost:5432/workflow",

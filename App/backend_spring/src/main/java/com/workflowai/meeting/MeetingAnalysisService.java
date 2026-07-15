@@ -19,6 +19,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 @Service
@@ -61,6 +62,7 @@ public class MeetingAnalysisService {
         this.uploadsDir = uploadsDir;
     }
 
+    @Transactional
     public MeetingAnalysisResponse analyze(
         String projectId,
         MultipartFile file,
@@ -191,6 +193,7 @@ public class MeetingAnalysisService {
             .toList();
     }
 
+    @Transactional
     public TaskRegisterResponse registerTasks(String meetingId, TaskRegisterRequest request) {
         Long meetingDbId = parseLongOrNull(meetingId);
         List<MeetingTodo> todos = request == null || request.todos() == null ? List.of() : request.todos();
