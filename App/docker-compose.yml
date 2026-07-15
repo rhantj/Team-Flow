@@ -13,11 +13,14 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-root}
     ports:
-      - "${DB_HOST_PORT:-5432}:5432"
+      - '${DB_HOST_PORT:-5432}:5432'
     volumes:
       - db-data:/var/lib/postgresql/data
+      # 최초 기동(볼륨이 비어있을 때)에만 자동 실행되는 스키마 초기화 스크립트.
+      # backend_spring/src/main/resources/db/init 참고.
+      - ./backend_spring/src/main/resources/db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-postgres}']
       interval: 5s
       timeout: 3s
       retries: 10
@@ -26,15 +29,15 @@ services:
     image: redis:7-alpine
     container_name: workflow-redis
     ports:
-      - "6379:6379"
+      - '6379:6379'
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
       timeout: 3s
       retries: 10
 
   kafka:
-    image: apache/kafka:3.8.0   # KRaft 모드 내장 — zookeeper 불필요
+    image: apache/kafka:3.8.0 # KRaft 모드 내장 — zookeeper 불필요
     container_name: workflow-kafka
     environment:
       KAFKA_NODE_ID: 1
@@ -44,23 +47,28 @@ services:
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
     ports:
-      - "9092:9092"
+      - '9092:9092'
 
   backend-spring:
     build: ./backend_spring
     container_name: workflow-backend-spring
     environment:
-      DB_HOST: db                          # application.properties에서 이 이름으로 참조
+      DB_HOST: db # application.properties에서 이 이름으로 참조
       REDIS_HOST: redis
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092   # KafkaConfig.java의 실제 프로퍼티 키에 맞춰 이름 조정
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092 # KafkaConfig.java의 실제 프로퍼티 키에 맞춰 이름 조정
       POSTGRES_DB: ${POSTGRES_DB:-workflow}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-root}
+      # 기본은 compose 안의 로컬 db 서비스에 연결한다.
+      # Supabase(원격)에 직접 연결하려면 .env의 SPRING_DATASOURCE_* 값으로 덮어쓴다.
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:-jdbc:postgresql://db:5432/workflow}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-root}
       WORKFLOW_AI_FASTAPI_URL: http://backend-fastapi:8000
     ports:
-      - "8080:8080"
+      - '8080:8080'
     depends_on:
       db:
         condition: service_healthy
@@ -83,7 +91,7 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       GENERATION_MODEL: ${GENERATION_MODEL:-gemma2}
     ports:
-      - "8000:8000"
+      - '8000:8000'
     depends_on:
       db:
         condition: service_healthy
@@ -98,10 +106,10 @@ services:
     environment:
       API_PROXY_TARGET: http://backend-spring:8080
     ports:
-      - "5173:5173"
+      - '5173:5173'
     volumes:
-      - ./frontend:/app        # 호스트 코드 수정 → 컨테이너에 바로 반영 (HMR)
-      - /app/node_modules      # 컨테이너 안의 node_modules를 위 마운트가 안 덮도록 보호
+      - ./frontend:/app # 호스트 코드 수정 → 컨테이너에 바로 반영 (HMR)
+      - /app/node_modules # 컨테이너 안의 node_modules를 위 마운트가 안 덮도록 보호
     depends_on:
       - backend-spring
 

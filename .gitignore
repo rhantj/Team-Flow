@@ -258,6 +258,7 @@ output/
 App/backend_spring/build/
 App/backend_spring/bin/
 App/backend_spring/.gradle/
+App/backend_spring/uploads/
 App/scripts/.dev-logs/
 backend-spring/target/
 
