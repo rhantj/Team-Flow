@@ -7,6 +7,8 @@ from fastapi import FastAPI, File, Form, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from llm_rag_assistant.app.routers.chat_router import router as rag_router
+
 
 app = FastAPI(title="WorkFlow AI FastAPI", version="0.1.0")
 
@@ -17,6 +19,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(rag_router)
 
 
 @app.get("/")
