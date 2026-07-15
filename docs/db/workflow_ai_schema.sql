@@ -216,20 +216,25 @@ COMMENT ON COLUMN ml_predictions.target_type IS 'task/user (폴리모픽)';
 COMMENT ON COLUMN ml_predictions.model_type IS 'delay_risk/overload/anomaly';
 COMMENT ON COLUMN ml_predictions.result IS '정상/주의/위험 등';
 
--- document_chunks.embedding: 기본값은 JSONB. pgvector 확장 사용 시 파일 하단 대안 참고.
+-- document_chunks.embedding: VECTOR(768) (pgvector, nomic-embed-text 차원). 최초 설치 시 CREATE EXTENSION vector 필요.
 CREATE TABLE document_chunks (
     id          BIGSERIAL PRIMARY KEY,
     project_id  BIGINT NOT NULL,
     source_type VARCHAR(20) NOT NULL,
     source_id   BIGINT NOT NULL,
     content     TEXT NOT NULL,
-    embedding   JSONB,
+    embedding   VECTOR(768),
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_chunks_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 COMMENT ON TABLE document_chunks IS 'RAG 임베딩 청크';
 COMMENT ON COLUMN document_chunks.source_type IS 'meeting/task/deliverable/github (폴리모픽)';
-COMMENT ON COLUMN document_chunks.embedding IS 'pgvector 미사용 시 JSONB로 임시 표현 (§6.4 참고)';
+COMMENT ON COLUMN document_chunks.embedding IS 'pgvector VECTOR(768), nomic-embed-text 임베딩';
+
+CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding
+  ON document_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX IF NOT EXISTS idx_document_chunks_project
+  ON document_chunks (project_id, source_type);
 
 CREATE TABLE assistant_messages (
     id         BIGSERIAL PRIMARY KEY,
