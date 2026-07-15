@@ -2,7 +2,7 @@ import { FileAudio, Sparkles, Shield } from "lucide-react";
 
 export function AuthBrandPanel() {
   return (
-    <div className="relative w-[42%] flex flex-col justify-between p-10 overflow-hidden" style={{ background: "linear-gradient(145deg, #111827 0%, #1A2035 50%, #1E2D5A 100%)" }}>
+    <div className="relative w-full lg:w-[42%] min-h-[260px] lg:min-h-screen flex flex-col justify-between p-6 sm:p-8 lg:p-10 overflow-hidden" style={{ background: "linear-gradient(145deg, #111827 0%, #1A2035 50%, #1E2D5A 100%)" }}>
       {/* decorative blobs */}
       <div className="absolute -top-20 -right-20 w-72 h-72 rounded-full opacity-10" style={{ background: "radial-gradient(circle, #7048E8, transparent)" }} />
       <div className="absolute bottom-10 -left-16 w-64 h-64 rounded-full opacity-10" style={{ background: "radial-gradient(circle, #4F6EF7, transparent)" }} />
