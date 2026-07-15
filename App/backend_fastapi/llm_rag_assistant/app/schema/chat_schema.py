@@ -15,3 +15,20 @@ class RagIngestRequest(BaseModel):
 class RagIngestResponse(BaseModel):
     chunk_ids: list[int]
     chunk_count: int
+
+
+class RagQueryRequest(BaseModel):
+    project_id: int
+    question: str
+
+
+class RagSource(BaseModel):
+    source_type: Literal["meeting", "task"]
+    source_id: int
+    content_snippet: str
+    similarity: float
+
+
+class RagQueryResponse(BaseModel):
+    answer: str
+    sources: list[RagSource]
