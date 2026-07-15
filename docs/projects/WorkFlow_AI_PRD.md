@@ -1,0 +1,168 @@
+# WorkFlow AI PRD
+
+## 1. 문서 정보
+
+| 항목 | 내용 |
+| --- | --- |
+| 제품명 | WorkFlow AI |
+| 문서 버전 | v2.0 |
+| 목적 | 최종 기능 범위, 요구사항, 권한, AI/ML/DL 기술 적용 범위 정의 |
+| 개발 기간 | 약 1개월 |
+| 대상 | 캡스톤디자인 |
+
+## 2. 제품 한 줄 정의
+
+WorkFlow AI는 팀 프로젝트의 회의, 업무, 개발 기록, 산출물, 평가 근거를 AI가 연결해주는 프로젝트 협업 및 평가 보조 웹 플랫폼이다.
+
+## 3. 문제 정의
+
+| 문제 | 설명 |
+| --- | --- |
+| 회의록 정리 부담 | 회의 후 요약, 결정사항, 담당자, 마감일을 다시 정리해야 함 |
+| 역할 분배 불명확 | 누가 무엇을 맡았는지 업무와 회의록이 연결되지 않음 |
+| 일정/진행률 파악 어려움 | 마감일, 지연 작업, 지연 요인을 한눈에 보기 어려움 |
+| 산출물 준비 지연 | 발표자료, 보고서, README가 프로젝트 후반에 급하게 작성됨 |
+| 개발 기록 분리 | GitHub 활동이 업무, 보고서, 평가 근거와 연결되지 않음 |
+| 기여도 판단 어려움 | 교수/심사자가 팀원별 실제 활동 근거를 확인하기 어려움 |
+| AI 포트폴리오 약함 | LLM만 사용하면 ML/DL 역량이 잘 드러나지 않음 |
+
+## 4. 제품 목표
+
+1. 회의록 업로드만으로 요약, 결정사항, To-Do, 역할 분배 후보를 생성한다.
+2. 생성된 To-Do가 업무 보드, 개인 할 일, 목표, 대시보드에 자동 반영된다.
+3. 프로젝트 데이터 기반 AI Assistant를 제공한다.
+4. 발표자료, 보고서, README, 제안서, 실험 보고서 등 산출물을 생성한다.
+5. 심사자 전용 기여도 리포트와 AI 평가 근거를 제공한다.
+6. ML/DL/LLM 기술이 기능별로 명확히 드러나도록 설계한다.
+
+## 5. 사용자 및 권한
+
+| 기능 | 팀장 | 팀원 | 심사자 |
+| --- | --- | --- | --- |
+| 대시보드 | 가능 | 가능 | 가능 |
+| 업무 보드 | 생성/수정/배정 | 본인 업무 수정 | 조회 |
+| 회의록 AI | 업로드/승인 | 업로드/조회 | 조회 |
+| 산출물 생성 | 생성/검토 | 생성/수정 | 제출물 조회 |
+| GitHub 연동 | 설정/조회 | 조회 | 조회 |
+| 개인 코멘트 | 가능 | 가능 | 가능 |
+| 팀 코멘트 | 가능 | 조회 | 가능 |
+| 개인별 기여도 리포트 | 불가 | 불가 | 가능 |
+| AI 평가 근거 | 불가 | 불가 | 가능 |
+| 최종 평가 점수 | 공개 시 조회 | 공개 시 조회 | 입력/공개 설정 |
+
+## 6. MVP 범위
+
+### P0
+
+| ID | 기능 | 요구사항 | 기술 |
+| --- | --- | --- | --- |
+| FR-01 | 인증/권한/마이페이지 | 회원가입, 로그인, 팀장/팀원/심사자 권한, 팀장/팀원/심사자별 개인 화면 | Spring Boot, JWT, RBAC, React, RBAC |
+| FR-02 | 프로젝트 관리 | 프로젝트 생성, 팀원 초대, 마감일 설정 | Spring Boot, DB |
+| FR-03 | 업무 보드 | 상태별 칸반, 카테고리별 상세 UI, 담당자/마감일 관리 | React, Spring Boot |
+| FR-04 | 회의록 업로드 | 문서 업로드, 텍스트 추출, AI 분석 | LLM, File Parser |
+| FR-05 | To-Do 자동 생성 | 회의록 기반 업무 추출, 담당자 후보, 미배정 처리 | LLM, Function Calling |
+| FR-06 | 대시보드 | 전체 진행률, 마감 임박, 업무량, 최근 활동 | DB Aggregation, Chart UI |
+| FR-07 | ML 업무 편중 점수 | 팀원별 과부하 점수 산정 | Regression/Classification |
+| FR-08 | AI Assistant | 프로젝트 맥락 기반 Q&A | LLM, RAG, Vector DB |
+| FR-09 | 심사자 기여도 기본 | 업무/회의/GitHub/문서 기반 리포트 | DB Aggregation, LLM |
+
+### P1
+
+| ID | 기능 | 요구사항 | 기술 |
+| --- | --- | --- | --- |
+| FR-10 | 음성 STT | 녹음파일을 회의록 텍스트로 변환 | Whisper, Deep Learning |
+| FR-11 | 회의록 문장 분류 | 결정사항/할 일/위험요소/일반 문장 분류 | KoBERT/KLUE-BERT |
+| FR-12 | 업무 우선순위 분류 | 제목/설명 기반 우선순위 자동 추천 | BERT Text Classification |
+| FR-13 | GitHub 연동 | 저장소 연결, 커밋/브랜치 조회, 소스트리 형태의 커밋 그래프·diff 뷰어 | GitHub REST/GraphQL API, Webhook |
+| FR-14 | 기여도 이상치 탐지 | 지나치게 낮거나 높은 기여 패턴 탐지 | Isolation Forest |
+| FR-15 | 역할 추천 | 회의록 기반 미배정 업무 담당자 추천 | KNN/Clustering |
+| FR-16 | 평가 점수 공개 | 심사자 점수 입력, 공개/비공개 설정 | Audit Log, RBAC |
+
+### P2
+
+| ID | 기능 | 요구사항 | 기술 |
+| --- | --- | --- | --- |
+| FR-17 | 외부 캘린더 연동 | 마감일/회의일 캘린더 동기화 | Google Calendar API |
+
+## 7. 주요 사용자 흐름
+
+### 7.1 회의록 기반 업무 생성
+
+1. 팀장이 회의록 업로드 버튼을 누른다.
+2. 문서/음성/영상 중 업로드 유형을 선택한다.
+3. AI가 텍스트를 추출하고 회의 내용을 분석한다.
+4. 요약, 결정사항, 위험요소, To-Do 후보를 표시한다.
+5. 담당자가 명확한 업무는 자동 배정한다.
+6. 미배정 업무는 팀장이 직접 담당자와 마감일을 설정한다.
+7. 승인된 업무는 업무 보드, 개인 할 일, 목표, 대시보드에 반영된다.
+
+### 7.2 업무 보드 관리
+
+1. 팀장이 업무 추가를 누른다.
+2. 기획, 프론트엔드, 백엔드, AI/ML, QA, 발표, 기타 등 카테고리를 먼저 선택한다.
+3. 공통 정보와 카테고리 전용 정보를 입력한다.
+4. 업무가 상태 컬럼에 생성된다.
+5. 업무 클릭 시 오른쪽 상세 패널에서 상태/담당자/마감일/체크리스트를 수정한다.
+
+### 7.3 심사자 평가
+
+1. 심사자가 배정된 프로젝트를 확인한다.
+2. 팀별 진행률, 산출물, GitHub 활동, 회의록을 조회한다.
+3. 개인별 기여도 리포트를 연다.
+4. AI 평가 근거와 출처를 확인한다.
+5. 개인/팀 코멘트를 작성한다.
+6. 최종 평가 점수를 입력하고 공개 여부를 설정한다.
+
+## 8. AI 모델 요구사항
+
+| 모델 | 우선순위 | 입력 | 출력 | 성능/완료 기준 |
+| --- | --- | --- | --- | --- |
+| 지연 위험도 예측 | P0 | 업무 상태, 마감일, 진행률, 활동 로그 | 정상/주의/위험 | 샘플 데이터 기준 예측 결과 대시보드 표시 |
+| 업무 편중 점수 | P0 | 팀원별 업무 수, 난이도, 완료율 | 과부하 점수 | 팀원별 업무량 화면에 점수 표시 |
+| 회의록 문장 분류 | P1 | 회의록 문장 | 결정사항/할 일/위험요소/일반 | 분류 결과가 회의록 결과 UI에 표시 |
+| STT | P1 | 음성 파일 | 회의 텍스트 | 업로드 파일에서 텍스트 생성 |
+| 기여도 이상치 탐지 | P1 | 업무/GitHub/회의/문서 활동 | 이상치 여부 | 심사자 화면에 근거와 함께 표시 |
+| RAG Assistant | P0 | 사용자 질문, 프로젝트 데이터 | 출처 포함 답변 | 회의록/업무/산출물 질문 응답 |
+
+## 9. 시스템 구조
+
+| 구성 | 역할 |
+| --- | --- |
+| Frontend | 대시보드, 업무 보드, 회의록, 산출물, 마이페이지 UI |
+| Backend | 인증, 권한, 프로젝트, 업무, 대시보드, 평가 데이터 API |
+| AI Backend | LLM, RAG, STT, ML/DL 모델 추론 |
+| MySQL/PostgreSQL | 서비스 핵심 데이터 저장 |
+| Vector DB | 문서/회의록 chunk embedding 저장 |
+| Redis/Queue | AI 분석, 파일 처리, GitHub 동기화 비동기 처리 |
+| GitHub API | 커밋, 브랜치, Issue 수집 |
+
+## 10. 데이터 모델 초안
+
+| 테이블 | 주요 필드 |
+| --- | --- |
+| users | id, email, password_hash, name |
+| projects | id, title, type, deadline, description |
+| project_members | id, project_id, user_id, role |
+| meetings | id, project_id, file_type, transcript, file_path |
+| meeting_analysis | meeting_id, summary, decisions, risks, action_items |
+| tasks | id, project_id, title, category, status, assignee_id, due_date, priority |
+| task_checklists | id, task_id, title, is_done |
+| activities | id, project_id, actor_id, type, target_id, created_at |
+| github_records | id, project_id, type, title, author, url, linked_task_id |
+| ml_predictions | id, project_id, target_type, target_id, model_type, result, score |
+| contribution_reports | id, project_id, user_id, summary, evidence |
+| evaluation_scores | id, project_id, user_id, score, is_public |
+| audit_logs | id, user_id, action, target_type, target_id |
+
+## 11. 완료 기준
+
+| ID | 완료 기준 |
+| --- | --- |
+| AC-01 | 역할별 로그인 후 접근 가능한 화면이 다르게 표시된다. |
+| AC-02 | 회의록 업로드 후 AI 요약과 To-Do 후보가 생성된다. |
+| AC-03 | 미배정 업무를 팀장이 직접 배정하고 업무 보드에 등록할 수 있다. |
+| AC-04 | 업무 보드 상태 변경이 대시보드 진행률에 반영된다. |
+| AC-05 | ML 지연 위험도와 업무 편중 점수가 화면에 표시된다. |
+| AC-06 | AI Assistant가 프로젝트 데이터 기반 질문에 출처와 함께 답변한다. |
+| AC-07 | 심사자만 개인별 기여도 리포트와 AI 평가 근거를 볼 수 있다. |
+| AC-08 | 최종 발표에서 회의록 업로드부터 평가 근거 확인까지 한 흐름으로 시연 가능하다. |
