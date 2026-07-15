@@ -1,27 +1,34 @@
 import { useEffect, useRef, useState } from "react";
 import { Sparkles, X, Send } from "lucide-react";
-import { CHAT_INIT, QUICK_QUESTIONS, AI_RESPONSES } from "../libs/mock/chat";
+import { CHAT_INIT, QUICK_QUESTIONS } from "../libs/mock/chat";
+import { useRagQuery } from "../libs/hooks/useRagQuery";
 import type { ChatMsg } from "../libs/types/chat";
+
+const DEMO_PROJECT_ID = 1; // TODO(FS-1 인증 연동 후): 실제 로그인 세션의 프로젝트 ID로 교체
 
 export function AIAssistant({ onClose }: { onClose: () => void }) {
   const [messages, setMessages] = useState<ChatMsg[]>(CHAT_INIT.map(m => ({ role: m.role as "assistant", content: m.content })));
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
+  const { status, answer, error, ask } = useRagQuery();
+  const loading = status === "loading";
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
+  useEffect(() => {
+    if (status === "success" && answer) {
+      setMessages(prev => [...prev, { role: "assistant", content: answer.content, sources: answer.sources }]);
+    }
+    if (status === "error" && error) {
+      setMessages(prev => [...prev, { role: "assistant", content: "일시적으로 답변을 생성할 수 없습니다." }]);
+    }
+  }, [status, answer, error]);
+
   const send = (text: string) => {
     if (!text.trim() || loading) return;
-    const userMsg: ChatMsg = { role: "user", content: text };
-    setMessages(prev => [...prev, userMsg]);
+    setMessages(prev => [...prev, { role: "user", content: text }]);
     setInput("");
-    setLoading(true);
-    setTimeout(() => {
-      const response = AI_RESPONSES[text] || "프로젝트 데이터를 분석 중입니다. 회의록, To-Do, GitHub 기록을 바탕으로 답변을 생성하겠습니다.";
-      setMessages(prev => [...prev, { role: "assistant", content: response }]);
-      setLoading(false);
-    }, 1200);
+    ask(DEMO_PROJECT_ID, text);
   };
 
   return (
@@ -61,9 +68,20 @@ export function AIAssistant({ onClose }: { onClose: () => void }) {
                 <Sparkles className="w-3.5 h-3.5 text-white" />
               </div>
             )}
-            <div className={`max-w-[85%] text-sm rounded-2xl px-4 py-3 whitespace-pre-wrap leading-relaxed ${m.role === "user" ? "text-white rounded-br-sm" : "text-foreground bg-secondary rounded-bl-sm"}`}
-              style={m.role === "user" ? { background: "linear-gradient(135deg, #3B5BDB 0%, #4F6EF7 100%)" } : {}}>
-              {m.content}
+            <div className="max-w-[85%]">
+              <div className={`text-sm rounded-2xl px-4 py-3 whitespace-pre-wrap leading-relaxed ${m.role === "user" ? "text-white rounded-br-sm" : "text-foreground bg-secondary rounded-bl-sm"}`}
+                style={m.role === "user" ? { background: "linear-gradient(135deg, #3B5BDB 0%, #4F6EF7 100%)" } : {}}>
+                {m.content}
+              </div>
+              {m.sources && m.sources.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  {m.sources.map((s, si) => (
+                    <span key={si} className="text-[10px] px-2 py-0.5 rounded-full bg-secondary text-muted-foreground border border-border">
+                      출처: {s.sourceType === "meeting" ? "회의록" : "업무"} #{s.sourceId}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -93,7 +111,7 @@ export function AIAssistant({ onClose }: { onClose: () => void }) {
               className="w-full text-sm bg-transparent outline-none resize-none text-foreground placeholder-muted-foreground"
             />
           </div>
-          <button onClick={() => send(input)} disabled={!input.trim() || loading}
+          <button onClick={() => send(input)} disabled={!input.trim() || loading} aria-label="전송"
             className="w-9 h-9 rounded-xl flex items-center justify-center transition-opacity disabled:opacity-40 text-white"
             style={{ background: "linear-gradient(135deg, #7048E8 0%, #4F6EF7 100%)" }}>
             <Send className="w-4 h-4" />
