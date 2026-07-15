@@ -4,6 +4,7 @@ import { AppShell } from "../global/component/layout/AppShell";
 import { LoginScreen } from "../auth/screen/LoginScreen";
 import { SignupScreen } from "../auth/screen/SignupScreen";
 import { OnboardingScreen } from "../auth/screen/OnboardingScreen";
+import { GoogleCallbackScreen } from "../auth/screen/GoogleCallbackScreen";
 import { DashboardView } from "../dashboard/screen/DashboardView";
 import { AllTasksPage } from "../dashboard/screen/detail/AllTasksPage";
 import { ProgressPage } from "../dashboard/screen/detail/ProgressPage";
@@ -23,10 +24,11 @@ import { MyPageRoute } from "../mypage/screen/MyPageRoute";
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginScreen /> },
   { path: "/signup", element: <SignupScreen /> },
-  { path: "/onboarding", element: <OnboardingScreen /> },
+  { path: "/auth/callback", element: <GoogleCallbackScreen /> },
   {
     element: <RequireAuth />,
     children: [
+      { path: "/onboarding", element: <OnboardingScreen /> },
       {
         element: <AppShell />,
         children: [
