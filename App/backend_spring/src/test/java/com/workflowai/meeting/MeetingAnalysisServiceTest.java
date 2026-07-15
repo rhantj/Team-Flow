@@ -1,0 +1,90 @@
+package com.workflowai.meeting;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.workflowai.common.DemoDataService;
+import com.workflowai.notification.NotificationRepository;
+import com.workflowai.task.TaskRepository;
+import com.workflowai.user.UserRepository;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Optional;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.web.MockMultipartFile;
+
+@ExtendWith(MockitoExtension.class)
+class MeetingAnalysisServiceTest {
+
+    @Mock private MeetingAnalysisRunner meetingAnalysisRunner;
+    @Mock private DemoDataService demoDataService;
+    @Mock private MeetingRepository meetingRepository;
+    @Mock private MeetingAttendeeRepository meetingAttendeeRepository;
+    @Mock private MeetingAnalysisRepository meetingAnalysisRepository;
+    @Mock private MeetingActionItemRepository meetingActionItemRepository;
+    @Mock private TaskRepository taskRepository;
+    @Mock private NotificationRepository notificationRepository;
+    @Mock private UserRepository userRepository;
+
+    private MeetingAnalysisService newService() {
+        return new MeetingAnalysisService(
+            meetingAnalysisRunner, demoDataService, meetingRepository, meetingAttendeeRepository,
+            meetingAnalysisRepository, meetingActionItemRepository, taskRepository, notificationRepository,
+            userRepository, "/tmp/workflow-uploads"
+        );
+    }
+
+    @Test
+    void analyzeSavesMeetingAsProcessingAndReturnsImmediately() {
+        MeetingAnalysisService service = newService();
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(meetingRepository.save(any(Meeting.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        MockMultipartFile file = new MockMultipartFile("file", "notes.txt", "text/plain", "회의 내용".getBytes());
+        MeetingAnalysisResponse response = service.analyze(
+            "demo-project", file, "7차 정기회의", "2026-07-15", "정기회의", "document", List.of("김민준")
+        );
+
+        assertThat(response.status()).isEqualTo("PROCESSING");
+        assertThat(response.analysis()).isNull();
+        ArgumentCaptor<Meeting> meetingCaptor = ArgumentCaptor.forClass(Meeting.class);
+        verify(meetingRepository, atLeastOnce()).save(meetingCaptor.capture());
+        assertThat(meetingCaptor.getAllValues().get(0).getAnalysisStatus()).isEqualTo("processing");
+        verify(meetingAnalysisRunner).runAnalysis(any(), any(AiAnalyzeRequest.class));
+    }
+
+    @Test
+    void retryRejectsMeetingThatIsNotFailed() {
+        MeetingAnalysisService service = newService();
+        Meeting meeting = new Meeting(1L, "정기회의", "document", "/tmp/x.txt", "processing", LocalDate.now(), "정기회의", "x.txt", null, 5L);
+        when(meetingRepository.findById(3L)).thenReturn(Optional.of(meeting));
+
+        assertThatThrownBy(() -> service.retry("3")).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void retryTransitionsFailedMeetingBackToProcessing() {
+        MeetingAnalysisService service = newService();
+        Meeting meeting = new Meeting(1L, "정기회의", "document", null, "failed", LocalDate.now(), "정기회의", "x.txt", null, 5L);
+        meeting.setAnalysisErrorMessage("이전 실패 사유");
+        when(meetingRepository.findById(4L)).thenReturn(Optional.of(meeting));
+        when(meetingAttendeeRepository.findByMeetingId(4L)).thenReturn(List.of());
+
+        MeetingAnalysisResponse response = service.retry("4");
+
+        assertThat(response.status()).isEqualTo("PROCESSING");
+        assertThat(meeting.getAnalysisStatus()).isEqualTo("processing");
+        assertThat(meeting.getAnalysisErrorMessage()).isNull();
+        verify(meetingAnalysisRunner).runAnalysis(4L, new AiAnalyzeRequest(
+            "1", "정기회의", meeting.getMeetingDate().toString(), "정기회의", "document", "x.txt", "", List.of()
+        ));
+    }
+}
