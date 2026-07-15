@@ -9,9 +9,22 @@ spring:
     multipart:
       max-file-size: 100MB
       max-request-size: 120MB
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/workflow}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:root}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: true
 
 workflow:
   ai:
     base-url: ${WORKFLOW_AI_FASTAPI_URL:http://localhost:8000}
   cors:
     allowed-origins: ${WORKFLOW_CORS_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+  uploads:
+    dir: ${WORKFLOW_UPLOADS_DIR:uploads}
