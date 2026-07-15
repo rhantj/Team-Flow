@@ -33,8 +33,9 @@ public class MeetingAnalysisController {
 
     @Operation(
         summary = "회의록 AI 분석 요청",
-        description = "업로드된 회의록 파일 또는 텍스트를 기반으로 AI 분석을 실행하고 회의 요약, 결정사항, 위험요소, To-Do 후보를 생성합니다. "
-            + "FastAPI 분석 서버 호출에 실패하면 Spring 내장 fallback 분석기가 기본 분석 결과를 반환합니다."
+        description = "업로드된 회의록 파일 또는 텍스트를 저장하고 즉시 meetingId를 반환합니다. "
+            + "실제 AI 분석(FastAPI 호출 또는 Spring fallback)은 백그라운드에서 실행되며, "
+            + "상태는 GET /{meetingId} 또는 GET /{meetingId}/status로 조회합니다."
     )
     @PostMapping(value = "/analyze", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<MeetingAnalysisResponse> analyze(
@@ -69,8 +70,8 @@ public class MeetingAnalysisController {
     }
 
     @Operation(
-        summary = "회의록 분석 결과 조회",
-        description = "특정 회의록의 AI 분석 결과와 생성된 To-Do 후보 목록을 조회합니다."
+        summary = "회의록 분석 결과/상태 조회",
+        description = "회의록의 분석 상태(processing/completed/failed)와, 완료된 경우 분석 결과 및 To-Do 후보 목록을 조회합니다."
     )
     @GetMapping("/{meetingId}")
     public ResponseEntity<ApiResponse<MeetingAnalysisResponse>> getMeeting(
@@ -82,6 +83,42 @@ public class MeetingAnalysisController {
             return ResponseEntity.status(404).body(ApiResponse.fail("MEETING_NOT_FOUND", "회의록 분석 결과를 찾을 수 없습니다."));
         }
         return ResponseEntity.ok(ApiResponse.ok(response));
+    }
+
+    @Operation(
+        summary = "회의록 분석 상태 조회",
+        description = "분석 결과 없이 상태(processing/completed/failed)와 실패 사유만 가볍게 조회합니다."
+    )
+    @GetMapping("/{meetingId}/status")
+    public ResponseEntity<ApiResponse<MeetingStatusResponse>> getMeetingStatus(
+        @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
+        @Parameter(description = "회의록 ID", example = "demo-project-1") @PathVariable String meetingId
+    ) {
+        MeetingStatusResponse response = meetingAnalysisService.findStatus(meetingId);
+        if (response == null) {
+            return ResponseEntity.status(404).body(ApiResponse.fail("MEETING_NOT_FOUND", "회의록을 찾을 수 없습니다."));
+        }
+        return ResponseEntity.ok(ApiResponse.ok(response));
+    }
+
+    @Operation(
+        summary = "회의록 재분석 요청",
+        description = "분석에 실패한(failed) 회의록을 processing 상태로 전환하고 백그라운드 분석을 재실행합니다."
+    )
+    @PostMapping("/{meetingId}/retry")
+    public ResponseEntity<ApiResponse<MeetingAnalysisResponse>> retryAnalysis(
+        @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
+        @Parameter(description = "회의록 ID", example = "demo-project-1") @PathVariable String meetingId
+    ) {
+        try {
+            MeetingAnalysisResponse response = meetingAnalysisService.retry(meetingId);
+            if (response == null) {
+                return ResponseEntity.status(404).body(ApiResponse.fail("MEETING_NOT_FOUND", "회의록을 찾을 수 없습니다."));
+            }
+            return ResponseEntity.ok(ApiResponse.ok(response));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(409).body(ApiResponse.fail("MEETING_NOT_FAILED", "분석 실패 상태의 회의록만 재시도할 수 있습니다."));
+        }
     }
 
     @Operation(
