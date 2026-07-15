@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
-import { Mail, Lock, Eye, EyeOff, Check, ArrowRight } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Check, ArrowRight, GraduationCap } from "lucide-react";
 import { AuthBrandPanel } from "../components/AuthBrandPanel";
 import { AuthInput } from "../components/AuthInput";
 import { useAuth } from "../../global/hooks/useAuth";
@@ -17,15 +17,20 @@ export function LoginScreen() {
   const handleSubmit = () => {
     if (!email || !pw) return;
     setLoading(true);
-    setTimeout(() => { setLoading(false); login(); navigate("/dashboard"); }, 1000);
+    setTimeout(() => { setLoading(false); login(null); navigate("/projects"); }, 1000);
+  };
+
+  const handleJudgeDemoLogin = () => {
+    login("JUDGE");
+    navigate("/projects");
   };
 
   return (
-    <div className="flex h-screen" style={{ fontFamily: "'Inter', 'Noto Sans KR', sans-serif" }}>
+    <div className="flex min-h-screen flex-col lg:flex-row" style={{ fontFamily: "'Inter', 'Noto Sans KR', sans-serif" }}>
       <AuthBrandPanel />
 
       {/* right form panel */}
-      <div className="flex-1 flex items-center justify-center bg-background px-8">
+      <div className="flex-1 flex items-center justify-center bg-background px-4 py-8 sm:px-8">
         <div className="w-full max-w-sm">
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-foreground mb-1">다시 만나서 반가워요!</h1>
@@ -72,7 +77,13 @@ export function LoginScreen() {
             <div className="flex-1 h-px bg-border" />
           </div>
 
-          <p className="text-center text-sm text-muted-foreground">
+          <button onClick={handleJudgeDemoLogin}
+            className="w-full py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 border border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100">
+            <GraduationCap className="w-4 h-4" />
+            교수/심사자 데모 로그인
+          </button>
+
+          <p className="text-center text-sm text-muted-foreground mt-5">
             아직 계정이 없으신가요?{" "}
             <button onClick={() => navigate("/signup")} className="font-semibold text-blue-600 hover:text-blue-700 transition-colors">
               회원가입
