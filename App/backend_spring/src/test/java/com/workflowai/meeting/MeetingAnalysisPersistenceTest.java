@@ -51,8 +51,26 @@ class MeetingAnalysisPersistenceTest {
         ArgumentCaptor<Meeting> meetingCaptor = ArgumentCaptor.forClass(Meeting.class);
         verify(meetingRepository).save(meetingCaptor.capture());
         assertThat(meetingCaptor.getValue().getAnalysisStatus()).isEqualTo("completed");
-        verify(meetingAnalysisRepository).save(any(MeetingAnalysis.class));
-        verify(meetingActionItemRepository).save(any(MeetingActionItem.class));
+
+        ArgumentCaptor<MeetingAnalysis> analysisCaptor = ArgumentCaptor.forClass(MeetingAnalysis.class);
+        verify(meetingAnalysisRepository).save(analysisCaptor.capture());
+        MeetingAnalysis savedAnalysis = analysisCaptor.getValue();
+        assertThat(savedAnalysis.getSummary()).isEqualTo("요약");
+        assertThat(savedAnalysis.getDecisions()).isEqualTo(List.of("결정1"));
+        assertThat(savedAnalysis.getRisks()).isEqualTo(List.of("위험1"));
+        assertThat(savedAnalysis.getKeywords()).isEqualTo(List.of("키워드1"));
+        assertThat(savedAnalysis.getAnalysisEngine()).isEqualTo("FASTAPI");
+
+        ArgumentCaptor<MeetingActionItem> actionItemCaptor = ArgumentCaptor.forClass(MeetingActionItem.class);
+        verify(meetingActionItemRepository).save(actionItemCaptor.capture());
+        MeetingActionItem savedActionItem = actionItemCaptor.getValue();
+        assertThat(savedActionItem.getTitle()).isEqualTo("업무1");
+        assertThat(savedActionItem.getDescription()).isEqualTo("설명");
+        assertThat(savedActionItem.getCategory()).isEqualTo("ETC");
+        assertThat(savedActionItem.getPriority()).isEqualTo("HIGH");
+        assertThat(savedActionItem.getDueDate()).isEqualTo(LocalDate.parse("2026-07-20"));
+        assertThat(savedActionItem.getRecommendedAssigneeId()).isNull();
+        assertThat(savedActionItem.getFinalAssigneeId()).isNull();
     }
 
     @Test
