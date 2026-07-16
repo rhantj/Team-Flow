@@ -230,8 +230,12 @@ public class MeetingAnalysisService {
         }
 
         Meeting meeting = meetingRepository.findById(meetingId).orElse(null);
+        Long taskProjectId = meeting == null ? null : meeting.getProjectId();
+        double position = taskRepository.findTopByProjectIdAndStatusOrderByPositionDesc(taskProjectId, "todo")
+            .map(t -> t.getPosition() + 1)
+            .orElse(0.0);
         Task task = taskRepository.save(new Task(
-            meeting == null ? null : meeting.getProjectId(),
+            taskProjectId,
             todo.title(),
             defaultString(todo.category(), "ETC"),
             "todo",
@@ -241,7 +245,8 @@ public class MeetingAnalysisService {
             todo.description(),
             "MEETING_AI",
             meetingId,
-            createdBy
+            createdBy,
+            position
         ));
 
         MeetingActionItem item = existingItem.orElseGet(() -> new MeetingActionItem(

@@ -113,6 +113,7 @@ CREATE TABLE tasks (
     due_date     DATE,
     priority     VARCHAR(20),
     description  TEXT,
+    position     DOUBLE PRECISION NOT NULL DEFAULT 0,
     created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_tasks_project   FOREIGN KEY (project_id)   REFERENCES projects(id)   ON DELETE CASCADE,
@@ -123,6 +124,7 @@ COMMENT ON TABLE tasks IS '업무 보드 항목';
 COMMENT ON COLUMN tasks.category IS '기획/프론트엔드/백엔드/AI-ML 등 18종';
 COMMENT ON COLUMN tasks.status IS '할 일/진행 중/보류-블로커/완료';
 COMMENT ON COLUMN tasks.assignee_id IS '미배정 가능';
+COMMENT ON COLUMN tasks.position IS '같은 status 안에서의 칸반 카드 순서(오름차순). 컬럼 간 값 비교는 하지 않음';
 
 CREATE TRIGGER trg_tasks_updated_at
     BEFORE UPDATE ON tasks

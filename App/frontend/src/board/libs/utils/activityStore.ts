@@ -23,7 +23,7 @@ export interface ActivityEntry {
   actorName: string;
   message: string;
   createdAt: string;
-  type: "comment" | "status" | "task-created" | "meeting-registered";
+  type: "comment" | "status" | "task-created" | "task-deleted" | "meeting-registered";
 }
 
 const COMMENT_STORAGE_KEY = "workflow-ai.comments";

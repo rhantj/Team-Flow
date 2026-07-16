@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
-import { Sparkles, X, Send, Check, MoreHorizontal, ChevronDown } from "lucide-react";
+import { Sparkles, X, Send, Check, MoreHorizontal, ChevronDown, Trash2 } from "lucide-react";
 import { CatTag } from "./CatTag";
 import { TaskStatusPill } from "./TaskStatusPill";
 import { PriorityBadge } from "./PriorityBadge";
 import { LabelBadge } from "../../global/component/LabelBadge";
-import { getCat, buildDefaultChecklist } from "../libs/utils/taskService";
+import { getCat, buildDefaultChecklist, formatDueDate } from "../libs/utils/taskService";
 import { getCatDetailFields, CAT_AI_BTN } from "../libs/utils/catFields";
 import { STATUS_ACTIONS, STATUS_LABELS } from "../libs/utils/taskActions";
-import { TASK_CAT } from "../libs/mock/tasks";
 import { MEMBERS } from "../../global/lib/mock/members";
 import { addComment, addNotification, addActivity, type Comment } from "../libs/utils/activityStore";
 import type { Task } from "../libs/types/task";
@@ -31,22 +30,25 @@ interface TaskDetailPanelProps {
   onQuickAction: (label: string, isPrimary: boolean) => void;
   onToggleChecklistItem: (itemId: string) => void;
   onShowToast: (message: string) => void;
+  onDeleteTask: (taskId: string) => void;
 }
 
-export function TaskDetailPanel({ task, comments, onClose, onQuickAction, onToggleChecklistItem, onShowToast }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ task, comments, onClose, onQuickAction, onToggleChecklistItem, onShowToast, onDeleteTask }: TaskDetailPanelProps) {
   const [devInfoOpen, setDevInfoOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [newComment, setNewComment] = useState("");
   const [commentSentMessage, setCommentSentMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setDevInfoOpen(false);
     setMenuOpen(false);
+    setConfirmingDelete(false);
     setNewComment("");
     setCommentSentMessage(null);
   }, [task.id]);
 
-  const taskCat = TASK_CAT[task.id] ?? "other";
+  const taskCat = task.category;
   const catDef = getCat(taskCat);
   const taskComments = comments.filter((c) => c.taskId === task.id);
   const checklist = task.checklist ?? buildDefaultChecklist(task.id, task.status);
@@ -147,6 +149,13 @@ export function TaskDetailPanel({ task, comments, onClose, onQuickAction, onTogg
                   >
                     <Sparkles className="w-3.5 h-3.5" />체크리스트 자동 생성
                   </button>
+                  <div className="my-1 border-t border-border" />
+                  <button
+                    onClick={() => { setMenuOpen(false); setConfirmingDelete(true); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium hover:bg-muted text-left transition-colors text-red-600"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />업무 삭제
+                  </button>
                 </div>
               </>
             )}
@@ -155,6 +164,32 @@ export function TaskDetailPanel({ task, comments, onClose, onQuickAction, onTogg
         <div className="text-sm font-bold text-foreground leading-snug">{task.title}</div>
         <div className="text-[10px] font-mono text-muted-foreground mt-0.5">{task.id}</div>
       </div>
+
+      {confirmingDelete && (
+        <>
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50" onClick={() => setConfirmingDelete(false)} />
+          <div className="fixed inset-0 flex items-center justify-center z-50 p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5">
+              <div className="text-sm font-bold text-foreground mb-1.5">업무를 삭제할까요?</div>
+              <div className="text-xs text-muted-foreground mb-4">'{task.title}' 업무를 삭제하면 되돌릴 수 없습니다.</div>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setConfirmingDelete(false)}
+                  className="px-4 py-2 text-xs font-medium text-muted-foreground border border-border rounded-xl hover:bg-muted transition-colors"
+                >
+                  취소
+                </button>
+                <button
+                  onClick={() => { setConfirmingDelete(false); onDeleteTask(task.id); }}
+                  className="px-4 py-2 text-xs font-semibold text-white rounded-xl bg-red-600 hover:bg-red-700 transition-colors"
+                >
+                  삭제
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       <div className="flex-1 overflow-y-auto scrollbar-thin">
         {/* 담당자 / 마감일 */}
@@ -170,7 +205,7 @@ export function TaskDetailPanel({ task, comments, onClose, onQuickAction, onTogg
           </div>
           <div>
             <div className="text-[9.5px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">마감일</div>
-            <div className="text-xs font-semibold text-foreground">{task.dueDate} <span className="text-amber-600">D-8</span></div>
+            <div className="text-xs font-semibold text-foreground">{formatDueDate(task.dueDate)} <span className="text-amber-600">D-8</span></div>
           </div>
         </div>
 
@@ -180,6 +215,7 @@ export function TaskDetailPanel({ task, comments, onClose, onQuickAction, onTogg
             <span className="text-[11px] font-bold text-muted-foreground">체크리스트 {doneCount}/{checklist.length}</span>
             <span className="text-[11px] font-bold text-emerald-600">{progressPct}%</span>
           </div>
+          <div className="text-[9.5px] text-muted-foreground mb-2">체크리스트·코멘트·활동 기록은 아직 이 브라우저에만 저장됩니다 (서버 연동 예정)</div>
           <div className="h-1.5 rounded-full bg-muted overflow-hidden mb-3">
             <div className="h-full bg-emerald-500 transition-all" style={{ width: `${progressPct}%` }} />
           </div>

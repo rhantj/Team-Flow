@@ -6,6 +6,7 @@ import { TaskStatusPill } from "../../../board/components/TaskStatusPill";
 import { PriorityBadge } from "../../../board/components/PriorityBadge";
 import { URGENT_META } from "../../../board/libs/mock/tasks";
 import { useStoredTasks } from "../../../global/hooks/useStoredTasks";
+import { formatDueDate } from "../../../board/libs/utils/taskService";
 import { MEMBERS } from "../../../global/lib/mock/members";
 import {
   Sparkles,
@@ -103,7 +104,7 @@ export function UrgentTasksPage() {
                             {task.status === "blocked" && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-100 text-red-700">블로커</span>}
                           </div>
                           <div className="text-xs font-medium text-foreground truncate">{task.title}</div>
-                          <div className="text-[10px] text-muted-foreground mt-0.5">{member.name} · 마감 {task.dueDate}</div>
+                          <div className="text-[10px] text-muted-foreground mt-0.5">{member.name} · 마감 {formatDueDate(task.dueDate)}</div>
                         </div>
                         <div className="shrink-0 text-center">
                           <div className="text-lg font-bold" style={{ color: g.color }}>D-{meta?.daysLeft}</div>
@@ -134,7 +135,7 @@ export function UrgentTasksPage() {
                   <div className="flex items-center gap-1.5"><div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold" style={{ background: selectedMember.color }}>{selectedMember.initials}</div><span className="font-medium text-foreground">{selectedMember.name}</span></div>
                 </div>
                 <div><div className="text-[10px] text-muted-foreground mb-1">우선순위</div><PriorityBadge priority={selectedTask.priority} /></div>
-                <div><div className="text-[10px] text-muted-foreground mb-1">마감일</div><span className="font-semibold text-foreground">{selectedTask.dueDate}</span></div>
+                <div><div className="text-[10px] text-muted-foreground mb-1">마감일</div><span className="font-semibold text-foreground">{formatDueDate(selectedTask.dueDate)}</span></div>
                 <div><div className="text-[10px] text-muted-foreground mb-1">남은 시간</div><span className="font-bold" style={{ color: selectedMeta && selectedMeta.daysLeft <= 3 ? "#EF4444" : "#F59E0B" }}>D-{selectedMeta?.daysLeft}</span></div>
               </div>
               <div className="flex flex-wrap gap-1">{selectedTask.labels.map(l => <LabelBadge key={l} label={l} />)}</div>

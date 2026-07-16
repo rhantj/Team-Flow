@@ -644,6 +644,8 @@ export function MeetingsView() {
         priority: todo.priority,
         assignee: getAssignee(todo) || MEMBERS[0].id,
         dueDate: getDueDate(todo),
+        category: todo.category,
+        position: index,
         labels: [sourceLabel, cat.label],
         sourceMeetingTitle: meetingIdentifier,
       };
@@ -706,6 +708,8 @@ export function MeetingsView() {
       priority: "medium",
       assignee: todo.assigneeId,
       dueDate: todo.dueDate,
+      category: "other",
+      position: index,
       labels: ["회의록 AI"],
       sourceMeetingTitle: meetingIdentifier,
     }));

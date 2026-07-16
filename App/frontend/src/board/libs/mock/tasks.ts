@@ -3,23 +3,23 @@ import {
   Database, Cloud, GitBranch, FlaskConical, Shield, FileText, Layers,
   Package, CheckCheck, MoreHorizontal,
 } from "lucide-react";
-import type { Task, TaskStatus, CatId, CategoryDef } from "../types/task";
+import type { Task, TaskStatus, CategoryDef } from "../types/task";
 
 export const TASKS: Task[] = [
-  { id: "TF-01", title: "주차 감지 센서 모듈 연동", status: "done", priority: "high", assignee: "1", dueDate: "12.05", labels: ["개발"] },
-  { id: "TF-02", title: "사용자 인증 API 구현", status: "done", priority: "high", assignee: "3", dueDate: "12.06", labels: ["백엔드"] },
-  { id: "TF-03", title: "실시간 주차 현황 대시보드 UI", status: "done", priority: "medium", assignee: "3", dueDate: "12.08", labels: ["프론트"] },
-  { id: "TF-04", title: "모바일 예약 화면 구현", status: "done", priority: "medium", assignee: "2", dueDate: "12.10", labels: ["프론트"] },
-  { id: "TF-05", title: "결제 시스템 연동 (카카오페이)", status: "inprogress", priority: "high", assignee: "4", dueDate: "12.18", labels: ["백엔드"] },
-  { id: "TF-06", title: "AI 빈자리 예측 모델 학습", status: "inprogress", priority: "high", assignee: "1", dueDate: "12.20", labels: ["AI"] },
-  { id: "TF-07", title: "관리자 대시보드 통계 모듈", status: "inprogress", priority: "medium", assignee: "2", dueDate: "12.19", labels: ["프론트"] },
-  { id: "TF-08", title: "푸시 알림 서비스 구현", status: "inprogress", priority: "low", assignee: "4", dueDate: "12.21", labels: ["백엔드"] },
-  { id: "TF-09", title: "최종 발표 자료 작성", status: "todo", priority: "high", assignee: "1", dueDate: "12.28", labels: ["산출물"] },
-  { id: "TF-10", title: "시스템 부하 테스트", status: "todo", priority: "medium", assignee: "2", dueDate: "12.23", labels: ["QA"] },
-  { id: "TF-11", title: "README 및 배포 문서 작성", status: "todo", priority: "medium", assignee: "3", dueDate: "12.25", labels: ["문서"] },
-  { id: "TF-12", title: "보안 취약점 점검 보고서", status: "todo", priority: "low", assignee: "4", dueDate: "12.26", labels: ["문서"] },
-  { id: "TF-13", title: "DB 인덱싱 최적화", status: "blocked", priority: "high", assignee: "1", dueDate: "12.15", labels: ["백엔드"] },
-  { id: "TF-14", title: "결제 오류 예외 처리", status: "blocked", priority: "high", assignee: "4", dueDate: "12.16", labels: ["백엔드"] },
+  { id: "TF-01", title: "주차 감지 센서 모듈 연동", status: "done", priority: "high", assignee: "1", dueDate: "2025-12-05", category: "backend", labels: ["개발"], position: 0 },
+  { id: "TF-02", title: "사용자 인증 API 구현", status: "done", priority: "high", assignee: "3", dueDate: "2025-12-06", category: "backend", labels: ["백엔드"], position: 1 },
+  { id: "TF-03", title: "실시간 주차 현황 대시보드 UI", status: "done", priority: "medium", assignee: "3", dueDate: "2025-12-08", category: "frontend", labels: ["프론트"], position: 2 },
+  { id: "TF-04", title: "모바일 예약 화면 구현", status: "done", priority: "medium", assignee: "2", dueDate: "2025-12-10", category: "frontend", labels: ["프론트"], position: 3 },
+  { id: "TF-05", title: "결제 시스템 연동 (카카오페이)", status: "inprogress", priority: "high", assignee: "4", dueDate: "2025-12-18", category: "backend", labels: ["백엔드"], position: 0 },
+  { id: "TF-06", title: "AI 빈자리 예측 모델 학습", status: "inprogress", priority: "high", assignee: "1", dueDate: "2025-12-20", category: "ai-ml", labels: ["AI"], position: 1 },
+  { id: "TF-07", title: "관리자 대시보드 통계 모듈", status: "inprogress", priority: "medium", assignee: "2", dueDate: "2025-12-19", category: "frontend", labels: ["프론트"], position: 2 },
+  { id: "TF-08", title: "푸시 알림 서비스 구현", status: "inprogress", priority: "low", assignee: "4", dueDate: "2025-12-21", category: "backend", labels: ["백엔드"], position: 3 },
+  { id: "TF-09", title: "최종 발표 자료 작성", status: "todo", priority: "high", assignee: "1", dueDate: "2025-12-28", category: "presentation", labels: ["산출물"], position: 0 },
+  { id: "TF-10", title: "시스템 부하 테스트", status: "todo", priority: "medium", assignee: "2", dueDate: "2025-12-23", category: "qa", labels: ["QA"], position: 1 },
+  { id: "TF-11", title: "README 및 배포 문서 작성", status: "todo", priority: "medium", assignee: "3", dueDate: "2025-12-25", category: "docs", labels: ["문서"], position: 2 },
+  { id: "TF-12", title: "보안 취약점 점검 보고서", status: "todo", priority: "low", assignee: "4", dueDate: "2025-12-26", category: "security", labels: ["문서"], position: 3 },
+  { id: "TF-13", title: "DB 인덱싱 최적화", status: "blocked", priority: "high", assignee: "1", dueDate: "2025-12-15", category: "db", labels: ["백엔드"], position: 0 },
+  { id: "TF-14", title: "결제 오류 예외 처리", status: "blocked", priority: "high", assignee: "4", dueDate: "2025-12-16", category: "backend", labels: ["백엔드"], position: 1 },
 ];
 
 export const TASK_SOURCES: Record<string, string> = {
@@ -70,13 +70,6 @@ export const CATEGORIES: CategoryDef[] = [
   { id:"operation",    label:"운영/제출",  desc:"공모전 제출, 교수 제출, 마감 체크",  icon:CheckCheck,     color:"#059669", bg:"rgba(5,150,105,0.12)"   },
   { id:"other",        label:"기타",       desc:"직접 카테고리명 입력",               icon:MoreHorizontal, color:"#9CA3AF", bg:"rgba(156,163,175,0.12)" },
 ];
-
-export const TASK_CAT: Record<string, CatId> = {
-  "TF-01":"backend","TF-02":"backend","TF-03":"frontend","TF-04":"frontend",
-  "TF-05":"backend","TF-06":"ai-ml","TF-07":"frontend","TF-08":"backend",
-  "TF-09":"presentation","TF-10":"qa","TF-11":"docs","TF-12":"security",
-  "TF-13":"db","TF-14":"backend",
-};
 
 export const CAT_EXTRA: Record<string, Record<string, string>> = {
   "TF-01":{ method:"POST", endpoint:"/api/sensors/register", auth:"필요", db:"sensors, spaces", test:"완료" },
