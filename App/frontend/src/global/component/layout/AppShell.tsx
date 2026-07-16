@@ -12,7 +12,7 @@ const OPEN_AI_ASSISTANT_EVENT = "workflow-ai:open-ai-assistant";
 export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { currentProjectRole } = useAuth();
+  const { projectRoles } = useAuth();
   const [aiOpen, setAIOpen] = useState(false);
 
   useEffect(() => {
@@ -22,7 +22,7 @@ export function AppShell() {
   }, []);
 
   const activeTab = (location.pathname.split("/").filter(Boolean)[0] ?? "dashboard") as Tab;
-  const isJudge = currentProjectRole === "JUDGE";
+  const isJudge = projectRoles.length > 0 && projectRoles.every(pr => pr.role === "심사자");
   const isReadOnlyContent = isJudge && activeTab !== "contributors";
 
   const blockReadOnlyAction = (event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>) => {
