@@ -17,6 +17,9 @@ export function GoogleCallbackScreen() {
     const accessToken = params.get("accessToken");
     const refreshToken = params.get("refreshToken");
 
+    // 토큰이 담긴 프래그먼트를 히스토리/화면 URL에서 즉시 제거한다 (뒤로가기·URL 공유 시 토큰 노출 방지).
+    window.history.replaceState(null, "", window.location.pathname);
+
     if (!accessToken || !refreshToken) {
       navigate("/login?error=oauth_failed", { replace: true });
       return;
