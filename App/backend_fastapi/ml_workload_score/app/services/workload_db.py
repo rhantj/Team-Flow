@@ -13,11 +13,13 @@ Supabase 대시보드 > Project Settings > Database > Connection string 에서 �
 import os
 import pandas as pd
 from sqlalchemy import create_engine, text
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
-load_dotenv()  # .env 파일에서 환경변수 로드
+# os.environ을 직접 변경하면 다른 모듈(core.config.Settings 등)의 환경변수까지
+# 전역으로 오염시키므로, .env는 별도 딕셔너리로만 읽는다.
+_env = {**dotenv_values(), **os.environ}
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
+DATABASE_URL = _env.get("DATABASE_URL")
 
 
 def get_engine():

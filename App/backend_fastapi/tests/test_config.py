@@ -19,4 +19,4 @@ def test_settings_loads_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(_env_file=None)
     assert settings.database_url == "postgresql://user:pw@localhost:5432/workflow"
     assert settings.embedding_model == "nomic-embed-text"
-    assert settings.generation_model == "gemma2"
+    assert settings.generation_model == "gemma4:e2b"

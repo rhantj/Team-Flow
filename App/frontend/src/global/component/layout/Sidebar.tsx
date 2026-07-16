@@ -1,27 +1,21 @@
 import { ChevronDown, Hash, Sparkles, Settings, Shield } from "lucide-react";
 import { NAV_ITEMS } from "../../lib/constants/nav";
 import type { Tab } from "../../../board/libs/types/task";
-import { useAuth, type AppRole } from "../../hooks/useAuth";
+import { useAuth } from "../../hooks/useAuth";
+import type { ProjectRoleKo } from "../../api/authTypes";
 
-const ROLE_LABELS: Record<AppRole, string> = {
-  ADMIN: "관리자",
-  LEADER: "팀장",
-  MEMBER: "팀원",
-  JUDGE: "심사자",
-};
-
-const ROLE_COLORS: Record<AppRole, string> = {
-  ADMIN: "#0F172A",
-  LEADER: "#3B5BDB",
-  MEMBER: "#10B981",
-  JUDGE: "#7048E8",
+const ROLE_COLORS: Record<ProjectRoleKo, string> = {
+  "팀장": "#3B5BDB",
+  "팀원": "#10B981",
+  "심사자": "#7048E8",
 };
 
 export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t: Tab) => void; onAI: () => void }) {
   const groups: Record<string, string> = { planning: "계획 관리", ai: "AI 기능", dev: "개발", eval: "평가 (심사자 전용)", me: "내 계정" };
   const rendered: string[] = [];
-  const { signupName, currentProjectName, currentProjectRole } = useAuth();
-  const role = currentProjectRole ?? "LEADER";
+  const { user, projectRoles } = useAuth();
+  const currentProjectName = projectRoles[0]?.projectTitle ?? null;
+  const role: ProjectRoleKo = projectRoles[0]?.role ?? "팀장";
   const navItems = NAV_ITEMS;
 
   return (
@@ -49,7 +43,7 @@ export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t:
             <div className="text-[10px] flex items-center gap-1" style={{ color: "var(--muted-foreground)" }}>
               <span>캡스톤디자인 2024</span>
               <span className="px-1.5 py-0.5 rounded font-semibold" style={{ color: "#fff", background: ROLE_COLORS[role] }}>
-                {ROLE_LABELS[role]}
+                {role}
               </span>
             </div>
           </div>
@@ -94,7 +88,7 @@ export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t:
         })}
 
         {/* AI Assistant button */}
-        {role !== "JUDGE" && <div className="pt-4">
+        {role !== "심사자" && <div className="pt-4">
           <div className="text-[10px] font-semibold uppercase tracking-wider px-2 pb-1.5" style={{ color: "var(--muted-foreground)" }}>
             어시스턴트
           </div>
@@ -115,8 +109,8 @@ export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t:
             김
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-white">{signupName || (role === "JUDGE" ? "박교수" : "김민준")}</div>
-            <div className="text-[10px]" style={{ color: "var(--muted-foreground)" }}>{ROLE_LABELS[role]}</div>
+            <div className="text-sm font-medium text-white">{user?.name || "사용자"}</div>
+            <div className="text-[10px]" style={{ color: "var(--muted-foreground)" }}>{role}</div>
           </div>
           <Settings className="w-4 h-4 cursor-pointer" style={{ color: "var(--muted-foreground)" }} />
         </div>

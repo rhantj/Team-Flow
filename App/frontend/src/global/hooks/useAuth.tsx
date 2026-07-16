@@ -1,74 +1,80 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
-
-export type AppRole = "ADMIN" | "LEADER" | "MEMBER" | "JUDGE";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { API_BASE_URL, apiFetch, AUTH_LOGOUT_EVENT } from "../api/apiClient";
+import { tokenStore } from "../api/tokenStore";
+import type { MeResponse, ProjectRoleSummary, UserSummary } from "../api/authTypes";
 
 interface AuthState {
   isAuthenticated: boolean;
-  signupName: string;
-  appRole: AppRole | null;
-  currentProjectRole: AppRole | null;
-  currentProjectName: string;
-  login: (role?: AppRole | null) => void;
-  completeSignup: (name: string) => void;
-  approveProfessorSignup: (name: string) => void;
-  completeOnboarding: () => void;
-  setProjectContext: (role: AppRole, projectName: string) => void;
+  loading: boolean;
+  user: UserSummary | null;
+  projectRoles: ProjectRoleSummary[];
+  loginWithGoogle: () => void;
   logout: () => void;
+  refreshMe: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [signupName, setSignupName] = useState("");
-  const [appRole, setAppRole] = useState<AppRole | null>(null);
-  const [currentProjectRole, setCurrentProjectRole] = useState<AppRole | null>(null);
-  const [currentProjectName, setCurrentProjectName] = useState("프로젝트 선택 전");
+  const [user, setUser] = useState<UserSummary | null>(null);
+  const [projectRoles, setProjectRoles] = useState<ProjectRoleSummary[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const login = (role: AppRole | null = null) => {
-    setIsAuthenticated(true);
-    setAppRole(role);
-    setCurrentProjectRole(role);
-    if (role === "JUDGE") {
-      setCurrentProjectName("심사 프로젝트 선택 전");
+  const loadMe = async () => {
+    if (!tokenStore.getAccessToken()) {
+      setUser(null);
+      setProjectRoles([]);
+      setLoading(false);
+      return;
+    }
+    try {
+      const me = await apiFetch<MeResponse>("/me");
+      setUser(me.user);
+      setProjectRoles(me.projectRoles);
+    } catch (err) {
+      tokenStore.clear();
+      setUser(null);
+      setProjectRoles([]);
+      throw err;
+    } finally {
+      setLoading(false);
     }
   };
-  const completeSignup = (name: string) => setSignupName(name);
-  const approveProfessorSignup = (name: string) => {
-    setSignupName(name);
-    setIsAuthenticated(true);
-    setAppRole("JUDGE");
-    setCurrentProjectRole("JUDGE");
-    setCurrentProjectName("심사 프로젝트 선택 전");
+
+  useEffect(() => {
+    loadMe().catch(() => {});
+
+    const handleForcedLogout = () => {
+      setUser(null);
+      setProjectRoles([]);
+    };
+    window.addEventListener(AUTH_LOGOUT_EVENT, handleForcedLogout);
+    return () => window.removeEventListener(AUTH_LOGOUT_EVENT, handleForcedLogout);
+  }, []);
+
+  const loginWithGoogle = () => {
+    window.location.href = `${API_BASE_URL}/auth/google`;
   };
-  const completeOnboarding = () => setIsAuthenticated(true);
-  const setProjectContext = (role: AppRole, projectName: string) => {
-    setAppRole(role);
-    setCurrentProjectRole(role);
-    setCurrentProjectName(projectName);
-  };
+
   const logout = () => {
-    setIsAuthenticated(false);
-    setSignupName("");
-    setAppRole(null);
-    setCurrentProjectRole(null);
-    setCurrentProjectName("프로젝트 선택 전");
+    apiFetch("/auth/logout", { method: "POST" }).catch(() => {});
+    tokenStore.clear();
+    setUser(null);
+    setProjectRoles([]);
   };
 
   return (
-    <AuthContext.Provider value={{
-      isAuthenticated,
-      signupName,
-      appRole,
-      currentProjectRole,
-      currentProjectName,
-      login,
-      completeSignup,
-      approveProfessorSignup,
-      completeOnboarding,
-      setProjectContext,
-      logout,
-    }}>
+    <AuthContext.Provider
+      value={{
+        isAuthenticated: !!user,
+        loading,
+        user,
+        projectRoles,
+        loginWithGoogle,
+        logout,
+        refreshMe: loadMe,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

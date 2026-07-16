@@ -1,3 +1,5 @@
+import { useNavigate } from "react-router";
+import { useAuth } from "../../global/hooks/useAuth";
 import { useState } from "react";
 import {
   User, Shield, Settings, Bell, LogOut, Github, ChevronRight,
@@ -16,7 +18,7 @@ import {
 } from "../libs/mock/mypage";
 import {
   REVIEWER_USER, REVIEWER_TEAMS, CONTRIB_REPORTS, REVIEWER_ACTIVITIES,
-} from "../../board/libs/mock/reviewer";
+} from "../../global/lib/mock/reviewer";
 
 // ─── local types ──────────────────────────────────────────────────────────────
 export type MyPageRole = "member" | "reviewer";
@@ -30,9 +32,10 @@ const EVAL_STATUS_META: Record<EvalStatus, { label: string; cls: string }> = {
 };
 
 // ─── Member My Page ───────────────────────────────────────────────────────────
-function MemberMyPage({ onSwitch }: { onSwitch: () => void }) {
+function MemberMyPage({ name, email, onLogout }: { name: string; email: string; onLogout: () => void }) {
   const [taskView, setTaskView] = useState<"all"|"today"|"week">("all");
   const [showScore, setShowScore] = useState(false);
+  const initials = name ? name[0] : MEMBER_USER.initials;
 
   const taskCounts = { done: MY_TASKS.filter(t=>t.status==="done").length, inprogress: MY_TASKS.filter(t=>t.status==="inprogress").length, blocked: 0, todo: MY_TASKS.filter(t=>t.status==="todo").length };
 
@@ -45,21 +48,20 @@ function MemberMyPage({ onSwitch }: { onSwitch: () => void }) {
         <div className="px-6 pb-5">
           <div className="flex items-end justify-between -mt-8 mb-4">
             <div className="w-16 h-16 rounded-2xl border-4 border-white flex items-center justify-center text-white font-bold text-xl" style={{ background: MEMBER_USER.color }}>
-              {MEMBER_USER.initials}
+              {initials}
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={onSwitch} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-border bg-card text-muted-foreground hover:bg-muted transition-colors">심사자로 전환</button>
               <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><Settings className="w-3.5 h-3.5" />설정</button>
-              <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 border border-red-200 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"><LogOut className="w-3.5 h-3.5" />로그아웃</button>
+              <button onClick={onLogout} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 border border-red-200 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"><LogOut className="w-3.5 h-3.5" />로그아웃</button>
             </div>
           </div>
           <div className="flex items-start justify-between">
             <div>
               <div className="flex items-center gap-2 mb-1">
-                <span className="text-lg font-bold text-foreground">{MEMBER_USER.name}</span>
+                <span className="text-lg font-bold text-foreground">{name}</span>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 border border-purple-200">팀원</span>
               </div>
-              <div className="text-xs text-muted-foreground">{MEMBER_USER.email}</div>
+              <div className="text-xs text-muted-foreground">{email}</div>
               <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
                 <span>{MEMBER_USER.affiliation}</span>
                 <span className="text-border">·</span>
@@ -283,7 +285,8 @@ function MemberMyPage({ onSwitch }: { onSwitch: () => void }) {
 // ─── Reviewer My Page ─────────────────────────────────────────────────────────
 type ReviewerPanelTab = "summary" | "deliverables" | "contrib" | "ai-evidence" | "score";
 
-function ReviewerMyPage({ onSwitch }: { onSwitch: () => void }) {
+function ReviewerMyPage({ name, email, onLogout }: { name: string; email: string; onLogout: () => void }) {
+  const initials = name ? name[0] : REVIEWER_USER.initials;
   const [selectedTeam, setSelectedTeam] = useState("T1");
   const [panelTab, setPanelTab] = useState<ReviewerPanelTab>("summary");
   const [scores, setScores] = useState<Record<string,string>>({ "1":"92","2":"88","3":"85","4":"72" });
@@ -312,19 +315,18 @@ function ReviewerMyPage({ onSwitch }: { onSwitch: () => void }) {
       <div className="shrink-0 px-6 pt-5 pb-4 border-b border-border">
         <div className="flex items-center gap-4">
           <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-white font-bold text-xl shrink-0" style={{ background: REVIEWER_USER.color }}>
-            {REVIEWER_USER.initials}
+            {initials}
           </div>
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-0.5">
-              <span className="text-lg font-bold text-foreground">{REVIEWER_USER.name}</span>
+              <span className="text-lg font-bold text-foreground">{name}</span>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200">심사자</span>
             </div>
-            <div className="text-xs text-muted-foreground">{REVIEWER_USER.affiliation} · {REVIEWER_USER.subject}</div>
+            <div className="text-xs text-muted-foreground">{email}</div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={onSwitch} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-border bg-card text-muted-foreground hover:bg-muted transition-colors">팀원으로 전환</button>
             <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><Settings className="w-3.5 h-3.5" />설정</button>
-            <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 border border-red-200 bg-red-50 rounded-lg"><LogOut className="w-3.5 h-3.5" />로그아웃</button>
+            <button onClick={onLogout} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 border border-red-200 bg-red-50 rounded-lg"><LogOut className="w-3.5 h-3.5" />로그아웃</button>
           </div>
         </div>
 
@@ -580,9 +582,18 @@ function ReviewerMyPage({ onSwitch }: { onSwitch: () => void }) {
 
 // ─── Main MyPage export ───────────────────────────────────────────────────────
 export function MyPage() {
-  const initialRole = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("mypageRole") === "reviewer" ? "reviewer" : "member";
-  const [role, setRole] = useState<MyPageRole>(initialRole);
+  const navigate = useNavigate();
+  const { user, projectRoles, logout } = useAuth();
+
+  const role: MyPageRole = projectRoles[0]?.role === "심사자" ? "reviewer" : "member";
+  const name = user?.name ?? "";
+  const email = user?.email ?? "";
+  const handleLogout = () => {
+    logout();
+    navigate("/login", { replace: true });
+  };
+
   return role === "member"
-    ? <MemberMyPage onSwitch={() => setRole("reviewer")} />
-    : <ReviewerMyPage onSwitch={() => setRole("member")} />;
+    ? <MemberMyPage name={name} email={email} onLogout={handleLogout} />
+    : <ReviewerMyPage name={name} email={email} onLogout={handleLogout} />;
 }

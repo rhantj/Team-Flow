@@ -3,6 +3,7 @@ package com.workflowai.meeting;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.Notification;
 import com.workflowai.notification.NotificationRepository;
+import com.workflowai.rag.RagIngestService;
 import com.workflowai.task.Task;
 import com.workflowai.task.TaskRepository;
 import com.workflowai.user.User;
@@ -34,6 +35,7 @@ public class MeetingAnalysisService {
     private final TaskRepository taskRepository;
     private final NotificationRepository notificationRepository;
     private final UserRepository userRepository;
+    private final RagIngestService ragIngestService;
     private final String uploadsDir;
 
     public MeetingAnalysisService(
@@ -47,6 +49,7 @@ public class MeetingAnalysisService {
         TaskRepository taskRepository,
         NotificationRepository notificationRepository,
         UserRepository userRepository,
+        RagIngestService ragIngestService,
         @Value("${workflow.uploads.dir}") String uploadsDir
     ) {
         this.fastApiMeetingClient = fastApiMeetingClient;
@@ -59,6 +62,7 @@ public class MeetingAnalysisService {
         this.taskRepository = taskRepository;
         this.notificationRepository = notificationRepository;
         this.userRepository = userRepository;
+        this.ragIngestService = ragIngestService;
         this.uploadsDir = uploadsDir;
     }
 
@@ -125,9 +129,10 @@ public class MeetingAnalysisService {
         meetingAnalysisRepository.save(new MeetingAnalysis(
             meeting.getId(), result.summary(), result.decisions(), result.risks(), result.keywords(), analysisSource
         ));
+        ragIngestService.ingestBestEffort(projectDbId, "meeting", meeting.getId(), buildMeetingIngestContent(result));
 
         for (MeetingTodo todo : result.todos()) {
-            meetingActionItemRepository.save(new MeetingActionItem(
+            MeetingActionItem item = meetingActionItemRepository.save(new MeetingActionItem(
                 meeting.getId(),
                 todo.title(),
                 todo.description(),
@@ -138,6 +143,7 @@ public class MeetingAnalysisService {
                 todo.priority(),
                 null
             ));
+            ragIngestService.ingestBestEffort(projectDbId, "action_item", item.getId(), buildActionItemIngestContent(item));
         }
 
         saveAttendees(meeting.getId(), safeParticipants(participants));
@@ -248,6 +254,7 @@ public class MeetingAnalysisService {
             createdBy,
             position
         ));
+        ragIngestService.ingestBestEffort(task.getProjectId(), "task", task.getId(), buildTaskIngestContent(task));
 
         MeetingActionItem item = existingItem.orElseGet(() -> new MeetingActionItem(
             meetingId, todo.title(), todo.description(), todo.category(),
@@ -413,5 +420,35 @@ public class MeetingAnalysisService {
 
     private String defaultString(String value, String defaultValue) {
         return value == null || value.isBlank() ? defaultValue : value;
+    }
+
+    private String buildMeetingIngestContent(MeetingAnalysisResult result) {
+        StringBuilder content = new StringBuilder(defaultString(result.summary(), ""));
+        if (result.decisions() != null && !result.decisions().isEmpty()) {
+            content.append("\n결정사항: ").append(String.join(", ", result.decisions()));
+        }
+        if (result.risks() != null && !result.risks().isEmpty()) {
+            content.append("\n위험요소: ").append(String.join(", ", result.risks()));
+        }
+        return content.toString();
+    }
+
+    private String buildActionItemIngestContent(MeetingActionItem item) {
+        StringBuilder content = new StringBuilder(item.getTitle());
+        if (item.getDescription() != null && !item.getDescription().isBlank()) {
+            content.append(" - ").append(item.getDescription());
+        }
+        if (item.getBasis() != null && !item.getBasis().isBlank()) {
+            content.append("\n근거: ").append(item.getBasis());
+        }
+        return content.toString();
+    }
+
+    private String buildTaskIngestContent(Task task) {
+        StringBuilder content = new StringBuilder(task.getTitle());
+        if (task.getDescription() != null && !task.getDescription().isBlank()) {
+            content.append(" - ").append(task.getDescription());
+        }
+        return content.toString();
     }
 }
