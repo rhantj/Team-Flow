@@ -70,8 +70,9 @@ async def compute_embedding_adjustments(task_ids: list[int], project_id: int) ->
         logger.warning("임베딩 난이도 보정 계산 실패(앵커 임베딩) - 보정 없이 진행", exc_info=True)
         return {}
 
-    engine = get_engine()
+    engine = None
     try:
+        engine = get_engine()
         with engine.connect() as conn:
             rows = conn.execute(
                 _SIMILARITY_QUERY,
@@ -86,7 +87,8 @@ async def compute_embedding_adjustments(task_ids: list[int], project_id: int) ->
         logger.warning("임베딩 난이도 보정 계산 실패(document_chunks 조회) - 보정 없이 진행", exc_info=True)
         return {}
     finally:
-        engine.dispose()
+        if engine is not None:
+            engine.dispose()
 
     return {
         row["source_id"]: (row["sim_hard"] - row["sim_easy"]) * EMBEDDING_DIFFICULTY_WEIGHT

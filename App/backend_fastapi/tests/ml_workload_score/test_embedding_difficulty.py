@@ -64,3 +64,29 @@ async def test_compute_embedding_adjustments_empty_task_ids_skips_query():
 
     assert result == {}
     mock_get_engine.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_compute_embedding_adjustments_returns_empty_dict_when_get_engine_fails():
+    # get_engine()이 DATABASE_URL 미설정 등으로 RuntimeError를 던지는 경우 -
+    # get_engine() 호출이 try 밖에 있으면 이 예외가 그대로 전파되어 계약을 어긴다.
+    with patch.object(ed, "get_anchor_embeddings", AsyncMock(return_value=([0.1] * 768, [0.2] * 768))), \
+         patch.object(ed, "get_engine", side_effect=RuntimeError("DATABASE_URL not set")):
+        result = await ed.compute_embedding_adjustments(task_ids=[1, 2], project_id=1)
+
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_compute_embedding_adjustments_returns_empty_dict_on_query_execution_failure():
+    mock_conn = MagicMock()
+    mock_conn.__enter__.return_value.execute.side_effect = RuntimeError("document_chunks query failed")
+    mock_engine = MagicMock()
+    mock_engine.connect.return_value = mock_conn
+
+    with patch.object(ed, "get_anchor_embeddings", AsyncMock(return_value=([0.1] * 768, [0.2] * 768))), \
+         patch.object(ed, "get_engine", return_value=mock_engine):
+        result = await ed.compute_embedding_adjustments(task_ids=[1, 2], project_id=1)
+
+    assert result == {}
+    mock_engine.dispose.assert_called_once()  # 쿼리 실패해도 엔진은 해제되어야 한다
