@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -31,7 +31,7 @@ def test_score_workload_returns_success_when_service_succeeds() -> None:
     )
     with patch(
         "ml_workload_score.app.routers.workload_router.get_workload_score",
-        return_value=fake_result,
+        new=AsyncMock(return_value=fake_result),
     ) as mock_get_score:
         response = client.post("/ai/score/workload", params={"project_id": 1})
 
@@ -39,13 +39,13 @@ def test_score_workload_returns_success_when_service_succeeds() -> None:
     body = response.json()
     assert body["success"] is True
     assert body["data"]["members"][0]["assignee_id"] == "3"
-    mock_get_score.assert_called_once_with(1, use_synthetic_fallback=False)
+    mock_get_score.assert_awaited_once_with(1, use_synthetic_fallback=False)
 
 
 def test_score_workload_returns_500_with_error_envelope_when_service_raises() -> None:
     with patch(
         "ml_workload_score.app.routers.workload_router.get_workload_score",
-        side_effect=RuntimeError("db unreachable"),
+        new=AsyncMock(side_effect=RuntimeError("db unreachable")),
     ):
         response = client.post("/ai/score/workload", params={"project_id": 1})
 
