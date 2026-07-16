@@ -3,6 +3,8 @@ package com.workflowai.meeting;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.Notification;
 import com.workflowai.notification.NotificationRepository;
+import com.workflowai.rag.FastApiRagClient;
+import com.workflowai.rag.RagIngestRequest;
 import com.workflowai.task.Task;
 import com.workflowai.task.TaskRepository;
 import com.workflowai.user.User;
@@ -34,6 +36,7 @@ public class MeetingAnalysisService {
     private final TaskRepository taskRepository;
     private final NotificationRepository notificationRepository;
     private final UserRepository userRepository;
+    private final FastApiRagClient fastApiRagClient;
     private final String uploadsDir;
 
     public MeetingAnalysisService(
@@ -47,6 +50,7 @@ public class MeetingAnalysisService {
         TaskRepository taskRepository,
         NotificationRepository notificationRepository,
         UserRepository userRepository,
+        FastApiRagClient fastApiRagClient,
         @Value("${workflow.uploads.dir}") String uploadsDir
     ) {
         this.fastApiMeetingClient = fastApiMeetingClient;
@@ -59,6 +63,7 @@ public class MeetingAnalysisService {
         this.taskRepository = taskRepository;
         this.notificationRepository = notificationRepository;
         this.userRepository = userRepository;
+        this.fastApiRagClient = fastApiRagClient;
         this.uploadsDir = uploadsDir;
     }
 
@@ -125,9 +130,10 @@ public class MeetingAnalysisService {
         meetingAnalysisRepository.save(new MeetingAnalysis(
             meeting.getId(), result.summary(), result.decisions(), result.risks(), result.keywords(), analysisSource
         ));
+        ingestBestEffort(projectDbId, "meeting", meeting.getId(), buildMeetingIngestContent(result));
 
         for (MeetingTodo todo : result.todos()) {
-            meetingActionItemRepository.save(new MeetingActionItem(
+            MeetingActionItem item = meetingActionItemRepository.save(new MeetingActionItem(
                 meeting.getId(),
                 todo.title(),
                 todo.description(),
@@ -138,6 +144,7 @@ public class MeetingAnalysisService {
                 todo.priority(),
                 null
             ));
+            ingestBestEffort(projectDbId, "action_item", item.getId(), buildActionItemIngestContent(item));
         }
 
         saveAttendees(meeting.getId(), safeParticipants(participants));
@@ -243,6 +250,7 @@ public class MeetingAnalysisService {
             meetingId,
             createdBy
         ));
+        ingestBestEffort(task.getProjectId(), "task", task.getId(), buildTaskIngestContent(task));
 
         MeetingActionItem item = existingItem.orElseGet(() -> new MeetingActionItem(
             meetingId, todo.title(), todo.description(), todo.category(),
@@ -408,5 +416,46 @@ public class MeetingAnalysisService {
 
     private String defaultString(String value, String defaultValue) {
         return value == null || value.isBlank() ? defaultValue : value;
+    }
+
+    // RAG 임베딩은 어시스턴트 답변 품질을 높이는 부가 기능이라, FastAPI 장애가
+    // 회의록/업무 저장 자체를 막지 않도록 예외를 삼킨다(fire-and-forget).
+    private void ingestBestEffort(Long projectId, String sourceType, Long sourceId, String content) {
+        if (projectId == null || sourceId == null || content == null || content.isBlank()) return;
+        try {
+            fastApiRagClient.ingest(new RagIngestRequest(projectId, sourceType, sourceId, content));
+        } catch (Exception ignored) {
+            // RAG 인제스트 실패는 회의록/업무 등록 흐름에 영향을 주지 않는다.
+        }
+    }
+
+    private String buildMeetingIngestContent(MeetingAnalysisResult result) {
+        StringBuilder content = new StringBuilder(defaultString(result.summary(), ""));
+        if (result.decisions() != null && !result.decisions().isEmpty()) {
+            content.append("\n결정사항: ").append(String.join(", ", result.decisions()));
+        }
+        if (result.risks() != null && !result.risks().isEmpty()) {
+            content.append("\n위험요소: ").append(String.join(", ", result.risks()));
+        }
+        return content.toString();
+    }
+
+    private String buildActionItemIngestContent(MeetingActionItem item) {
+        StringBuilder content = new StringBuilder(item.getTitle());
+        if (item.getDescription() != null && !item.getDescription().isBlank()) {
+            content.append(" - ").append(item.getDescription());
+        }
+        if (item.getBasis() != null && !item.getBasis().isBlank()) {
+            content.append("\n근거: ").append(item.getBasis());
+        }
+        return content.toString();
+    }
+
+    private String buildTaskIngestContent(Task task) {
+        StringBuilder content = new StringBuilder(task.getTitle());
+        if (task.getDescription() != null && !task.getDescription().isBlank()) {
+            content.append(" - ").append(task.getDescription());
+        }
+        return content.toString();
     }
 }

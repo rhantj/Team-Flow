@@ -3,7 +3,7 @@ import { useNavigate } from "react-router";
 import { ArrowRight, ClipboardCheck, Crown, GraduationCap, KeyRound, Link2, Plus, ShieldCheck, UserRound } from "lucide-react";
 import { AuthBrandPanel } from "../components/AuthBrandPanel";
 import { useAuth, type AppRole } from "../../global/hooks/useAuth";
-import { REVIEWER_ACTIVITIES, REVIEWER_TEAMS } from "../../board/libs/mock/reviewer";
+import { REVIEWER_ACTIVITIES, REVIEWER_TEAMS } from "../../global/lib/mock/reviewer";
 
 const PROJECTS: Array<{ id: string; name: string; type: string; role: AppRole; deadline: string; progress: number }> = [
   { id: "p1", name: "스마트 주차 관리 시스템", type: "캡스톤디자인", role: "LEADER", deadline: "D-18", progress: 71 },

@@ -29,4 +29,13 @@ public class FastApiRagClient {
             .retrieve()
             .body(RagQueryResponse.class);
     }
+
+    public RagIngestResponse ingest(RagIngestRequest request) {
+        return restClient.post()
+            .uri("/ai/rag/ingest")
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(request)
+            .retrieve()
+            .body(RagIngestResponse.class);
+    }
 }

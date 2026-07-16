@@ -16,7 +16,7 @@ import {
 } from "../libs/mock/mypage";
 import {
   REVIEWER_USER, REVIEWER_TEAMS, CONTRIB_REPORTS, REVIEWER_ACTIVITIES,
-} from "../../board/libs/mock/reviewer";
+} from "../../global/lib/mock/reviewer";
 
 // ─── local types ──────────────────────────────────────────────────────────────
 export type MyPageRole = "member" | "reviewer";
