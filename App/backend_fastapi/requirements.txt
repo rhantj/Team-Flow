@@ -34,8 +34,10 @@ sqlalchemy==2.0.36
 psycopg2-binary==2.9.10
 python-dotenv==1.0.1
 
-# FS-3 ml_delayrisk_classification (MongoDB ml_dashboard 접근)
+# FS-3 ml_delay_risk (MongoDB ml_dashboard 접근)
 pymongo==4.17.0
 # MongoDB ---> PostgreSQL로 이관하면 삭제하기
 matplotlib==3.10.0
 seaborn==0.13.2
+huggingface_hub==0.36.2
+hf_transfer==0.1.9

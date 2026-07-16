@@ -15,7 +15,7 @@ from typing import Any
 
 from pymongo.database import Database
 
-from ml_delayrisk_classification.config import get_settings
+from ml_delay_risk.config import get_settings
 
 
 def _issue_identifiers(issue: dict[str, Any]) -> list[Any]:

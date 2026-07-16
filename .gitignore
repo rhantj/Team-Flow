@@ -274,3 +274,7 @@ docs/fs7_naming_convention.md
 
 # 인프라 식별자(OCID 등) 포함 - 절대 커밋 금지
 .github/workflows/OCI_SECRETS_SETUP.md
+
+# FS-3 ml_delay_risk: 학습된 바이너리 모델 산출물 (재현 불가 + 저장소 비대화)
+# `python -m ml_delay_risk.train`으로 로컬에서 재생성할 것.
+App/backend_fastapi/ml_delay_risk/models/*.pkl

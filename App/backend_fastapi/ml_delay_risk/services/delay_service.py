@@ -6,17 +6,17 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from ml_delayrisk_classification.models.bot_filter import is_bot_author
-from ml_delayrisk_classification.models.feature_engineering import (
+from ml_delay_risk.models.bot_filter import is_bot_author
+from ml_delay_risk.models.feature_engineering import (
     RISK_CLASS_API_LABELS,
     build_dynamic_features,
     build_static_features,
     compute_cross_features,
 )
-from ml_delayrisk_classification.models import _notebook_runtime
-from ml_delayrisk_classification.models.mongo_client import get_database
-from ml_delayrisk_classification.models.snapshot_repository import fetch_snapshot
-from ml_delayrisk_classification.config import get_settings
+from ml_delay_risk.models import _notebook_runtime
+from ml_delay_risk.models.mongo_client import get_database
+from ml_delay_risk.models.snapshot_repository import fetch_snapshot
+from ml_delay_risk.config import get_settings
 
 _notebook = _notebook_runtime.load()
 predict_class_probabilities = _notebook.predict_class_probabilities

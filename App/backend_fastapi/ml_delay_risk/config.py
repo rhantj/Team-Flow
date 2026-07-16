@@ -49,10 +49,12 @@ class Settings(BaseSettings):
 
     # 모델 아티팩트
     model_dir: str = str(MODULE_ROOT / "models")
-    model_filename: str = "delayrisk_model.pkl"
+    model_filename: str = "delay_model.pkl"
 
-    # 시각화 자료(혼동행렬, 피처 중요도 등) 저장 위치 — 팀 문서 폴더에 모아 둔다.
-    visualization_dir: str = r"D:\AIproject\project\Team\work-flow\document_유소은\view"
+    # 학습된 모델(.pkl)은 저장소 비대화/재현성 문제로 git에 커밋하지 않는다.
+    # 배포 환경에서는 fetch_model.py가 이 저장소에서 model_filename을 내려받는다.
+    # private 저장소라면 HF_TOKEN 환경변수(huggingface_hub가 자동 인식)를 함께 설정할 것.
+    hf_model_repo_id: str = ""
 
 
 @lru_cache

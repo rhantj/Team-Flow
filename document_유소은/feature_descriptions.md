@@ -1,8 +1,8 @@
 # Feature Descriptions (피처 설명 목록)
 
-> `ml_delayrisk_classification` 모델 파이프라인이 실제로 계산해 후보로 사용하는 피처 40개 전체 목록.
+> `ml_delay_risk` 모델 파이프라인이 실제로 계산해 후보로 사용하는 피처 40개 전체 목록.
 > `feature_engineering.py`(`build_static_features`, `build_dynamic_features`, `compute_cross_features`)와
-> `dataset_builder.py`가 만드는 필드에 1:1로 대응하며, 학습/실시간 추론(`delayrisk_service.py`)이 이 정의를
+> `dataset_builder.py`가 만드는 필드에 1:1로 대응하며, 학습/실시간 추론(`delay_service.py`)이 이 정의를
 > 그대로 공유한다. 이 중 실제로 모델에 최종 선정되는 피처는 `select_important_features`의 중요도(gain)
 > 분석 결과에 따라 달라지며, 현재는 6개(`has_original_estimate`, `elapsed_hours_at_cutoff`,
 > `hours_in_current_status`, `priority_name`, `issuetype_name`, `original_estimate_seconds`)가 선정되어 있다.

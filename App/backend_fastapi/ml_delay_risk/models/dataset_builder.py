@@ -18,17 +18,17 @@ from typing import Any, Optional
 import pandas as pd
 from pymongo.database import Database
 
-from ml_delayrisk_classification.models.bot_filter import is_bot_author
-from ml_delayrisk_classification.models.feature_engineering import (
+from ml_delay_risk.models.bot_filter import is_bot_author
+from ml_delay_risk.models.feature_engineering import (
     NORMAL_RESOLUTIONS,
     build_dynamic_features,
     build_static_features,
     classify_risk,
     compute_cross_features,
 )
-from ml_delayrisk_classification.models.mongo_client import ensure_indexes, get_database
-from ml_delayrisk_classification.models.snapshot_repository import fetch_snapshot, filter_before
-from ml_delayrisk_classification.config import Settings, get_settings
+from ml_delay_risk.models.mongo_client import ensure_indexes, get_database
+from ml_delay_risk.models.snapshot_repository import fetch_snapshot, filter_before
+from ml_delay_risk.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 

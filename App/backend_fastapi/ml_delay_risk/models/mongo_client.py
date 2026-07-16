@@ -7,7 +7,7 @@ from functools import lru_cache
 from pymongo import ASCENDING, MongoClient
 from pymongo.database import Database
 
-from ml_delayrisk_classification.config import get_settings
+from ml_delay_risk.config import get_settings
 
 logger = logging.getLogger(__name__)
 

@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from ml_delayrisk_classification.schema.delayrisk_schema import (
+from App.backend_fastapi.ml_delay_risk.schema.delay_schema import (
     BatchPredictRequest,
     BatchPredictResponse,
     HealthResponse,
     PredictRequest,
     PredictResponse,
 )
-from ml_delayrisk_classification.models import _notebook_runtime
-from ml_delayrisk_classification.services.delayrisk_service import predict_for_issue
+from ml_delay_risk.models import _notebook_runtime
+from App.backend_fastapi.ml_delay_risk.services.delay_service import predict_for_issue
 
 load_artifact = _notebook_runtime.load().load_artifact
 

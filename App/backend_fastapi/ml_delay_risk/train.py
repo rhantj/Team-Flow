@@ -1,16 +1,16 @@
 """LightGBM 3단계(정상/주의/위험) 분류 모델 학습 스크립트.
 
 실행 (backend_fastapi 디렉터리에서):
-    python -m ml_delayrisk_classification.train
-    python -m ml_delayrisk_classification.train --limit 2000   # 소규모 파일럿 실행
+    python -m ml_delay_risk.train
+    python -m ml_delay_risk.train --limit 2000   # 소규모 파일럿 실행
 """
 from __future__ import annotations
 
 import argparse
 import logging
 
-from ml_delayrisk_classification.models import _notebook_runtime
-from ml_delayrisk_classification.models.dataset_builder import build_training_dataframe
+from ml_delay_risk.models import _notebook_runtime
+from ml_delay_risk.models.dataset_builder import build_training_dataframe
 
 train_and_save = _notebook_runtime.load().train_and_save
 

@@ -14,6 +14,8 @@
 완료된 이슈의 '최종' 결과를 참조하지 않는다(=예측 시점에 재현 가능=누수 없음).
 """
 
+from __future__ import annotations
+
 """
 # Feature Descriptions (피처 설명 목록)
 
@@ -60,8 +62,6 @@
 | `is_self_assigned` | 보고자와 담당자가 동일 인물인지 여부 |
 | `snapshot_offset_days` | 스냅샷 시점 (이슈 생성 후 며칠째인지) |
 """
-
-from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Callable, Optional
@@ -364,7 +364,7 @@ def compute_cross_features(
 ) -> dict[str, Any]:
     """정적 피처와 동적 피처를 모두 알아야 계산 가능한 파생 피처.
 
-    학습(dataset_builder)과 실시간 추론(delayrisk_service) 양쪽이 이 함수를 그대로
+    학습(dataset_builder)과 실시간 추론(delay_service) 양쪽이 이 함수를 그대로
     호출해야 train/serve skew가 생기지 않는다.
     """
     reporter = static_features.get("reporter")

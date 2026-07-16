@@ -1,6 +1,6 @@
 # 업무 지연 위험도(정상/주의/위험) 분류 모델 보고서
 
-`delayrisk_model.ipynb` 기준 작성. 아래 실험 결과는 파일럿 실행(완료 이슈 1,500건, 스냅샷 4,633행)의 실제 로그를 그대로 옮긴 것이다.
+`delay_model.ipynb` 기준 작성. 아래 실험 결과는 파일럿 실행(완료 이슈 1,500건, 스냅샷 4,633행)의 실제 로그를 그대로 옮긴 것이다.
 
 ---
 
@@ -211,5 +211,5 @@ train/serve 코드 공유: `train_and_save`(학습)와 `predict_class_probabilit
 - **파일럿 규모의 한계**: 위 결과는 전체 데이터(약 77만 건 규모 추정) 중 1,500건만 사용한 파일럿이다. '주의' 클래스가 37건(스냅샷 기준)뿐이라 아직 신뢰 구간이 넓다. 전체 데이터로 재학습하면 특히 '주의' 클래스의 precision이 달라질 가능성이 높다.
 - **Proxy Deadline의 근본적 한계**: 실제 마감일이 아니라 과거 유사 이슈의 중앙값으로 대체한 값이라, 실제 업무 특성과 괴리가 있을 수 있다(예: 실제로는 급한 업무인데 과거 평균이 느긋했던 이슈타입/우선순위 조합).
 - **봇 계정 필터링**: `worklogs`의 `author`에 `bot`, `hudson`, `jenkins` 등의 문자열이 포함되면 자동화 계정으로 간주해 진행률/활동 모멘텀 계산에서 제외한다. 포함 시 자동화된 봇 활동이 사람의 성실도로 잘못 학습되는 것을 방지한다.
-- **모델 아티팩트 구성**: `booster`(LightGBM 모델) 외에도 `feature_names`, `categorical_columns`, `frequency_maps`, `proxy_deadline_map`, `global_median_duration_hours`를 함께 `joblib`으로 직렬화(`models/delayrisk_model.pkl`)해, 추론 시 학습 때와 완전히 동일한 인코딩·Proxy Deadline 조회가 가능하도록 했다.
-- **코드 구조**: 이 노트북(`delayrisk_model.ipynb`)이 모델 정의의 유일한 원본이며, FastAPI 서비스(`services/delayrisk_service.py`, `routers/delayrisk_router.py`)는 `_notebook_runtime.py`를 통해 노트북의 라이브러리 정의 셀들을 동적으로 로드해 재사용한다.
+- **모델 아티팩트 구성**: `booster`(LightGBM 모델) 외에도 `feature_names`, `categorical_columns`, `frequency_maps`, `proxy_deadline_map`, `global_median_duration_hours`를 함께 `joblib`으로 직렬화(`models/delay_model.pkl`)해, 추론 시 학습 때와 완전히 동일한 인코딩·Proxy Deadline 조회가 가능하도록 했다.
+- **코드 구조**: 이 노트북(`delay_model.ipynb`)이 모델 정의의 유일한 원본이며, FastAPI 서비스(`services/delay_service.py`, `routers/delay_router.py`)는 `_notebook_runtime.py`를 통해 노트북의 라이브러리 정의 셀들을 동적으로 로드해 재사용한다.

@@ -1,7 +1,7 @@
 # Zenodo - Apache Jira Issue Tracking Dataset 구조
 
 > 원본: `jira_issue_tracking_dataset 구조.docx`
-> 이 문서는 원본 스키마 설명에 더해, **실제 `ml_delayrisk_classification` 모듈이 각 필드를 어떻게 쓰고 있는지**(또는 쓰지 않는지)를 `> 구현:` 인용구로 덧붙였다. 코드 경로는 모두 `App/backend_fastapi/ml_delayrisk_classification/` 기준이다.
+> 이 문서는 원본 스키마 설명에 더해, **실제 `ml_delay_risk` 모듈이 각 필드를 어떻게 쓰고 있는지**(또는 쓰지 않는지)를 `> 구현:` 인용구로 덧붙였다. 코드 경로는 모두 `App/backend_fastapi/ml_delay_risk/` 기준이다.
 
 Zenodo - Apache Jira Issue Tracking Dataset의 핵심 컬렉션 4가지(`issues`, `events`, `comments`, `worklogs`) 구조와 주요 데이터 필드를 스키마에 기반하여 정리한다.
 
