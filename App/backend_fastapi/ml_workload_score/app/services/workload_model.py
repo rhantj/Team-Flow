@@ -181,7 +181,11 @@ def generate_synthetic_tasks(n_members: int = 7, seed: int = RANDOM_SEED) -> pd.
 # ============================================================
 # 2. 피처 엔지니어링 (실제 DB 연결 시 이 함수 입력만 실제 tasks df로 교체)
 # ============================================================
-def build_features(tasks_df: pd.DataFrame, today: pd.Timestamp = None) -> pd.DataFrame:
+def build_features(
+    tasks_df: pd.DataFrame,
+    today: pd.Timestamp = None,
+    embedding_adjustments: dict[int, float] | None = None,
+) -> pd.DataFrame:
     """
     팀원별(assignee_id) 피처 테이블 생성.
     - task_count_active: 미완료 업무 수
@@ -190,6 +194,9 @@ def build_features(tasks_df: pd.DataFrame, today: pd.Timestamp = None) -> pd.Dat
     - overdue_count: 마감 지났는데 미완료
     - upcoming_due_count: 마감 3일 이내 미완료
     모두 '팀 평균 대비 상대값'으로도 같이 계산한다 (과부하는 상대 개념이므로).
+
+    embedding_adjustments: {task_id: 보정치} — embedding_difficulty.compute_embedding_adjustments()의
+    반환값을 그대로 넘긴다. None이면(기본값) 기존 동작과 완전히 동일.
     """
     if today is None:
         today = pd.Timestamp("2026-07-14")
@@ -199,7 +206,15 @@ def build_features(tasks_df: pd.DataFrame, today: pd.Timestamp = None) -> pd.Dat
     df["is_overdue"] = (~df["is_done"]) & (df["due_date"] < today)
     df["is_upcoming"] = (~df["is_done"]) & (df["due_date"] >= today) & \
                          (df["due_date"] <= today + pd.Timedelta(days=3))
-    df["difficulty"] = df.apply(lambda r: difficulty_of(r["priority"], r["category"]), axis=1)
+
+    if embedding_adjustments:
+        df["difficulty"] = df.apply(
+            lambda r: difficulty_of(r["priority"], r["category"])
+            + embedding_adjustments.get(r["task_id"], 0.0),
+            axis=1,
+        )
+    else:
+        df["difficulty"] = df.apply(lambda r: difficulty_of(r["priority"], r["category"]), axis=1)
 
     grouped = df.groupby("assignee_id").agg(
         task_count_total=("task_id", "count"),
