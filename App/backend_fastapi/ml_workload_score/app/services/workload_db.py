@@ -28,7 +28,10 @@ def get_engine():
             "DATABASE_URL 환경변수가 없습니다. 프로젝트 루트에 .env 파일을 만들고 "
             "DATABASE_URL=postgresql://... 형식으로 넣어주세요."
         )
-    return create_engine(DATABASE_URL, pool_pre_ping=True)
+    # Supabase Session pooler는 무료 티어 기준 동시 세션이 15개로 제한된다.
+    # 매 호출마다 새 엔진을 만들므로 풀을 크게 잡으면 다른 서비스(Spring Boot 등)와
+    # 세션 한도를 다투게 되어 pool_size=1로 최소화한다. 사용 후 dispose()로 즉시 반납할 것.
+    return create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=1, max_overflow=0)
 
 
 def load_tasks_from_db(project_id: int) -> pd.DataFrame:
@@ -51,27 +54,17 @@ def load_tasks_from_db(project_id: int) -> pd.DataFrame:
         WHERE project_id = :project_id
           AND assignee_id IS NOT NULL
     """)
-    with engine.connect() as conn:
-        df = pd.read_sql(query, conn, params={"project_id": project_id})
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(query, conn, params={"project_id": project_id})
+    finally:
+        engine.dispose()
 
     # due_date를 pandas Timestamp로 통일 (NULL 허용이므로 NaT 처리)
     df["due_date"] = pd.to_datetime(df["due_date"])
     # assignee_id는 실제로는 bigint(유저 id)라 문자열로 바꿔서 기존 코드(assignee_1 형태 가정)와 호환되게
     df["assignee_id"] = df["assignee_id"].astype(str)
     return df
-
-
-def load_project_member_count(project_id: int) -> int:
-    """프로젝트 팀원 수 - contamination 자동 조정에 사용."""
-    engine = get_engine()
-    query = text("""
-        SELECT COUNT(*) AS n
-        FROM public.project_members
-        WHERE project_id = :project_id
-    """)
-    with engine.connect() as conn:
-        result = conn.execute(query, {"project_id": project_id}).fetchone()
-    return int(result[0]) if result else 0
 
 
 if __name__ == "__main__":
