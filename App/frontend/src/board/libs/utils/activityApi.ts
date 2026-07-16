@@ -16,7 +16,7 @@ export interface TaskActivityDto {
   createdAt: string;
 }
 
-export async function fetchTaskActivity(taskId: string, projectId: string = DEMO_PROJECT_ID): Promise<TaskActivityDto[]> {
+export async function fetchTaskActivity(taskId: string, projectId: number = DEMO_PROJECT_ID): Promise<TaskActivityDto[]> {
   const response = await fetch(`${API_BASE_URL}/projects/${projectId}/tasks/${taskId}/activities`);
   if (!response.ok) {
     throw new Error(`활동 로그 API 요청 실패: ${response.status}`);

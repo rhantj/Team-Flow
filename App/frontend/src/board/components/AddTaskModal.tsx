@@ -4,8 +4,9 @@ import { CatTag } from "./CatTag";
 import { CATEGORIES } from "../libs/mock/tasks";
 import { getCat } from "../libs/utils/taskService";
 import { CAT_MODAL_FIELDS } from "../libs/utils/catFields";
-import { createTask } from "../libs/utils/taskApi";
+import { createTask, DEMO_PROJECT_ID } from "../libs/utils/taskApi";
 import { MEMBERS } from "../../global/lib/mock/members";
+import { useAuth } from "../../global/hooks/useAuth";
 import type { Priority, Task, TaskStatus } from "../libs/types/task";
 
 const STEPS = ["카테고리 선택", "기본 정보", "추가 정보", "생성 완료"];
@@ -18,6 +19,7 @@ interface AddTaskModalProps {
 }
 
 export function AddTaskModal({ open, initialStatus, onClose, onCreated }: AddTaskModalProps) {
+  const { currentProjectId } = useAuth();
   const [step, setStep] = useState(0);
   const [selCat, setSelCat] = useState("");
   const [customCat, setCustomCat] = useState("");
@@ -62,7 +64,7 @@ export function AddTaskModal({ open, initialStatus, onClose, onCreated }: AddTas
           dueDate: fDue || null,
           priority: fPriority,
           description: fDesc.trim() || undefined,
-        });
+        }, currentProjectId ?? DEMO_PROJECT_ID);
         onCreated(created);
         setStep(step + 1);
       } catch {

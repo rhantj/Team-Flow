@@ -39,5 +39,6 @@ workflow:
     base-url: ${WORKFLOW_FRONTEND_BASE_URL:http://localhost:5173}
   demo:
     seed-enabled: ${WORKFLOW_DEMO_SEED_ENABLED:true}
+    dev-login-enabled: ${WORKFLOW_DEMO_DEV_LOGIN_ENABLED:true}
   uploads:
     dir: ${WORKFLOW_UPLOADS_DIR:uploads}

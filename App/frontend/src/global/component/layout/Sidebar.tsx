@@ -1,4 +1,6 @@
-import { ChevronDown, Hash, Sparkles, Settings, Shield } from "lucide-react";
+import { useState } from "react";
+import { useNavigate } from "react-router";
+import { Check, ChevronDown, Hash, Plus, Sparkles, Settings, Shield } from "lucide-react";
 import { NAV_ITEMS } from "../../lib/constants/nav";
 import type { Tab } from "../../../board/libs/types/task";
 import { useAuth } from "../../hooks/useAuth";
@@ -13,9 +15,11 @@ const ROLE_COLORS: Record<ProjectRoleKo, string> = {
 export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t: Tab) => void; onAI: () => void }) {
   const groups: Record<string, string> = { planning: "계획 관리", ai: "AI 기능", dev: "개발", eval: "평가 (심사자 전용)", me: "내 계정" };
   const rendered: string[] = [];
-  const { user, projectRoles } = useAuth();
-  const currentProjectName = projectRoles[0]?.projectTitle ?? null;
-  const role: ProjectRoleKo = projectRoles[0]?.role ?? "팀장";
+  const navigate = useNavigate();
+  const { user, projectRoles, currentProjectId, currentProject, selectProject } = useAuth();
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const currentProjectName = currentProject?.projectTitle ?? null;
+  const role: ProjectRoleKo = currentProject?.role ?? "팀장";
   const navItems = NAV_ITEMS;
 
   return (
@@ -32,10 +36,13 @@ export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t:
       </div>
 
       {/* Project selector */}
-      <div className="mx-3 mb-4">
-        <button className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-left transition-colors"
-          style={{ background: "var(--sidebar-accent)" }}>
-          <div className="w-5 h-5 rounded bg-blue-500 flex items-center justify-center">
+      <div className="relative mx-3 mb-4">
+        <button
+          onClick={() => setProjectMenuOpen((o) => !o)}
+          className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-left transition-colors"
+          style={{ background: "var(--sidebar-accent)" }}
+        >
+          <div className="w-5 h-5 rounded bg-blue-500 flex items-center justify-center shrink-0">
             <Hash className="w-3 h-3 text-white" />
           </div>
           <div className="flex-1 min-w-0">
@@ -47,8 +54,62 @@ export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t:
               </span>
             </div>
           </div>
-          <ChevronDown className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--muted-foreground)" }} />
+          <ChevronDown
+            className={`w-3.5 h-3.5 shrink-0 transition-transform ${projectMenuOpen ? "rotate-180" : ""}`}
+            style={{ color: "var(--muted-foreground)" }}
+          />
         </button>
+
+        {projectMenuOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setProjectMenuOpen(false)} />
+            <div
+              className="absolute left-0 top-full mt-1.5 w-full rounded-lg border shadow-lg z-50 overflow-hidden"
+              style={{ background: "var(--sidebar)", borderColor: "var(--sidebar-border)" }}
+            >
+              <div className="max-h-64 overflow-y-auto py-1">
+                {projectRoles.length === 0 ? (
+                  <div className="px-3 py-3 text-[11px]" style={{ color: "var(--muted-foreground)" }}>
+                    생성된 프로젝트가 없습니다.
+                  </div>
+                ) : (
+                  projectRoles.map((pr) => {
+                    const isSelected = pr.projectId === currentProjectId;
+                    return (
+                      <button
+                        key={pr.projectId}
+                        onClick={() => { selectProject(pr.projectId); setProjectMenuOpen(false); }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/5"
+                        style={{ background: isSelected ? "var(--sidebar-accent)" : "transparent" }}
+                      >
+                        <span className="flex-1 min-w-0 text-xs font-medium text-white truncate">
+                          {pr.projectTitle || "제목 없음"}
+                        </span>
+                        <span
+                          className="text-[9px] font-semibold px-1.5 py-0.5 rounded shrink-0"
+                          style={{ color: "#fff", background: ROLE_COLORS[pr.role] }}
+                        >
+                          {pr.role}
+                        </span>
+                        {isSelected && <Check className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--accent)" }} />}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+              <div className="border-t" style={{ borderColor: "var(--sidebar-border)" }}>
+                <button
+                  onClick={() => { setProjectMenuOpen(false); navigate("/onboarding"); }}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-white/5"
+                  style={{ color: "var(--accent)" }}
+                >
+                  <Plus className="w-3.5 h-3.5 shrink-0" />
+                  <span className="text-xs font-medium">새 프로젝트 만들기</span>
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Nav */}

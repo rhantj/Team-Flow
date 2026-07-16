@@ -11,6 +11,8 @@ import type { Meeting, UploadFlow, UploadType, GenTodo, SavedMeetingRecord } fro
 import type { CatId, Priority, Task } from "../../board/libs/types/task";
 import { analyzeMeeting, fetchMeetings, registerMeetingTasks } from "../libs/utils/meetingAiApi";
 import type { MeetingAiResult } from "../libs/types/meetingAiTypes";
+import { DEMO_PROJECT_ID } from "../../board/libs/utils/taskApi";
+import { useAuth } from "../../global/hooks/useAuth";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import {
@@ -270,6 +272,8 @@ const formatDateTime = (iso?: string) => {
 };
 
 export function MeetingsView() {
+  const { currentProjectId } = useAuth();
+  const projectId = String(currentProjectId ?? DEMO_PROJECT_ID);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [meetings, setMeetings] = useState<Meeting[]>(getStoredMeetings);
@@ -341,7 +345,7 @@ export function MeetingsView() {
   // 서버에 저장된 회의록 목록을 가져와 로컬에 없는 항목만 보충한다.
   // 실패해도 화면은 로컬 저장 목록으로 그대로 동작한다.
   useEffect(() => {
-    fetchMeetings("demo-project")
+    fetchMeetings(projectId)
       .then(list => {
         setMeetings(prev => {
           const existingIds = new Set(prev.map(m => m.id));
@@ -362,7 +366,7 @@ export function MeetingsView() {
         setTimeout(() => setMeetingListError(null), 4000);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [projectId]);
 
   const meeting = meetings.find(m => m.id === selected);
   // meetingId가 있으면 우선 사용, 없으면(review 화면에서 아직 meetings에 반영 전 등) meetTitle로 대체.
@@ -558,7 +562,7 @@ export function MeetingsView() {
     setUploadFlow("analyzing");
 
     void analyzeMeeting({
-      projectId: "demo-project",
+      projectId,
       file: selectedFile,
       title,
       meetingDate: meetDate,
@@ -626,7 +630,7 @@ export function MeetingsView() {
 
     if (newTodos.length > 0) {
       try {
-        await registerMeetingTasks("demo-project", meetingIdentifier, newTodos.map(todo => toApiTodo(todo)));
+        await registerMeetingTasks(projectId, meetingIdentifier, newTodos.map(todo => toApiTodo(todo)));
       } catch {
         setRegisterMessage("서버에 업무 등록을 실패했습니다. 다시 시도해주세요.");
         setTimeout(() => setRegisterMessage(null), 2500);
@@ -684,7 +688,7 @@ export function MeetingsView() {
     }
 
     try {
-      await registerMeetingTasks("demo-project", meetingIdentifier, newTodos.map(todo => ({
+      await registerMeetingTasks(projectId, meetingIdentifier, newTodos.map(todo => ({
         title: todo.title,
         description: "",
         assignee_candidate: todo.assigneeName,

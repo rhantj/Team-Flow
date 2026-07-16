@@ -27,11 +27,11 @@ async function unwrap<T>(response: Response): Promise<T> {
   return body.data;
 }
 
-function commentsUrl(taskId: string, projectId: string): string {
+function commentsUrl(taskId: string, projectId: number): string {
   return `${API_BASE_URL}/projects/${projectId}/tasks/${taskId}/comments`;
 }
 
-export async function fetchTaskComments(taskId: string, projectId: string = DEMO_PROJECT_ID): Promise<TaskCommentDto[]> {
+export async function fetchTaskComments(taskId: string, projectId: number = DEMO_PROJECT_ID): Promise<TaskCommentDto[]> {
   const response = await fetch(commentsUrl(taskId, projectId));
   return unwrap<TaskCommentDto[]>(response);
 }
@@ -40,7 +40,7 @@ export async function createTaskComment(
   taskId: string,
   authorId: string,
   content: string,
-  projectId: string = DEMO_PROJECT_ID
+  projectId: number = DEMO_PROJECT_ID
 ): Promise<TaskCommentDto> {
   const response = await fetch(commentsUrl(taskId, projectId), {
     method: "POST",
@@ -54,7 +54,7 @@ export async function updateTaskComment(
   taskId: string,
   commentId: string,
   content: string,
-  projectId: string = DEMO_PROJECT_ID
+  projectId: number = DEMO_PROJECT_ID
 ): Promise<TaskCommentDto> {
   const response = await fetch(`${commentsUrl(taskId, projectId)}/${commentId}`, {
     method: "PATCH",
@@ -64,7 +64,7 @@ export async function updateTaskComment(
   return unwrap<TaskCommentDto>(response);
 }
 
-export async function deleteTaskComment(taskId: string, commentId: string, projectId: string = DEMO_PROJECT_ID): Promise<void> {
+export async function deleteTaskComment(taskId: string, commentId: string, projectId: number = DEMO_PROJECT_ID): Promise<void> {
   const response = await fetch(`${commentsUrl(taskId, projectId)}/${commentId}`, { method: "DELETE" });
   await unwrap<null>(response);
 }

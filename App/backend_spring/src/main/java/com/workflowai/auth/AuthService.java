@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class AuthService {
     private static final String PROVIDER_GOOGLE = "google";
+    private static final String PROVIDER_DEMO = "demo";
 
     private final GoogleOAuthService googleOAuthService;
     private final UserRepository userRepository;
@@ -31,6 +32,13 @@ public class AuthService {
                 new User(userInfo.email(), userInfo.name(), PROVIDER_GOOGLE, userInfo.sub())
             ));
 
+        return issueTokens(user);
+    }
+
+    /** [개발용] Google OAuth 없이 데모 계정(provider="demo", providerId=demoUserId)으로 즉시 로그인한다. */
+    public AuthTokenResponse devLogin(String demoUserId) {
+        User user = userRepository.findByProviderAndProviderId(PROVIDER_DEMO, demoUserId)
+            .orElseThrow(() -> new IllegalArgumentException("알 수 없는 테스트 계정입니다: " + demoUserId));
         return issueTokens(user);
     }
 

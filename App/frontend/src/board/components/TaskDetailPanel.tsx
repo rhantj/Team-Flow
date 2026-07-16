@@ -12,6 +12,8 @@ import { addNotification } from "../libs/utils/activityStore";
 import { fetchChecklist, createChecklistItem, updateChecklistItem, deleteChecklistItem } from "../libs/utils/checklistApi";
 import { fetchTaskComments, createTaskComment, updateTaskComment, deleteTaskComment, type TaskCommentDto } from "../libs/utils/taskCommentApi";
 import { fetchTaskActivity, type TaskActivityDto } from "../libs/utils/activityApi";
+import { DEMO_PROJECT_ID } from "../libs/utils/taskApi";
+import { useAuth } from "../../global/hooks/useAuth";
 import type { Task, ChecklistItem } from "../libs/types/task";
 
 const CURRENT_USER = MEMBERS[0];
@@ -66,6 +68,8 @@ interface TaskDetailPanelProps {
 }
 
 export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onDeleteTask, onEditTask }: TaskDetailPanelProps) {
+  const { currentProjectId } = useAuth();
+  const projectId = currentProjectId ?? DEMO_PROJECT_ID;
   const [devInfoOpen, setDevInfoOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -101,7 +105,7 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
 
     let cancelled = false;
     setChecklistState("loading");
-    fetchChecklist(task.id)
+    fetchChecklist(task.id, projectId)
       .then((items) => {
         if (!cancelled) {
           setChecklist(items);
@@ -113,7 +117,7 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
       });
 
     setCommentsState("loading");
-    fetchTaskComments(task.id)
+    fetchTaskComments(task.id, projectId)
       .then((items) => {
         if (!cancelled) {
           setTaskComments(items);
@@ -133,7 +137,7 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
   useEffect(() => {
     let cancelled = false;
     setActivityState("loading");
-    fetchTaskActivity(task.id)
+    fetchTaskActivity(task.id, projectId)
       .then((items) => {
         if (!cancelled) {
           setActivity(items);
@@ -154,7 +158,7 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
     const prev = checklist;
     setChecklist((cur) => cur.map((c) => (c.id === itemId ? { ...c, done: !c.done } : c)));
     try {
-      await updateChecklistItem(task.id, itemId, { done: !target.done });
+      await updateChecklistItem(task.id, itemId, { done: !target.done }, projectId);
     } catch {
       setChecklist(prev);
       onShowToast("체크리스트 변경에 실패했습니다.");
@@ -166,7 +170,7 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
     if (!title || addingItem) return;
     setAddingItem(true);
     try {
-      const created = await createChecklistItem(task.id, title);
+      const created = await createChecklistItem(task.id, title, projectId);
       setChecklist((cur) => [...cur, created]);
       setNewItemTitle("");
     } catch {
@@ -193,7 +197,7 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
     setChecklist((cur) => cur.map((c) => (c.id === itemId ? { ...c, label: title } : c)));
     setEditingItemId(null);
     try {
-      await updateChecklistItem(task.id, itemId, { title });
+      await updateChecklistItem(task.id, itemId, { title }, projectId);
     } catch {
       setChecklist(prev);
       onShowToast("체크리스트 수정에 실패했습니다.");
@@ -204,7 +208,7 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
     const prev = checklist;
     setChecklist((cur) => cur.filter((c) => c.id !== itemId));
     try {
-      await deleteChecklistItem(task.id, itemId);
+      await deleteChecklistItem(task.id, itemId, projectId);
     } catch {
       setChecklist(prev);
       onShowToast("체크리스트 삭제에 실패했습니다.");
@@ -250,7 +254,7 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
     if (!text || sendingComment) return;
     setSendingComment(true);
     try {
-      const created = await createTaskComment(task.id, CURRENT_USER.id, text);
+      const created = await createTaskComment(task.id, CURRENT_USER.id, text, projectId);
       setTaskComments((cur) => [...cur, created]);
       const assignee = MEMBERS.find((mm) => mm.id === task.assignee);
       if (assignee) {
@@ -284,7 +288,7 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
     setTaskComments((cur) => cur.map((c) => (c.id === commentId ? { ...c, content: text } : c)));
     setEditingCommentId(null);
     try {
-      await updateTaskComment(task.id, commentId, text);
+      await updateTaskComment(task.id, commentId, text, projectId);
     } catch {
       setTaskComments(prev);
       onShowToast("코멘트 수정에 실패했습니다.");
@@ -295,7 +299,7 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
     const prev = taskComments;
     setTaskComments((cur) => cur.filter((c) => c.id !== commentId));
     try {
-      await deleteTaskComment(task.id, commentId);
+      await deleteTaskComment(task.id, commentId, projectId);
     } catch {
       setTaskComments(prev);
       onShowToast("코멘트 삭제에 실패했습니다.");

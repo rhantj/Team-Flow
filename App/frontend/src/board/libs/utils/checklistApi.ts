@@ -30,11 +30,11 @@ async function unwrap<T>(response: Response): Promise<T> {
   return body.data;
 }
 
-function checklistUrl(taskId: string, projectId: string): string {
+function checklistUrl(taskId: string, projectId: number): string {
   return `${API_BASE_URL}/projects/${projectId}/tasks/${taskId}/checklists`;
 }
 
-export async function fetchChecklist(taskId: string, projectId: string = DEMO_PROJECT_ID): Promise<ChecklistItem[]> {
+export async function fetchChecklist(taskId: string, projectId: number = DEMO_PROJECT_ID): Promise<ChecklistItem[]> {
   const response = await fetch(checklistUrl(taskId, projectId));
   const items = await unwrap<ChecklistItemDto[]>(response);
   return items.map(toItem);
@@ -43,7 +43,7 @@ export async function fetchChecklist(taskId: string, projectId: string = DEMO_PR
 export async function createChecklistItem(
   taskId: string,
   title: string,
-  projectId: string = DEMO_PROJECT_ID
+  projectId: number = DEMO_PROJECT_ID
 ): Promise<ChecklistItem> {
   const response = await fetch(checklistUrl(taskId, projectId), {
     method: "POST",
@@ -63,7 +63,7 @@ export async function updateChecklistItem(
   taskId: string,
   itemId: string,
   input: UpdateChecklistItemInput,
-  projectId: string = DEMO_PROJECT_ID
+  projectId: number = DEMO_PROJECT_ID
 ): Promise<ChecklistItem> {
   const response = await fetch(`${checklistUrl(taskId, projectId)}/${itemId}`, {
     method: "PATCH",
@@ -74,7 +74,7 @@ export async function updateChecklistItem(
   return toItem(dto);
 }
 
-export async function deleteChecklistItem(taskId: string, itemId: string, projectId: string = DEMO_PROJECT_ID): Promise<void> {
+export async function deleteChecklistItem(taskId: string, itemId: string, projectId: number = DEMO_PROJECT_ID): Promise<void> {
   const response = await fetch(`${checklistUrl(taskId, projectId)}/${itemId}`, { method: "DELETE" });
   await unwrap<null>(response);
 }

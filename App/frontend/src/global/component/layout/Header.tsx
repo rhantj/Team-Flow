@@ -28,9 +28,9 @@ export function Header() {
   const location = useLocation();
   const [searchOpen, setSearchOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const { projectRoles, logout } = useAuth();
-  const currentProjectName = projectRoles[0]?.projectTitle ?? null;
-  const role: ProjectRoleKo = projectRoles[0]?.role ?? "팀장";
+  const { currentProject, logout } = useAuth();
+  const currentProjectName = currentProject?.projectTitle ?? null;
+  const role: ProjectRoleKo = currentProject?.role ?? "팀장";
   const allNotifications = useStoredNotifications();
   const myNotifications = allNotifications.filter(n => n.recipientId === CURRENT_USER.id);
   const unreadCount = myNotifications.filter(n => !n.read).length;

@@ -1,9 +1,9 @@
 import type { Priority, Task, TaskStatus } from "../types/task";
 import { apiFetch } from "../../../global/api/apiClient";
 
-// TODO: 실제 인증/프로젝트 선택 기능이 붙기 전까지 쓰는 임시 프로젝트 id.
-// 백엔드 DemoDataService가 "demo-project"를 데모 프로젝트 DB row로 변환해준다.
-export const DEMO_PROJECT_ID = "demo-project";
+// 로그인했지만 아직 어느 프로젝트에도 속하지 않은 경우(또는 project 컨텍스트가 없는 호출)에 쓰는 폴백 id.
+// 백엔드 DemoDataService가 부팅 시 seed하는 데모 프로젝트가 신규 DB에서는 항상 첫 번째 row라 id=1이 된다.
+export const DEMO_PROJECT_ID = 1;
 
 interface TaskListItemDto {
   id: string;
@@ -44,7 +44,7 @@ function toTask(dto: TaskListItemDto): Task {
   };
 }
 
-export async function fetchTasks(projectId: string = DEMO_PROJECT_ID): Promise<Task[]> {
+export async function fetchTasks(projectId: number = DEMO_PROJECT_ID): Promise<Task[]> {
   const items = await apiFetch<TaskListItemDto[]>(`/projects/${projectId}/tasks`);
   return items.map(toTask);
 }
@@ -59,7 +59,7 @@ export interface CreateTaskInput {
   description?: string;
 }
 
-export async function createTask(input: CreateTaskInput, projectId: string = DEMO_PROJECT_ID): Promise<Task> {
+export async function createTask(input: CreateTaskInput, projectId: number = DEMO_PROJECT_ID): Promise<Task> {
   const dto = await apiFetch<TaskListItemDto>(`/projects/${projectId}/tasks`, {
     method: "POST",
     body: JSON.stringify(input),
@@ -71,7 +71,7 @@ export async function updateTaskPosition(
   taskId: string,
   status: TaskStatus,
   position: number,
-  projectId: string = DEMO_PROJECT_ID
+  projectId: number = DEMO_PROJECT_ID
 ): Promise<Task> {
   const dto = await apiFetch<TaskListItemDto>(`/projects/${projectId}/tasks/${taskId}/position`, {
     method: "PATCH",
@@ -89,7 +89,7 @@ export interface UpdateTaskInput {
   description?: string;
 }
 
-export async function updateTask(taskId: string, input: UpdateTaskInput, projectId: string = DEMO_PROJECT_ID): Promise<Task> {
+export async function updateTask(taskId: string, input: UpdateTaskInput, projectId: number = DEMO_PROJECT_ID): Promise<Task> {
   const dto = await apiFetch<TaskListItemDto>(`/projects/${projectId}/tasks/${taskId}`, {
     method: "PATCH",
     body: JSON.stringify(input),
@@ -97,6 +97,6 @@ export async function updateTask(taskId: string, input: UpdateTaskInput, project
   return toTask(dto);
 }
 
-export async function deleteTask(taskId: string, projectId: string = DEMO_PROJECT_ID): Promise<void> {
+export async function deleteTask(taskId: string, projectId: number = DEMO_PROJECT_ID): Promise<void> {
   await apiFetch<null>(`/projects/${projectId}/tasks/${taskId}`, { method: "DELETE" });
 }

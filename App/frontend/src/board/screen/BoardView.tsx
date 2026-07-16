@@ -1,20 +1,30 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import { DndProvider } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { RefreshCw } from "lucide-react";
 import { BoardToolbar } from "../components/BoardToolbar";
+import { BoardFilterBar } from "../components/BoardFilterBar";
 import { KanbanBoard } from "../components/KanbanBoard";
 import { TaskDetailPanel } from "../components/TaskDetailPanel";
 import { AddTaskModal } from "../components/AddTaskModal";
 import { EditTaskModal } from "../components/EditTaskModal";
-import { fetchTasks, updateTaskPosition, deleteTask } from "../libs/utils/taskApi";
+import { fetchTasks, updateTaskPosition, deleteTask, DEMO_PROJECT_ID } from "../libs/utils/taskApi";
 import { NEXT_STATUS } from "../libs/utils/taskActions";
 import { reorderTasks } from "../libs/utils/taskService";
+import { useAuth } from "../../global/hooks/useAuth";
 import type { Task, TaskStatus } from "../libs/types/task";
 
+const FILTER_PARAMS = ["assignee", "priority", "category"] as const;
+
+function parseFilterParam(searchParams: URLSearchParams, key: string): string[] {
+  return searchParams.get(key)?.split(",").filter(Boolean) ?? [];
+}
+
 export function BoardView() {
+  const { currentProjectId } = useAuth();
+  const projectId = currentProjectId ?? DEMO_PROJECT_ID;
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [searchParams, setSearchParams] = useSearchParams();
@@ -26,17 +36,43 @@ export function BoardView() {
 
   const selTask = selId ? tasks.find((t) => t.id === selId) ?? null : null;
 
+  const assigneeFilter = useMemo(() => parseFilterParam(searchParams, "assignee"), [searchParams]);
+  const priorityFilter = useMemo(() => parseFilterParam(searchParams, "priority"), [searchParams]);
+  const categoryFilter = useMemo(() => parseFilterParam(searchParams, "category"), [searchParams]);
+
+  const filteredTasks = useMemo(() => tasks.filter((t) =>
+    (assigneeFilter.length === 0 || assigneeFilter.includes(t.assignee)) &&
+    (priorityFilter.length === 0 || priorityFilter.includes(t.priority)) &&
+    (categoryFilter.length === 0 || categoryFilter.includes(t.category))
+  ), [tasks, assigneeFilter, priorityFilter, categoryFilter]);
+
+  const toggleFilterValue = (key: (typeof FILTER_PARAMS)[number], value: string) => {
+    const current = parseFilterParam(searchParams, key);
+    const next = current.includes(value) ? current.filter((v) => v !== value) : [...current, value];
+    const nextParams = new URLSearchParams(searchParams);
+    if (next.length > 0) nextParams.set(key, next.join(","));
+    else nextParams.delete(key);
+    setSearchParams(nextParams, { replace: true });
+  };
+
+  const resetFilters = () => {
+    const nextParams = new URLSearchParams(searchParams);
+    FILTER_PARAMS.forEach((key) => nextParams.delete(key));
+    setSearchParams(nextParams, { replace: true });
+  };
+
   const loadTasks = useCallback(() => {
     setLoadState("loading");
-    fetchTasks()
+    fetchTasks(projectId)
       .then((result) => {
         setTasks(result);
         setLoadState("ready");
       })
       .catch(() => setLoadState("error"));
-  }, []);
+  }, [projectId]);
 
   // 다른 팀원의 변경사항은 실시간으로 반영되지 않고, 이 화면에 새로 들어오거나 새로고침할 때만 반영된다.
+  // projectId가 바뀌면(사이드바에서 프로젝트 전환) 그 프로젝트의 업무로 다시 불러온다.
   useEffect(() => {
     loadTasks();
   }, [loadTasks]);
@@ -80,7 +116,7 @@ export function BoardView() {
     setTasks(result.next);
 
     try {
-      await updateTaskPosition(taskId, targetStatus, result.newPosition);
+      await updateTaskPosition(taskId, targetStatus, result.newPosition, projectId);
     } catch {
       setTasks(prevTasks);
       showToast("이동에 실패했습니다. 다시 시도해주세요.");
@@ -118,7 +154,7 @@ export function BoardView() {
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
     setSelId((prev) => (prev === taskId ? null : prev));
     try {
-      await deleteTask(taskId);
+      await deleteTask(taskId, projectId);
     } catch {
       setTasks(prevTasks);
       showToast("업무 삭제에 실패했습니다. 다시 시도해주세요.");
@@ -149,6 +185,17 @@ export function BoardView() {
         )}
 
         <BoardToolbar tasks={tasks} compact={workspaceMode} onAddTask={openModal} />
+        <BoardFilterBar
+          assigneeFilter={assigneeFilter}
+          priorityFilter={priorityFilter}
+          categoryFilter={categoryFilter}
+          onToggleAssignee={(id) => toggleFilterValue("assignee", id)}
+          onTogglePriority={(level) => toggleFilterValue("priority", level)}
+          onToggleCategory={(id) => toggleFilterValue("category", id)}
+          onReset={resetFilters}
+          totalCount={tasks.length}
+          filteredCount={filteredTasks.length}
+        />
 
         <div className="flex-1 overflow-hidden min-h-0">
           {loadState === "loading" && (
@@ -171,7 +218,7 @@ export function BoardView() {
               <PanelGroup direction="horizontal">
                 <Panel defaultSize={68} minSize={40} className="min-w-0">
                   <KanbanBoard
-                    tasks={tasks}
+                    tasks={filteredTasks}
                     compact
                     selectedId={selId}
                     onSelectTask={handleSelectTask}
@@ -196,7 +243,7 @@ export function BoardView() {
               </PanelGroup>
             ) : (
               <KanbanBoard
-                tasks={tasks}
+                tasks={filteredTasks}
                 compact={false}
                 selectedId={selId}
                 onSelectTask={handleSelectTask}

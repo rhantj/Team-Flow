@@ -18,6 +18,7 @@ import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -35,16 +36,19 @@ public class AuthController {
     private final AuthService authService;
     private final String frontendBaseUrl;
     private final boolean secureCookies;
+    private final boolean devLoginEnabled;
 
     public AuthController(
         GoogleOAuthService googleOAuthService,
         AuthService authService,
-        @Value("${workflow.frontend.base-url}") String frontendBaseUrl
+        @Value("${workflow.frontend.base-url}") String frontendBaseUrl,
+        @Value("${workflow.demo.dev-login-enabled:true}") boolean devLoginEnabled
     ) {
         this.googleOAuthService = googleOAuthService;
         this.authService = authService;
         this.frontendBaseUrl = frontendBaseUrl;
         this.secureCookies = frontendBaseUrl.startsWith("https://");
+        this.devLoginEnabled = devLoginEnabled;
     }
 
     @Operation(summary = "Google OAuth 인가 URL로 리다이렉트")
@@ -88,6 +92,28 @@ public class AuthController {
         } catch (Exception e) {
             log.warn("Google OAuth 콜백 처리 실패", e);
             return redirectToFrontend("/login?error=oauth_failed", clearStateCookie);
+        }
+    }
+
+    @Operation(
+        summary = "[개발용] 데모 계정으로 즉시 로그인",
+        description = "Google OAuth 없이 시딩된 데모 계정(demoUserId: 1~4)으로 바로 로그인한다. "
+            + "workflow.demo.dev-login-enabled=false(프로덕션 기본값)이면 404를 반환한다."
+    )
+    @GetMapping("/dev-login/{demoUserId}")
+    public ResponseEntity<Void> devLogin(@PathVariable String demoUserId) {
+        if (!devLoginEnabled) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+        try {
+            AuthTokenResponse tokens = authService.devLogin(demoUserId);
+            String fragment = "accessToken=" + encode(tokens.accessToken())
+                + "&refreshToken=" + encode(tokens.refreshToken())
+                + "&expiresIn=" + tokens.expiresIn();
+            return redirectToFrontend("/auth/callback#" + fragment, stateCookie("", Duration.ZERO));
+        } catch (Exception e) {
+            log.warn("데모 로그인 실패: {}", demoUserId, e);
+            return redirectToFrontend("/login?error=oauth_failed", stateCookie("", Duration.ZERO));
         }
     }
 

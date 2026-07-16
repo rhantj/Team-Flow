@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { CATEGORIES } from "../libs/mock/tasks";
 import { getCat } from "../libs/utils/taskService";
-import { updateTask } from "../libs/utils/taskApi";
+import { updateTask, DEMO_PROJECT_ID } from "../libs/utils/taskApi";
 import { MEMBERS } from "../../global/lib/mock/members";
+import { useAuth } from "../../global/hooks/useAuth";
 import type { Priority, Task } from "../libs/types/task";
 
 interface EditTaskModalProps {
@@ -13,6 +14,7 @@ interface EditTaskModalProps {
 }
 
 export function EditTaskModal({ task, onClose, onUpdated }: EditTaskModalProps) {
+  const { currentProjectId } = useAuth();
   const [selCat, setSelCat] = useState("");
   const [customCat, setCustomCat] = useState("");
   const [title, setTitle] = useState("");
@@ -54,7 +56,7 @@ export function EditTaskModal({ task, onClose, onUpdated }: EditTaskModalProps) 
         dueDate: dueDate || undefined,
         priority,
         description: description.trim() || undefined,
-      });
+      }, currentProjectId ?? DEMO_PROJECT_ID);
       onUpdated(updated);
     } catch {
       setError("수정에 실패했습니다. 잠시 후 다시 시도해주세요.");

@@ -26,3 +26,4 @@ spring:
 workflow:
   demo:
     seed-enabled: ${WORKFLOW_DEMO_SEED_ENABLED:false}
+    dev-login-enabled: ${WORKFLOW_DEMO_DEV_LOGIN_ENABLED:false}
