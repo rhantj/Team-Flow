@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { ChevronRight, Search, Calendar, Bell, LogOut } from "lucide-react";
+import { ChevronRight, Search, Calendar, Bell, LogOut, Menu } from "lucide-react";
 import { MEMBERS } from "../../lib/mock/members";
 import { TAB_TITLES } from "../../lib/constants/nav";
 import type { Tab } from "../../../board/libs/types/task";
 import { useStoredNotifications, markNotificationsRead } from "../../../board/libs/utils/activityStore";
 import { useAuth } from "../../hooks/useAuth";
 import type { ProjectRoleKo } from "../../api/authTypes";
+import { useIsMobile } from "../ui/use-mobile";
 
 const CURRENT_USER = MEMBERS[0];
 
@@ -23,9 +24,10 @@ const DETAIL_TITLES: Record<string, string> = {
   "workload": "팀원별 업무량", "activity": "최근 활동",
 };
 
-export function Header() {
+export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const isMobile = useIsMobile();
   const [searchOpen, setSearchOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const { currentProject, logout } = useAuth();
@@ -46,6 +48,15 @@ export function Header() {
   return (
     <header className="h-14 bg-card border-b border-border flex items-center justify-between px-6 shrink-0 shadow-sm">
       <div className="flex items-center gap-2 text-sm min-w-0">
+        {isMobile && (
+          <button
+            onClick={onOpenMobileMenu}
+            aria-label="메뉴 열기"
+            className="mr-1 p-1.5 rounded-lg hover:bg-muted transition-colors shrink-0"
+          >
+            <Menu className="w-4 h-4 text-muted-foreground" />
+          </button>
+        )}
         <span className="text-muted-foreground">TeamFlow AI</span>
         <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
         <span className="text-muted-foreground truncate max-w-[220px]">{currentProjectName || "스마트 주차 관리 시스템"}</span>
