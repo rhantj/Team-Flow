@@ -48,6 +48,12 @@ workflow:
     redirect-uri: ${GOOGLE_REDIRECT_URI:http://localhost:8080/api/v1/auth/google/callback}
   frontend:
     base-url: ${WORKFLOW_FRONTEND_BASE_URL:http://localhost:5173}
+  security:
+    # request.isSecure()는 tomcat.remoteip.internal-proxies에 해당하는(기본: 사설 대역) 프록시를
+    # 통해 왔을 때만 X-Forwarded-Proto를 신뢰한다. 프록시가 그 대역 밖(예: 퍼블릭 IP 클라우드
+    # 로드밸런서)에 있어 isSecure()가 항상 false로 나오는 배포라면, IP 대역을 알아내 맞추는 대신
+    # 이 값을 true로 켜서 OAuth state 쿠키에 Secure 속성을 강제로 붙인다.
+    force-secure-cookies: ${WORKFLOW_FORCE_SECURE_COOKIES:false}
   demo:
     seed-enabled: ${WORKFLOW_DEMO_SEED_ENABLED:true}
   uploads:

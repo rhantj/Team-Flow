@@ -36,15 +36,18 @@ public class AuthController {
     private final GoogleOAuthService googleOAuthService;
     private final AuthService authService;
     private final String frontendBaseUrl;
+    private final boolean forceSecureCookies;
 
     public AuthController(
         GoogleOAuthService googleOAuthService,
         AuthService authService,
-        @Value("${workflow.frontend.base-url}") String frontendBaseUrl
+        @Value("${workflow.frontend.base-url}") String frontendBaseUrl,
+        @Value("${workflow.security.force-secure-cookies:false}") boolean forceSecureCookies
     ) {
         this.googleOAuthService = googleOAuthService;
         this.authService = authService;
         this.frontendBaseUrl = frontendBaseUrl;
+        this.forceSecureCookies = forceSecureCookies;
     }
 
     @Operation(summary = "Google OAuth 인가 URL로 리다이렉트")
@@ -118,7 +121,7 @@ public class AuthController {
     private ResponseCookie stateCookie(String value, Duration maxAge, HttpServletRequest request) {
         return ResponseCookie.from(STATE_COOKIE, value)
             .httpOnly(true)
-            .secure(request.isSecure())
+            .secure(forceSecureCookies || request.isSecure())
             .sameSite("Lax")
             .path("/api/v1/auth")
             .maxAge(maxAge)
