@@ -1,13 +1,18 @@
 package com.workflowai.task;
 
+import com.workflowai.activity.ActivityService;
 import com.workflowai.common.ApiResponse;
 import com.workflowai.common.DemoDataService;
+import com.workflowai.user.User;
+import com.workflowai.user.UserRepository;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,12 +27,38 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/projects/{projectId}/tasks")
 public class TaskController {
-    private final TaskRepository taskRepository;
-    private final DemoDataService demoDataService;
+    private static final Map<String, String> STATUS_LABELS = Map.of(
+        "todo", "할 일",
+        "inprogress", "진행 중",
+        "blocked", "보류/블로커",
+        "done", "완료"
+    );
 
-    public TaskController(TaskRepository taskRepository, DemoDataService demoDataService) {
+    private final TaskRepository taskRepository;
+    private final UserRepository userRepository;
+    private final DemoDataService demoDataService;
+    private final ActivityService activityService;
+
+    public TaskController(
+        TaskRepository taskRepository,
+        UserRepository userRepository,
+        DemoDataService demoDataService,
+        ActivityService activityService
+    ) {
         this.taskRepository = taskRepository;
+        this.userRepository = userRepository;
         this.demoDataService = demoDataService;
+        this.activityService = activityService;
+    }
+
+    // TODO: 로그인이 없어 활동 로그의 행위자를 항상 mock 사용자 "1"로 남긴다. 실제 인증이 붙으면 로그인 사용자로 교체.
+    private Long currentActorId() {
+        return demoDataService.resolveUserId("1");
+    }
+
+    private String userName(Long userId) {
+        if (userId == null) return "알 수 없음";
+        return userRepository.findById(userId).map(User::getName).orElse("알 수 없음");
     }
 
     @Operation(
@@ -76,8 +107,7 @@ public class TaskController {
             return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_DUE_DATE", "dueDate는 YYYY-MM-DD 형식이어야 합니다."));
         }
 
-        // TODO: "1"은 로그인한 사용자가 없어 임시로 쓰는 mock 담당자 id다. 실제 인증이 붙으면 로그인 사용자 id로 교체.
-        Long createdBy = demoDataService.resolveUserId("1");
+        Long createdBy = currentActorId();
         String status = request.status() == null ? "todo" : request.status();
         // category는 DB NOT NULL이라 누락 시 저장 단계에서 예외가 나기 전에 기본값으로 방어한다.
         String category = defaultString(request.category(), "other");
@@ -95,6 +125,7 @@ public class TaskController {
             createdBy,
             nextAppendPosition(projectDbId, status)
         ));
+        activityService.record(projectDbId, createdBy, "TASK_CREATED", task.getId(), "'" + task.getTitle() + "' 업무를 새로 추가했습니다.");
         return ResponseEntity.ok(ApiResponse.ok(TaskListItem.from(task)));
     }
 
@@ -113,8 +144,16 @@ public class TaskController {
         if (task == null || !task.getProjectId().equals(projectDbId)) {
             return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
         }
+        String previousStatus = task.getStatus();
         task.moveTo(request.status(), request.position());
         taskRepository.save(task);
+        if (!previousStatus.equals(task.getStatus())) {
+            String label = STATUS_LABELS.getOrDefault(task.getStatus(), task.getStatus());
+            activityService.record(
+                projectDbId, currentActorId(), "STATUS_CHANGED", task.getId(),
+                "'" + task.getTitle() + "' 상태를 '" + label + "'(으)로 변경했습니다."
+            );
+        }
         return ResponseEntity.ok(ApiResponse.ok(TaskListItem.from(task)));
     }
 
@@ -128,6 +167,10 @@ public class TaskController {
         @Parameter(description = "업무 ID") @PathVariable Long taskId,
         @RequestBody TaskUpdateRequest request
     ) {
+        if (request.title() != null && request.title().isBlank()) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("TITLE_REQUIRED", "업무 제목은 비워둘 수 없습니다."));
+        }
+
         Long projectDbId = demoDataService.resolveProjectId(projectId);
         Task task = taskRepository.findById(taskId).orElse(null);
         if (task == null || !task.getProjectId().equals(projectDbId)) {
@@ -141,15 +184,33 @@ public class TaskController {
             return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_DUE_DATE", "dueDate는 YYYY-MM-DD 형식이어야 합니다."));
         }
 
-        task.applyUpdate(
-            request.title(),
-            request.category(),
-            request.assigneeId() == null ? null : demoDataService.resolveUserId(request.assigneeId()),
-            dueDate,
-            request.priority(),
-            request.description()
-        );
+        String titleBefore = task.getTitle();
+        String categoryBefore = task.getCategory();
+        Long assigneeBefore = task.getAssigneeId();
+        LocalDate dueDateBefore = task.getDueDate();
+        String priorityBefore = task.getPriority();
+        String descriptionBefore = task.getDescription();
+
+        Long newAssigneeId = request.assigneeId() == null ? null : demoDataService.resolveUserId(request.assigneeId());
+        task.applyUpdate(request.title(), request.category(), newAssigneeId, dueDate, request.priority(), request.description());
         taskRepository.save(task);
+
+        Long actorId = currentActorId();
+        boolean assigneeChanged = !Objects.equals(assigneeBefore, task.getAssigneeId());
+        boolean otherFieldsChanged = !Objects.equals(titleBefore, task.getTitle())
+            || !Objects.equals(categoryBefore, task.getCategory())
+            || !Objects.equals(dueDateBefore, task.getDueDate())
+            || !Objects.equals(priorityBefore, task.getPriority())
+            || !Objects.equals(descriptionBefore, task.getDescription());
+        if (assigneeChanged) {
+            activityService.record(
+                projectDbId, actorId, "ASSIGNEE_CHANGED", task.getId(),
+                "담당자를 '" + userName(task.getAssigneeId()) + "'(으)로 변경했습니다."
+            );
+        }
+        if (otherFieldsChanged) {
+            activityService.record(projectDbId, actorId, "TASK_UPDATED", task.getId(), "'" + task.getTitle() + "' 업무 정보를 수정했습니다.");
+        }
         return ResponseEntity.ok(ApiResponse.ok(TaskListItem.from(task)));
     }
 
@@ -167,6 +228,8 @@ public class TaskController {
         if (task == null || !task.getProjectId().equals(projectDbId)) {
             return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
         }
+        // 삭제되면 상세 화면이 바로 닫혀서 이 업무 자체의 피드에는 안 보이지만, 프로젝트 전체 활동 로그를 위해 남겨둔다.
+        activityService.record(projectDbId, currentActorId(), "TASK_DELETED", task.getId(), "'" + task.getTitle() + "' 업무를 삭제했습니다.");
         taskRepository.delete(task);
         return ResponseEntity.ok(ApiResponse.ok(null));
     }

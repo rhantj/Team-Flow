@@ -1,14 +1,5 @@
 import { useEffect, useState } from "react";
 
-export interface Comment {
-  id: string;
-  taskId: string;
-  authorId: string;
-  authorName: string;
-  text: string;
-  createdAt: string;
-}
-
 export interface AppNotification {
   id: string;
   recipientId: string;
@@ -23,13 +14,13 @@ export interface ActivityEntry {
   actorName: string;
   message: string;
   createdAt: string;
-  type: "comment" | "status" | "task-created" | "task-deleted" | "meeting-registered";
+  type: "comment" | "status" | "task-created" | "task-updated" | "task-deleted" | "meeting-registered";
+  /** 특정 업무에 대한 활동이면 그 업무 id. 여러 업무를 한 번에 등록하는 것처럼 특정 업무 하나로 못 좁히면 비워둔다. */
+  taskId?: string;
 }
 
-const COMMENT_STORAGE_KEY = "workflow-ai.comments";
 const NOTIFICATION_STORAGE_KEY = "workflow-ai.notifications";
 const ACTIVITY_STORAGE_KEY = "workflow-ai.activity";
-const COMMENTS_UPDATED_EVENT = "workflow-ai:comments-updated";
 const NOTIFICATIONS_UPDATED_EVENT = "workflow-ai:notifications-updated";
 const ACTIVITY_UPDATED_EVENT = "workflow-ai:activity-updated";
 
@@ -51,9 +42,6 @@ function writeStoredArray<T>(key: string, eventName: string, value: T[]): void {
   window.dispatchEvent(new Event(eventName));
 }
 
-export const getStoredComments = () => readStoredArray<Comment>(COMMENT_STORAGE_KEY);
-export const saveStoredComments = (comments: Comment[]) => writeStoredArray(COMMENT_STORAGE_KEY, COMMENTS_UPDATED_EVENT, comments);
-
 export const getStoredNotifications = () => readStoredArray<AppNotification>(NOTIFICATION_STORAGE_KEY);
 export const saveStoredNotifications = (notifications: AppNotification[]) =>
   writeStoredArray(NOTIFICATION_STORAGE_KEY, NOTIFICATIONS_UPDATED_EVENT, notifications);
@@ -61,8 +49,8 @@ export const saveStoredNotifications = (notifications: AppNotification[]) =>
 export const getStoredActivity = () => readStoredArray<ActivityEntry>(ACTIVITY_STORAGE_KEY);
 export const saveStoredActivity = (entries: ActivityEntry[]) => writeStoredArray(ACTIVITY_STORAGE_KEY, ACTIVITY_UPDATED_EVENT, entries);
 
-export const addActivity = (message: string, actorName: string, type: ActivityEntry["type"]): void => {
-  const entry: ActivityEntry = { id: `ACT-${Date.now()}`, actorName, message, type, createdAt: new Date().toISOString() };
+export const addActivity = (message: string, actorName: string, type: ActivityEntry["type"], taskId?: string): void => {
+  const entry: ActivityEntry = { id: `ACT-${Date.now()}`, actorName, message, type, taskId, createdAt: new Date().toISOString() };
   saveStoredActivity([entry, ...getStoredActivity()].slice(0, 50));
 };
 
@@ -71,12 +59,6 @@ export const addNotification = (recipientId: string, message: string, taskId?: s
     id: `NOTI-${Date.now()}`, recipientId, message, taskId, createdAt: new Date().toISOString(), read: false,
   };
   saveStoredNotifications([notification, ...getStoredNotifications()].slice(0, 50));
-};
-
-export const addComment = (taskId: string, authorId: string, authorName: string, text: string): Comment => {
-  const comment: Comment = { id: `CMT-${Date.now()}`, taskId, authorId, authorName, text, createdAt: new Date().toISOString() };
-  saveStoredComments([comment, ...getStoredComments()]);
-  return comment;
 };
 
 export const markNotificationsRead = (): void => {
@@ -97,6 +79,5 @@ function useStoredArray<T>(getter: () => T[], eventName: string): T[] {
   return value;
 }
 
-export const useStoredComments = () => useStoredArray(getStoredComments, COMMENTS_UPDATED_EVENT);
 export const useStoredNotifications = () => useStoredArray(getStoredNotifications, NOTIFICATIONS_UPDATED_EVENT);
 export const useStoredActivity = () => useStoredArray(getStoredActivity, ACTIVITY_UPDATED_EVENT);

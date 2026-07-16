@@ -1,10 +1,15 @@
 import { CATEGORIES, TASKS } from "../mock/tasks";
-import type { CategoryDef, ChecklistItem, Task, TaskStatus } from "../types/task";
+import type { CategoryDef, Task, TaskStatus } from "../types/task";
 
 // 회의록 AI 등 다른 경로로 생성된 업무는 카테고리가 "QA"처럼 대문자일 수 있어 소문자로 맞춰 비교한다.
+// "기타"를 고르고 직접 입력한 카테고리명처럼 알려진 18종과 매칭되지 않는 값은,
+// "기타"의 아이콘/색상은 그대로 쓰되 라벨만 실제 입력값으로 바꿔서 화면에 그대로 보여준다.
 export function getCat(id: string): CategoryDef {
   const normalized = (id ?? "").toLowerCase();
-  return CATEGORIES.find(c => c.id === normalized) ?? CATEGORIES[CATEGORIES.length - 1];
+  const matched = CATEGORIES.find(c => c.id === normalized);
+  if (matched) return matched;
+  const other = CATEGORIES[CATEGORIES.length - 1];
+  return id ? { ...other, label: id } : other;
 }
 
 // Task.dueDate는 내부적으로 ISO(YYYY-MM-DD)를 쓰고, 화면 표시할 때만 이 함수로 "M.D" 형태로 변환한다.
@@ -13,16 +18,6 @@ export function formatDueDate(iso: string): string {
   const [, month, day] = iso.split("-");
   if (!month || !day) return iso;
   return `${month}.${day}`;
-}
-
-const DEFAULT_CHECKLIST_LABELS = ["설계 문서 확인", "구현 완료", "코드 리뷰 완료", "QA 통과"];
-
-export function buildDefaultChecklist(taskId: string, status: TaskStatus): ChecklistItem[] {
-  return DEFAULT_CHECKLIST_LABELS.map((label, i) => ({
-    id: `${taskId}-CHK-${i}`,
-    label,
-    done: status === "done" && i < 3,
-  }));
 }
 
 export function getTasksByStatus(status: TaskStatus, tasks: Task[] = TASKS): Task[] {

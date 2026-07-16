@@ -8,23 +8,20 @@ import { BoardToolbar } from "../components/BoardToolbar";
 import { KanbanBoard } from "../components/KanbanBoard";
 import { TaskDetailPanel } from "../components/TaskDetailPanel";
 import { AddTaskModal } from "../components/AddTaskModal";
+import { EditTaskModal } from "../components/EditTaskModal";
 import { fetchTasks, updateTaskPosition, deleteTask } from "../libs/utils/taskApi";
-import { useStoredComments, addActivity } from "../libs/utils/activityStore";
-import { STATUS_LABELS, NEXT_STATUS } from "../libs/utils/taskActions";
-import { buildDefaultChecklist, reorderTasks } from "../libs/utils/taskService";
-import { MEMBERS } from "../../global/lib/mock/members";
+import { NEXT_STATUS } from "../libs/utils/taskActions";
+import { reorderTasks } from "../libs/utils/taskService";
 import type { Task, TaskStatus } from "../libs/types/task";
-
-const CURRENT_USER = MEMBERS[0];
 
 export function BoardView() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
-  const comments = useStoredComments();
   const [searchParams, setSearchParams] = useSearchParams();
   const [selId, setSelId] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [modalStatus, setModalStatus] = useState<TaskStatus>("todo");
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const selTask = selId ? tasks.find((t) => t.id === selId) ?? null : null;
@@ -66,12 +63,11 @@ export function BoardView() {
 
   const handleTaskCreated = (task: Task) => {
     setTasks((prev) => [task, ...prev]);
-    addActivity(`'${task.title}' 업무를 새로 추가했습니다.`, CURRENT_USER.name, "task-created");
   };
 
-  // 체크리스트/코멘트/활동은 아직 백엔드에 연동되지 않아 이 브라우저에서만 유지된다(후속 작업).
-  const patchTaskLocal = (taskId: string, patch: Partial<Task>) => {
-    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, ...patch } : t)));
+  const handleTaskUpdated = (updated: Task) => {
+    setTasks((prev) => prev.map((t) => (t.id === updated.id ? { ...t, ...updated } : t)));
+    setEditingTask(null);
   };
 
   // 업무를 targetStatus 컬럼의 insertAtIndex 위치로 옮긴다(같은 컬럼 안 재정렬 + 다른 컬럼으로 이동 모두 이 함수 하나로 처리).
@@ -83,12 +79,8 @@ export function BoardView() {
     const prevTasks = tasks;
     setTasks(result.next);
 
-    const statusChanged = dragged.status !== targetStatus;
     try {
       await updateTaskPosition(taskId, targetStatus, result.newPosition);
-      if (statusChanged) {
-        addActivity(`'${dragged.title}' 상태를 '${STATUS_LABELS[targetStatus]}'(으)로 변경`, CURRENT_USER.name, "status");
-      }
     } catch {
       setTasks(prevTasks);
       showToast("이동에 실패했습니다. 다시 시도해주세요.");
@@ -97,13 +89,6 @@ export function BoardView() {
 
   const handleSelectTask = (id: string) => {
     setSelId((prev) => (prev === id ? null : id));
-  };
-
-  const handleToggleChecklistItem = (itemId: string) => {
-    if (!selTask) return;
-    const checklist = selTask.checklist ?? buildDefaultChecklist(selTask.id, selTask.status);
-    const updated = checklist.map((item) => (item.id === itemId ? { ...item, done: !item.done } : item));
-    patchTaskLocal(selTask.id, { checklist: updated });
   };
 
   const handleQuickAction = (label: string, isPrimary: boolean) => {
@@ -134,7 +119,6 @@ export function BoardView() {
     setSelId((prev) => (prev === taskId ? null : prev));
     try {
       await deleteTask(taskId);
-      addActivity(`'${task.title}' 업무를 삭제했습니다.`, CURRENT_USER.name, "task-deleted");
     } catch {
       setTasks(prevTasks);
       showToast("업무 삭제에 실패했습니다. 다시 시도해주세요.");
@@ -202,12 +186,11 @@ export function BoardView() {
                 <Panel defaultSize={32} minSize={24} maxSize={50} className="min-w-0">
                   <TaskDetailPanel
                     task={selTask}
-                    comments={comments}
                     onClose={() => setSelId(null)}
                     onQuickAction={handleQuickAction}
-                    onToggleChecklistItem={handleToggleChecklistItem}
                     onShowToast={showToast}
                     onDeleteTask={handleDeleteTask}
+                    onEditTask={() => setEditingTask(selTask)}
                   />
                 </Panel>
               </PanelGroup>
@@ -226,6 +209,7 @@ export function BoardView() {
         </div>
 
         <AddTaskModal open={showModal} initialStatus={modalStatus} onClose={() => setShowModal(false)} onCreated={handleTaskCreated} />
+        <EditTaskModal task={editingTask} onClose={() => setEditingTask(null)} onUpdated={handleTaskUpdated} />
       </div>
     </DndProvider>
   );
