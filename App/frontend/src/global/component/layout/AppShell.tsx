@@ -6,6 +6,7 @@ import { Header } from "./Header";
 import { AIAssistant } from "../../../ai/screen/AIAssistant";
 import type { Tab } from "../../../board/libs/types/task";
 import { useAuth } from "../../hooks/useAuth";
+import { useSidebarCollapsed } from "../../hooks/useSidebarCollapsed";
 
 const OPEN_AI_ASSISTANT_EVENT = "workflow-ai:open-ai-assistant";
 
@@ -14,6 +15,7 @@ export function AppShell() {
   const location = useLocation();
   const { projectRoles } = useAuth();
   const [aiOpen, setAIOpen] = useState(false);
+  const { collapsed, toggle: toggleCollapsed } = useSidebarCollapsed();
 
   useEffect(() => {
     const open = () => setAIOpen(true);
@@ -36,7 +38,14 @@ export function AppShell() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background" style={{ fontFamily: "'Inter', 'Noto Sans KR', sans-serif" }}>
-      <Sidebar active={activeTab} onSelect={(tab) => navigate(`/${tab}`)} onAI={() => setAIOpen(true)} />
+      <Sidebar
+        active={activeTab}
+        onSelect={(tab) => navigate(`/${tab}`)}
+        onAI={() => setAIOpen(true)}
+        collapsed={collapsed}
+        onToggleCollapsed={toggleCollapsed}
+        showCollapseToggle
+      />
 
       {/* Main */}
       <div className="flex-1 flex flex-col overflow-hidden">
