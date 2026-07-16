@@ -1,6 +1,5 @@
-import type { MeetingAiResult } from "../types/meetingAiTypes";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080/api/v1";
+import type { MeetingAiResult, MeetingAiTodo } from "../types/meetingAiTypes";
+import { apiFetch } from "../../../global/api/apiClient";
 
 interface AnalyzeMeetingParams {
   projectId: string;
@@ -10,12 +9,6 @@ interface AnalyzeMeetingParams {
   meetingKind: string;
   sourceType: "document" | "audio" | "video";
   participants: string[];
-}
-
-interface ApiEnvelope<T> {
-  success: boolean;
-  data: T;
-  error?: { code: string; message: string } | null;
 }
 
 interface MeetingAnalysisResponse {
@@ -37,18 +30,37 @@ export async function analyzeMeeting(params: AnalyzeMeetingParams): Promise<Meet
   formData.append("sourceType", params.sourceType);
   params.participants.forEach(participant => formData.append("participants", participant));
 
-  const response = await fetch(`${API_BASE_URL}/projects/${params.projectId}/meetings/analyze`, {
+  return apiFetch<MeetingAnalysisResponse>(`/projects/${params.projectId}/meetings/analyze`, {
     method: "POST",
     body: formData,
   });
+}
 
-  if (!response.ok) {
-    throw new Error(`Meeting analysis failed: ${response.status}`);
-  }
+export interface MeetingSummaryDto {
+  meetingId: string;
+  title: string;
+  meetingDate: string | null;
+  meetingType: string | null;
+  analysisStatus: string;
+}
 
-  const body = await response.json() as ApiEnvelope<MeetingAnalysisResponse>;
-  if (!body.success) {
-    throw new Error(body.error?.message ?? "Meeting analysis failed");
-  }
-  return body.data;
+export async function fetchMeetings(projectId: string): Promise<MeetingSummaryDto[]> {
+  return apiFetch<MeetingSummaryDto[]>(`/projects/${projectId}/meetings`);
+}
+
+export interface TaskRegisterResponseDto {
+  meetingId: string;
+  registeredCount: number;
+  boardStatus: string;
+}
+
+export async function registerMeetingTasks(
+  projectId: string,
+  meetingId: string,
+  todos: MeetingAiTodo[]
+): Promise<TaskRegisterResponseDto> {
+  return apiFetch<TaskRegisterResponseDto>(`/projects/${projectId}/meetings/${meetingId}/tasks/register`, {
+    method: "POST",
+    body: JSON.stringify({ todos }),
+  });
 }

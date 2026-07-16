@@ -58,6 +58,17 @@ public class MeetingAnalysisController {
     }
 
     @Operation(
+        summary = "회의록 목록 조회",
+        description = "프로젝트에 등록된 회의록 목록을 최신순으로 조회합니다."
+    )
+    @GetMapping
+    public ApiResponse<List<MeetingSummary>> getMeetings(
+        @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId
+    ) {
+        return ApiResponse.ok(meetingAnalysisService.findByProject(projectId));
+    }
+
+    @Operation(
         summary = "회의록 분석 결과 조회",
         description = "특정 회의록의 AI 분석 결과와 생성된 To-Do 후보 목록을 조회합니다."
     )

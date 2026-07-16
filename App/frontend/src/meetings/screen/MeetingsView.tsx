@@ -9,7 +9,7 @@ import { MEMBERS } from "../../global/lib/mock/members";
 import { CATEGORIES } from "../../board/libs/mock/tasks";
 import type { Meeting, UploadFlow, UploadType, GenTodo, SavedMeetingRecord } from "../libs/types/meeting";
 import type { CatId, Priority, Task } from "../../board/libs/types/task";
-import { analyzeMeeting } from "../libs/utils/meetingAiApi";
+import { analyzeMeeting, fetchMeetings, registerMeetingTasks } from "../libs/utils/meetingAiApi";
 import type { MeetingAiResult } from "../libs/types/meetingAiTypes";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
@@ -309,6 +309,7 @@ export function MeetingsView() {
   const [pdfExportMessage, setPdfExportMessage] = useState<string | null>(null);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [registerMessage, setRegisterMessage] = useState<string | null>(null);
+  const [meetingListError, setMeetingListError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pdfCaptureRef = useRef<HTMLDivElement | null>(null);
   const analyzeStages = getAnalyzeStages(uploadType);
@@ -337,6 +338,32 @@ export function MeetingsView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 서버에 저장된 회의록 목록을 가져와 로컬에 없는 항목만 보충한다.
+  // 실패해도 화면은 로컬 저장 목록으로 그대로 동작한다.
+  useEffect(() => {
+    fetchMeetings("demo-project")
+      .then(list => {
+        setMeetings(prev => {
+          const existingIds = new Set(prev.map(m => m.id));
+          const additions: Meeting[] = list
+            .filter(dto => !existingIds.has(dto.meetingId))
+            .map(dto => ({
+              id: dto.meetingId,
+              title: dto.title,
+              date: dto.meetingDate ?? "",
+              duration: dto.analysisStatus === "completed" ? "분석 완료" : dto.analysisStatus,
+              status: dto.analysisStatus === "completed" ? "processed" : dto.analysisStatus === "pending" ? "pending" : "processing",
+            }));
+          return additions.length === 0 ? prev : [...additions, ...prev];
+        });
+      })
+      .catch(() => {
+        setMeetingListError("서버에서 회의록 목록을 불러오지 못했습니다. 로컬 저장 목록만 표시됩니다.");
+        setTimeout(() => setMeetingListError(null), 4000);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const meeting = meetings.find(m => m.id === selected);
   // meetingId가 있으면 우선 사용, 없으면(review 화면에서 아직 meetings에 반영 전 등) meetTitle로 대체.
   const meetingIdentifier = meeting?.id || meetTitle;
@@ -352,6 +379,19 @@ export function MeetingsView() {
 
   const getAssignee = (todo: GenTodo): string => todoAssignees[todo.id] ?? todo.assignee;
   const getDueDate = (todo: GenTodo): string => todoDueDates[todo.id] ?? todo.dueDate;
+  const toApiTodo = (todo: GenTodo) => {
+    const assigneeId = getAssignee(todo);
+    return {
+      title: todo.title,
+      description: todo.desc,
+      assignee_candidate: "",
+      assignee_id: assigneeId || null,
+      due_date: getDueDate(todo) || null,
+      priority: todo.priority.toUpperCase() as "HIGH" | "MEDIUM" | "LOW",
+      category: todo.category,
+      needs_leader_review: !assigneeId,
+    };
+  };
 
   const generatedTodos = analysisResult ? buildGeneratedTodos(analysisResult) : [];
   const riskCards = analysisResult ? buildRiskCards(analysisResult.risks) : [];
@@ -564,7 +604,7 @@ export function MeetingsView() {
     });
   };
 
-  const registerSelectedTodos = () => {
+  const registerSelectedTodos = async () => {
     const existingTasks = getStoredTasks();
     const existingKeys = new Set(
       existingTasks.map(task => buildTodoRegistrationKey(task.sourceMeetingTitle ?? "", task.title, task.assignee, task.dueDate))
@@ -584,6 +624,16 @@ export function MeetingsView() {
       return;
     }
 
+    if (newTodos.length > 0) {
+      try {
+        await registerMeetingTasks("demo-project", meetingIdentifier, newTodos.map(todo => toApiTodo(todo)));
+      } catch {
+        setRegisterMessage("서버에 업무 등록을 실패했습니다. 다시 시도해주세요.");
+        setTimeout(() => setRegisterMessage(null), 2500);
+        return;
+      }
+    }
+
     const createdTasks: Task[] = newTodos.map((todo, index) => {
       const cat = getCat(todo.category);
       const sourceLabel = todo.source === "MEETING_AI" ? "회의록 AI" : "직접 추가";
@@ -594,6 +644,8 @@ export function MeetingsView() {
         priority: todo.priority,
         assignee: getAssignee(todo) || MEMBERS[0].id,
         dueDate: getDueDate(todo),
+        category: todo.category,
+        position: index,
         labels: [sourceLabel, cat.label],
         sourceMeetingTitle: meetingIdentifier,
       };
@@ -607,7 +659,7 @@ export function MeetingsView() {
   };
 
   // 회의 상세 화면(meeting.todos, 문자열 배열)에서 "업무로 등록" 클릭 시 실행.
-  const handleRegisterMeetingTodos = () => {
+  const handleRegisterMeetingTodos = async () => {
     if (!meeting || !meeting.todos || meeting.todos.length === 0) return;
     const existingTasks = getStoredTasks();
     const existingKeys = new Set(
@@ -631,6 +683,23 @@ export function MeetingsView() {
       return;
     }
 
+    try {
+      await registerMeetingTasks("demo-project", meetingIdentifier, newTodos.map(todo => ({
+        title: todo.title,
+        description: "",
+        assignee_candidate: todo.assigneeName,
+        assignee_id: todo.assigneeId,
+        due_date: todo.dueDate || null,
+        priority: "MEDIUM",
+        category: "ETC",
+        needs_leader_review: false,
+      })));
+    } catch {
+      setRegisterMessage("서버에 업무 등록을 실패했습니다. 다시 시도해주세요.");
+      setTimeout(() => setRegisterMessage(null), 2500);
+      return;
+    }
+
     const now = Date.now();
     const createdTasks: Task[] = newTodos.map((todo, index) => ({
       id: `AI-${now}-${String(index + 1).padStart(2, "0")}`,
@@ -639,6 +708,8 @@ export function MeetingsView() {
       priority: "medium",
       assignee: todo.assigneeId,
       dueDate: todo.dueDate,
+      category: "other",
+      position: index,
       labels: ["회의록 AI"],
       sourceMeetingTitle: meetingIdentifier,
     }));
@@ -1391,6 +1462,7 @@ export function MeetingsView() {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          {meetingListError && <div className="text-[11px] text-amber-600 px-1">{meetingListError}</div>}
           {meetings.length === 0 ? (
             <div className="h-full min-h-[360px] flex flex-col items-center justify-center text-center px-4 text-muted-foreground">
               <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-4">

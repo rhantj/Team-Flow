@@ -43,6 +43,11 @@ public class Project {
         this.description = description;
     }
 
+    /** deadline 없이 생성하는 편의 생성자 (예: DemoDataService의 데모 시딩). */
+    public Project(String title, String type, String description) {
+        this(title, type, null, description);
+    }
+
     @jakarta.persistence.PrePersist
     void onCreate() {
         LocalDateTime now = LocalDateTime.now();

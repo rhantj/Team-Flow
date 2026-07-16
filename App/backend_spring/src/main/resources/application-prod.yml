@@ -9,3 +9,15 @@ logging:
   level:
     root: INFO
     org.springframework.web: WARN
+
+spring:
+  datasource:
+    hikari:
+      initialization-fail-timeout: ${SPRING_DATASOURCE_INIT_FAIL_TIMEOUT:0}
+  jpa:
+    hibernate:
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:none}
+
+workflow:
+  demo:
+    seed-enabled: ${WORKFLOW_DEMO_SEED_ENABLED:false}

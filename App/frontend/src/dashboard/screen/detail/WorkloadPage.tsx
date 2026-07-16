@@ -2,9 +2,11 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import { BackBtn } from "../../../global/component/BackBtn";
 import { TaskStatusPill } from "../../../board/components/TaskStatusPill";
+import { PriorityBadge } from "../../../board/components/PriorityBadge";
 import { useStoredTasks } from "../../../global/hooks/useStoredTasks";
 import { MEMBERS } from "../../../global/lib/mock/members";
 import { WORKLOAD_DATA } from "../../libs/mock/workload";
+import { formatDueDate } from "../../../board/libs/utils/taskService";
 import {
   BarChart,
   Bar,
@@ -192,7 +194,7 @@ export function WorkloadPage() {
                   <span className="flex-1 text-xs font-medium text-foreground truncate">{task.title}</span>
                   <TaskStatusPill status={task.status} />
                   <PriorityBadge priority={task.priority} />
-                  <span className="text-xs text-muted-foreground w-10 text-right">{task.dueDate}</span>
+                  <span className="text-xs text-muted-foreground w-10 text-right">{formatDueDate(task.dueDate)}</span>
                   <button className="text-[11px] font-medium text-blue-600 hover:text-blue-700 whitespace-nowrap">재배정</button>
                 </div>
               ))}

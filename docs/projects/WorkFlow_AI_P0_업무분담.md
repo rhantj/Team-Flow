@@ -47,6 +47,7 @@
 - **스택**: Spring Boot 3.5 + Spring Security 6.5, JWT(jjwt 0.13), React 19 + Vite 7
 - **개발 순서**: `users`/`project_members` 스키마 → 회원가입·로그인 API → JWT 발급/검증 필터 → 역할(팀장/팀원/심사자) RBAC 가드 → React 로그인·마이페이지·역할별 라우팅
 - **핵심**: 모든 API의 인증·권한 기반을 먼저 완성해야 다른 오너가 붙는다. `@PreAuthorize`로 역할 검증, 프론트는 라우트 가드로 역할별 화면 분기.
+- **프론트 구현 현황**: 로그인 화면에 심사자 데모 로그인 버튼 추가, 로그인 후 프로젝트 진입 화면(`ProjectEntryScreen`)으로 이동, 심사자 역할은 `AppShell`에서 열람 전용 모드(쓰기 액션 전역 차단 + 안내 배너)로 강제 — 백엔드 RBAC 연동 전 프론트 단독 데모 동작.
 
 ### FS-2 박지수 · 회의록 AI/To-Do
 - **스택**: Spring Boot(업로드/저장) + FastAPI(LLM 분석), pdfplumber·python-docx(파싱), OpenAI SDK 1.x 또는 Ollama(gemma)

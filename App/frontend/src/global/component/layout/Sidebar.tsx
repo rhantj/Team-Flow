@@ -1,10 +1,22 @@
 import { ChevronDown, Hash, Sparkles, Settings, Shield } from "lucide-react";
 import { NAV_ITEMS } from "../../lib/constants/nav";
 import type { Tab } from "../../../board/libs/types/task";
+import { useAuth } from "../../hooks/useAuth";
+import type { ProjectRoleKo } from "../../api/authTypes";
+
+const ROLE_COLORS: Record<ProjectRoleKo, string> = {
+  "팀장": "#3B5BDB",
+  "팀원": "#10B981",
+  "심사자": "#7048E8",
+};
 
 export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t: Tab) => void; onAI: () => void }) {
   const groups: Record<string, string> = { planning: "계획 관리", ai: "AI 기능", dev: "개발", eval: "평가 (심사자 전용)", me: "내 계정" };
   const rendered: string[] = [];
+  const { user, projectRoles } = useAuth();
+  const currentProjectName = projectRoles[0]?.projectTitle ?? null;
+  const role: ProjectRoleKo = projectRoles[0]?.role ?? "팀장";
+  const navItems = NAV_ITEMS;
 
   return (
     <div className="w-[220px] shrink-0 flex flex-col h-full" style={{ background: "var(--sidebar)", fontFamily: "'Inter', 'Noto Sans KR', sans-serif" }}>
@@ -27,8 +39,13 @@ export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t:
             <Hash className="w-3 h-3 text-white" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-xs font-medium text-white truncate">스마트 주차 관리</div>
-            <div className="text-[10px]" style={{ color: "var(--muted-foreground)" }}>캡스톤디자인 2024</div>
+            <div className="text-xs font-medium text-white truncate">{currentProjectName || "스마트 주차 관리"}</div>
+            <div className="text-[10px] flex items-center gap-1" style={{ color: "var(--muted-foreground)" }}>
+              <span>캡스톤디자인 2024</span>
+              <span className="px-1.5 py-0.5 rounded font-semibold" style={{ color: "#fff", background: ROLE_COLORS[role] }}>
+                {role}
+              </span>
+            </div>
           </div>
           <ChevronDown className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--muted-foreground)" }} />
         </button>
@@ -36,7 +53,7 @@ export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t:
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-3 space-y-0.5">
-        {NAV_ITEMS.map((item) => {
+        {navItems.map((item) => {
           const showGroup = !rendered.includes(item.group);
           if (showGroup) rendered.push(item.group);
           const isActive = active === item.id;
@@ -71,7 +88,7 @@ export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t:
         })}
 
         {/* AI Assistant button */}
-        <div className="pt-4">
+        {role !== "심사자" && <div className="pt-4">
           <div className="text-[10px] font-semibold uppercase tracking-wider px-2 pb-1.5" style={{ color: "var(--muted-foreground)" }}>
             어시스턴트
           </div>
@@ -82,7 +99,7 @@ export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t:
             <Sparkles className="w-4 h-4 shrink-0" />
             <span className="font-medium">AI 어시스턴트</span>
           </button>
-        </div>
+        </div>}
       </nav>
 
       {/* User */}
@@ -92,8 +109,8 @@ export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t:
             김
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-white">김민준</div>
-            <div className="text-[10px]" style={{ color: "var(--muted-foreground)" }}>팀장</div>
+            <div className="text-sm font-medium text-white">{user?.name || "사용자"}</div>
+            <div className="text-[10px]" style={{ color: "var(--muted-foreground)" }}>{role}</div>
           </div>
           <Settings className="w-4 h-4 cursor-pointer" style={{ color: "var(--muted-foreground)" }} />
         </div>

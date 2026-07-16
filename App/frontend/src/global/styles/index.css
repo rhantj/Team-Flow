@@ -19,3 +19,30 @@ html.capture-canvas #root > * {
   transform: translate(var(--capture-x, 0), var(--capture-y, 0));
   transform-origin: top left;
 }
+
+/* Thin scrollbar: invisible at rest, fades in on hover so scroll affordance
+   doesn't clutter the UI but is still discoverable when content overflows. */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.scrollbar-thin:hover {
+  scrollbar-color: rgba(28, 35, 51, 0.22) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+}
+.scrollbar-thin:hover::-webkit-scrollbar-thumb {
+  background: rgba(28, 35, 51, 0.22);
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(28, 35, 51, 0.38);
+}

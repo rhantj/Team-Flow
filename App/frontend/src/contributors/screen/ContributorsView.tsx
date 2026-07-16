@@ -1,25 +1,421 @@
-import { CheckCircle2, Shield } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router";
+import {
+  Activity,
+  AlertCircle,
+  ArrowLeft,
+  Award,
+  BarChart3,
+  CheckCircle2,
+  ClipboardCheck,
+  Download,
+  Eye,
+  EyeOff,
+  FileText,
+  GitCommit,
+  GitPullRequest,
+  MessageSquare,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  Users,
+} from "lucide-react";
+import {
+  CONTRIB_REPORTS,
+  REVIEWER_ACTIVITIES,
+  REVIEWER_TEAMS,
+} from "../../global/lib/mock/reviewer";
+
+type Team = (typeof REVIEWER_TEAMS)[number];
+type EvalStatus = Team["evalStatus"];
+type CategoryKey = keyof (typeof CONTRIB_REPORTS)[number]["categories"];
+
+const STATUS_META: Record<EvalStatus, { label: string; color: string; bg: string; border: string }> = {
+  pending: { label: "평가 전", color: "#64748B", bg: "#F1F5F9", border: "#CBD5E1" },
+  evaluating: { label: "평가 중", color: "#D97706", bg: "#FFFBEB", border: "#FCD34D" },
+  published: { label: "공개 완료", color: "#059669", bg: "#ECFDF5", border: "#A7F3D0" },
+};
+
+const CATEGORY_LABELS: Record<CategoryKey, string> = {
+  task: "업무 수행",
+  meeting: "회의 참여",
+  docs: "문서 기여",
+  dev: "개발 기여",
+  collab: "협업 활동",
+};
+
+function scoreTone(score: number) {
+  if (score >= 90) return { label: "우수", color: "#2563EB", bg: "#EFF6FF" };
+  if (score >= 80) return { label: "양호", color: "#059669", bg: "#ECFDF5" };
+  if (score >= 70) return { label: "주의", color: "#D97706", bg: "#FFFBEB" };
+  return { label: "검토 필요", color: "#DC2626", bg: "#FEF2F2" };
+}
+
+function percent(value: number, total: number) {
+  if (total <= 0) return 0;
+  return Math.round((value / total) * 100);
+}
 
 export function ContributorsView() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [selectedMemberId, setSelectedMemberId] = useState(CONTRIB_REPORTS[0]?.memberId ?? "");
+  const [query, setQuery] = useState("");
+  const [publicFlags, setPublicFlags] = useState<Record<string, boolean>>(
+    Object.fromEntries(CONTRIB_REPORTS.map((report) => [report.memberId, report.isPublic])) as Record<string, boolean>,
+  );
+  const [memo, setMemo] = useState("");
+
+  const requestedTeamId = useMemo(() => new URLSearchParams(location.search).get("team"), [location.search]);
+  const selectedTeam = REVIEWER_TEAMS.find((team) => team.id === requestedTeamId) ?? REVIEWER_TEAMS[0];
+  const filteredReports = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    if (!keyword) return CONTRIB_REPORTS;
+    return CONTRIB_REPORTS.filter((report) => {
+      const haystack = [
+        report.name,
+        report.role,
+        report.aiSummary,
+        ...report.evidence,
+      ].join(" ").toLowerCase();
+      return haystack.includes(keyword);
+    });
+  }, [query]);
+
+  const selectedMember = CONTRIB_REPORTS.find((report) => report.memberId === selectedMemberId) ?? CONTRIB_REPORTS[0];
+  const averageScore = Math.round(CONTRIB_REPORTS.reduce((sum, report) => sum + report.score, 0) / CONTRIB_REPORTS.length);
+  const publishedCount = Object.values(publicFlags).filter(Boolean).length;
+  const evidenceCount = CONTRIB_REPORTS.reduce((sum, report) => sum + report.evidence.length, 0);
+  const completedTasks = CONTRIB_REPORTS.reduce((sum, report) => sum + report.todoDone, 0);
+  const totalTasks = CONTRIB_REPORTS.reduce((sum, report) => sum + report.todoTotal, 0);
+  const statusMeta = STATUS_META[selectedTeam.evalStatus];
+  const selectedTone = scoreTone(selectedMember.score);
+
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8" style={{ fontFamily: "'Inter', 'Noto Sans KR', sans-serif" }}>
-      <div className="w-16 h-16 rounded-2xl flex items-center justify-center" style={{ background: "linear-gradient(135deg, #7048E8 0%, #4F6EF7 100%)" }}>
-        <Shield className="w-8 h-8 text-white" />
-      </div>
-      <div>
-        <div className="text-base font-semibold text-foreground">심사자 전용 기능</div>
-        <div className="text-sm text-muted-foreground mt-1 max-w-xs">개인별 기여도 분석 리포트는 심사자 계정으로만 접근할 수 있습니다.</div>
-      </div>
-      <div className="bg-card rounded-xl p-5 border border-border shadow-sm max-w-md w-full text-left">
-        <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">심사자 전용 데이터</div>
-        <div className="space-y-2">
-          {["개인별 To-Do 완료율 및 마감 준수율", "회의록 내 발언 및 결정 참여 이력", "GitHub 커밋/PR/리뷰 기여 기록", "문서 및 산출물 작성 기여 이력", "AI 기여도 근거 요약 (출처 포함)"].map((item, i) => (
-            <div key={i} className="flex items-center gap-2 text-sm text-foreground">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-              {item}
+    <div
+      className="h-full overflow-y-auto bg-background"
+      style={{ fontFamily: "'Inter', 'Noto Sans KR', sans-serif" }}
+    >
+      <div className="w-full max-w-[1480px] mx-auto p-4 sm:p-5 lg:p-6 space-y-5">
+        <section className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div>
+            <button
+              type="button"
+              onClick={() => navigate("/projects")}
+              className="mb-3 inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              프로젝트 목록으로
+            </button>
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-blue-600">
+                <ShieldCheck className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold text-foreground leading-tight">기여도 분석</h1>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  업무, 회의록, GitHub, 산출물 데이터를 기반으로 개인별 기여도를 검토합니다.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="px-2 py-1 rounded-md bg-muted text-foreground font-semibold">심사자 전용</span>
+              <span>팀원에게는 공개 처리된 최종 점수와 코멘트만 노출됩니다.</span>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-xs font-semibold text-foreground hover:bg-muted transition-colors">
+              <RefreshCw className="w-3.5 h-3.5" />
+              리포트 새로고침
+            </button>
+            <button className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-xs font-semibold text-foreground hover:bg-muted transition-colors">
+              <Download className="w-3.5 h-3.5" />
+              PDF 저장
+            </button>
+            <button className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              평가 확정
+            </button>
+          </div>
+        </section>
+
+        <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+          {[
+            { label: "팀 평균 점수", value: `${averageScore}점`, icon: Award, color: "#2563EB" },
+            { label: "평가 대상", value: `${CONTRIB_REPORTS.length}명`, icon: Users, color: "#7C3AED" },
+            { label: "공개 완료", value: `${publishedCount}/${CONTRIB_REPORTS.length}`, icon: Eye, color: "#059669" },
+            { label: "근거 항목", value: `${evidenceCount}개`, icon: ClipboardCheck, color: "#D97706" },
+          ].map((item) => (
+            <div key={item.label} className="bg-card border border-border rounded-lg p-4 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[11px] text-muted-foreground">{item.label}</div>
+                  <div className="text-2xl font-bold text-foreground mt-1">{item.value}</div>
+                </div>
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: `${item.color}14` }}>
+                  <item.icon className="w-4 h-4" style={{ color: item.color }} />
+                </div>
+              </div>
             </div>
           ))}
-        </div>
+        </section>
+
+        <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-4 items-start">
+          <main className="space-y-4 min-w-0">
+            <div className="bg-card border border-border rounded-lg shadow-sm overflow-hidden">
+              <div className="px-4 sm:px-5 py-4 border-b border-border flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base font-bold text-foreground">{selectedTeam.name}</h2>
+                    <span
+                      className="text-[10px] font-bold px-2 py-0.5 rounded-full border"
+                      style={{ color: statusMeta.color, background: statusMeta.bg, borderColor: statusMeta.border }}
+                    >
+                      {statusMeta.label}
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    GitHub {selectedTeam.github ? "연결됨" : "미연결"} · 산출물 {selectedTeam.submitted}/{selectedTeam.deliverables}개 제출 · 전체 업무 완료율 {percent(completedTasks, totalTasks)}%
+                  </div>
+                </div>
+                <div className="relative w-full sm:w-64">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="이름, 역할, 근거 검색"
+                    className="w-full rounded-lg border border-border bg-input-background pl-9 pr-3 py-2 text-xs outline-none focus:border-blue-400"
+                  />
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <div className="min-w-[760px]">
+                  <div className="grid grid-cols-[76px_1fr_98px_90px_90px_84px_86px] px-5 py-2.5 bg-muted/40 border-b border-border text-[11px] font-bold text-muted-foreground">
+                    <div>순위</div>
+                    <div>이름/역할</div>
+                    <div>기여 점수</div>
+                    <div>업무</div>
+                    <div>회의</div>
+                    <div>개발</div>
+                    <div>공개</div>
+                  </div>
+
+                  <div className="divide-y divide-border">
+                    {filteredReports.map((report, index) => {
+                      const isSelected = selectedMember.memberId === report.memberId;
+                      const tone = scoreTone(report.score);
+                      const taskRate = percent(report.todoDone, report.todoTotal);
+                      return (
+                        <button
+                          key={report.memberId}
+                          type="button"
+                          onClick={() => setSelectedMemberId(report.memberId)}
+                          className={`grid grid-cols-[76px_1fr_98px_90px_90px_84px_86px] w-full items-center px-5 py-3 text-left transition-colors ${
+                            isSelected ? "bg-blue-50" : "hover:bg-muted/40"
+                          }`}
+                        >
+                      <div className="flex items-center gap-2">
+                        <span className="w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold text-foreground bg-muted">
+                          {index + 1}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0"
+                          style={{ background: report.color }}
+                        >
+                          {report.name[0]}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-bold text-foreground truncate">{report.name}</div>
+                          <div className="text-[11px] text-muted-foreground">{report.role}</div>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-lg font-bold" style={{ color: tone.color }}>{report.score}</div>
+                        <div className="text-[10px] font-semibold" style={{ color: tone.color }}>{tone.label}</div>
+                      </div>
+                      <div className="text-xs text-foreground">
+                        <span className="font-bold">{report.todoDone}</span>
+                        <span className="text-muted-foreground">/{report.todoTotal}</span>
+                        <div className="text-[10px] text-muted-foreground">{taskRate}%</div>
+                      </div>
+                      <div className="text-xs text-foreground">
+                        <span className="font-bold">{report.meetings}</span>
+                        <span className="text-muted-foreground">회</span>
+                      </div>
+                      <div className="text-xs text-foreground">
+                        <div className="flex items-center gap-1">
+                          <GitCommit className="w-3 h-3 text-muted-foreground" />
+                          <span className="font-bold">{report.commits}</span>
+                        </div>
+                        <div className="flex items-center gap-1 mt-0.5 text-[10px] text-muted-foreground">
+                          <GitPullRequest className="w-3 h-3" />
+                          {report.prs} PR
+                        </div>
+                      </div>
+                      <div>
+                        <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full ${
+                          publicFlags[report.memberId]
+                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                            : "bg-slate-100 text-slate-500 border border-slate-200"
+                        }`}>
+                          {publicFlags[report.memberId] ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                          {publicFlags[report.memberId] ? "공개" : "비공개"}
+                        </span>
+                      </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <section className="bg-card border border-border rounded-lg p-4 shadow-sm">
+                <div className="flex items-center gap-2 mb-3">
+                  <Sparkles className="w-4 h-4 text-purple-600" />
+                  <h3 className="text-sm font-bold text-foreground">AI 분석 요약</h3>
+                </div>
+                <p className="text-sm text-foreground leading-relaxed">{selectedMember.aiSummary}</p>
+                <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                  <p className="text-xs text-amber-700 leading-relaxed">
+                    AI 분석은 평가 보조 자료입니다. 최종 점수와 공개 여부는 심사자가 확정해야 합니다.
+                  </p>
+                </div>
+              </section>
+
+              <section className="bg-card border border-border rounded-lg p-4 shadow-sm">
+                <div className="flex items-center gap-2 mb-3">
+                  <Activity className="w-4 h-4 text-blue-600" />
+                  <h3 className="text-sm font-bold text-foreground">최근 평가 활동</h3>
+                </div>
+                <div className="space-y-2.5">
+                  {REVIEWER_ACTIVITIES.slice(0, 4).map((activity, index) => (
+                    <div key={`${activity.team}-${activity.action}-${index}`} className="flex items-start gap-2.5">
+                      <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center shrink-0">
+                        <FileText className="w-3 h-3 text-muted-foreground" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-foreground truncate">{activity.action}</div>
+                        <div className="text-[11px] text-muted-foreground">{activity.team} · {activity.date}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+          </main>
+
+          <aside className="space-y-4 min-w-0">
+            <section className="bg-card border border-border rounded-lg shadow-sm overflow-hidden">
+              <div className="p-4 border-b border-border">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div
+                      className="w-11 h-11 rounded-full flex items-center justify-center text-white text-base font-bold shrink-0"
+                      style={{ background: selectedMember.color }}
+                    >
+                      {selectedMember.name[0]}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-base font-bold text-foreground truncate">{selectedMember.name}</div>
+                      <div className="text-xs text-muted-foreground">{selectedMember.role}</div>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="text-3xl font-bold" style={{ color: selectedTone.color }}>{selectedMember.score}</div>
+                    <div
+                      className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                      style={{ color: selectedTone.color, background: selectedTone.bg }}
+                    >
+                      {selectedTone.label}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-4 space-y-3">
+                {Object.entries(selectedMember.categories).map(([key, value]) => (
+                  <div key={key}>
+                    <div className="flex items-center justify-between text-xs mb-1">
+                      <span className="text-muted-foreground">{CATEGORY_LABELS[key as CategoryKey]}</span>
+                      <span className="font-bold text-foreground">{value}</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className="h-full rounded-full"
+                        style={{ width: `${value}%`, background: selectedMember.color }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="bg-card border border-border rounded-lg p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <ClipboardCheck className="w-4 h-4 text-emerald-600" />
+                  <h3 className="text-sm font-bold text-foreground">분석 근거</h3>
+                </div>
+                <span className="text-[10px] text-muted-foreground">{selectedMember.evidence.length}개</span>
+              </div>
+              <div className="space-y-2">
+                {selectedMember.evidence.map((evidence, index) => (
+                  <button
+                    key={evidence}
+                    type="button"
+                    className="w-full flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-left hover:border-blue-300 hover:bg-blue-50 transition-colors"
+                  >
+                    <span className="w-5 h-5 rounded-md bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground shrink-0">
+                      {index + 1}
+                    </span>
+                    <span className="text-xs font-medium text-foreground">{evidence}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="bg-card border border-border rounded-lg p-4 shadow-sm">
+              <div className="flex items-center gap-2 mb-3">
+                <MessageSquare className="w-4 h-4 text-blue-600" />
+                <h3 className="text-sm font-bold text-foreground">심사 코멘트</h3>
+              </div>
+              <textarea
+                value={memo}
+                onChange={(event) => setMemo(event.target.value)}
+                rows={4}
+                placeholder={`${selectedMember.name}에게 남길 평가 코멘트를 입력하세요.`}
+                className="w-full resize-none rounded-lg border border-border bg-input-background px-3 py-2 text-xs outline-none focus:border-blue-400"
+              />
+              <div className="flex items-center justify-between gap-2 mt-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPublicFlags((prev) => ({
+                      ...prev,
+                      [selectedMember.memberId]: !prev[selectedMember.memberId],
+                    }));
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-xs font-semibold text-foreground hover:bg-muted transition-colors"
+                >
+                  {publicFlags[selectedMember.memberId] ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                  {publicFlags[selectedMember.memberId] ? "공개 중" : "비공개"}
+                </button>
+                <button className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors">
+                  <BarChart3 className="w-3.5 h-3.5" />
+                  저장
+                </button>
+              </div>
+            </section>
+          </aside>
+        </section>
       </div>
     </div>
   );

@@ -9,7 +9,7 @@ export function LoginScreen() {
   const oauthFailed = searchParams.get("error") === "oauth_failed";
 
   return (
-    <div className="flex h-screen" style={{ fontFamily: "'Inter', 'Noto Sans KR', sans-serif" }}>
+    <div className="flex min-h-screen flex-col lg:flex-row" style={{ fontFamily: "'Inter', 'Noto Sans KR', sans-serif" }}>
       <AuthBrandPanel />
 
       <div className="flex-1 flex items-center justify-center bg-background px-8">
