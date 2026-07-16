@@ -7,10 +7,16 @@ import jakarta.validation.Valid;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -22,9 +28,13 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/auth")
 public class AuthController {
+    private static final Logger log = LoggerFactory.getLogger(AuthController.class);
+    private static final String STATE_COOKIE = "oauth_state";
+
     private final GoogleOAuthService googleOAuthService;
     private final AuthService authService;
     private final String frontendBaseUrl;
+    private final boolean secureCookies;
 
     public AuthController(
         GoogleOAuthService googleOAuthService,
@@ -34,6 +44,7 @@ public class AuthController {
         this.googleOAuthService = googleOAuthService;
         this.authService = authService;
         this.frontendBaseUrl = frontendBaseUrl;
+        this.secureCookies = frontendBaseUrl.startsWith("https://");
     }
 
     @Operation(summary = "Google OAuth 인가 URL로 리다이렉트")
@@ -41,30 +52,42 @@ public class AuthController {
     public ResponseEntity<Void> redirectToGoogle() {
         String state = UUID.randomUUID().toString();
         String authorizationUrl = googleOAuthService.buildAuthorizationUrl(state);
-        return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(authorizationUrl)).build();
+        return ResponseEntity.status(HttpStatus.FOUND)
+            .location(URI.create(authorizationUrl))
+            .header(HttpHeaders.SET_COOKIE, stateCookie(state, Duration.ofMinutes(5)).toString())
+            .build();
     }
 
     @Operation(
         summary = "Google OAuth 콜백 처리",
         description = "code를 받아 로그인/회원가입을 처리하고, JWT를 URL 프래그먼트에 실어 프론트엔드로 리다이렉트한다. "
-            + "브라우저 최상위 리다이렉트이므로 JSON을 직접 반환할 수 없다."
+            + "브라우저 최상위 리다이렉트이므로 JSON을 직접 반환할 수 없다. "
+            + "state는 /google에서 발급한 HttpOnly 쿠키 값과 대조해 OAuth 콜백 CSRF를 방지한다."
     )
     @GetMapping("/google/callback")
     public ResponseEntity<Void> handleGoogleCallback(
         @RequestParam(required = false) String code,
-        @RequestParam(required = false) String state
+        @RequestParam(required = false) String state,
+        @CookieValue(name = STATE_COOKIE, required = false) String expectedState
     ) {
+        ResponseCookie clearStateCookie = stateCookie("", Duration.ZERO);
+
         if (code == null || code.isBlank()) {
-            return redirectToFrontend("/login?error=oauth_failed");
+            return redirectToFrontend("/login?error=oauth_failed", clearStateCookie);
+        }
+        if (state == null || expectedState == null || !state.equals(expectedState)) {
+            log.warn("Google OAuth state 불일치로 콜백 거부");
+            return redirectToFrontend("/login?error=oauth_failed", clearStateCookie);
         }
         try {
             AuthTokenResponse tokens = authService.loginWithGoogleCode(code);
             String fragment = "accessToken=" + encode(tokens.accessToken())
                 + "&refreshToken=" + encode(tokens.refreshToken())
                 + "&expiresIn=" + tokens.expiresIn();
-            return redirectToFrontend("/auth/callback#" + fragment);
+            return redirectToFrontend("/auth/callback#" + fragment, clearStateCookie);
         } catch (Exception e) {
-            return redirectToFrontend("/login?error=oauth_failed");
+            log.warn("Google OAuth 콜백 처리 실패", e);
+            return redirectToFrontend("/login?error=oauth_failed", clearStateCookie);
         }
     }
 
@@ -84,8 +107,21 @@ public class AuthController {
         return ApiResponse.ok(null);
     }
 
-    private ResponseEntity<Void> redirectToFrontend(String path) {
-        return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(frontendBaseUrl + path)).build();
+    private ResponseEntity<Void> redirectToFrontend(String path, ResponseCookie cookie) {
+        return ResponseEntity.status(HttpStatus.FOUND)
+            .location(URI.create(frontendBaseUrl + path))
+            .header(HttpHeaders.SET_COOKIE, cookie.toString())
+            .build();
+    }
+
+    private ResponseCookie stateCookie(String value, Duration maxAge) {
+        return ResponseCookie.from(STATE_COOKIE, value)
+            .httpOnly(true)
+            .secure(secureCookies)
+            .sameSite("Lax")
+            .path("/api/v1/auth")
+            .maxAge(maxAge)
+            .build();
     }
 
     private String encode(String value) {
