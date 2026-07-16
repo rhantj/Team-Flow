@@ -27,8 +27,10 @@ export function AIAssistant({ onClose }: { onClose: () => void }) {
   const send = (text: string) => {
     if (!text.trim() || loading) return;
     setMessages(prev => [...prev, { role: "user", content: text }]);
-    setInput("");
     ask(DEMO_PROJECT_ID, text);
+    // 한글 등 IME 조합 완료 이벤트가 keydown 이후 뒤늦게 들어와 입력창을 다시 채우는 것을 피하기 위해
+    // 조합 이벤트가 먼저 처리되도록 한 틱 미뤄서 비운다.
+    setTimeout(() => setInput(""), 0);
   };
 
   return (
