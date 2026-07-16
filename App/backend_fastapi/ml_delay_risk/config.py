@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     # 배포 환경에서는 fetch_model.py가 이 저장소에서 model_filename을 내려받는다.
     # private 저장소라면 HF_TOKEN 환경변수(huggingface_hub가 자동 인식)를 함께 설정할 것.
     hf_model_repo_id: str = ""
+    # 커밋 해시 또는 태그로 고정. 비워두면 기본 브랜치의 최신 커밋을 받는데, 그 사이
+    # 저장소에 새 모델이 푸시되면 배포 시점마다 다른 모델을 받게 돼 재현성이 깨진다.
+    # 운영 배포에서는 반드시 특정 리비전으로 고정할 것을 권장.
+    hf_model_revision: str = ""
 
 
 @lru_cache

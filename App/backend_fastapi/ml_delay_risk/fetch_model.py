@@ -36,14 +36,23 @@ def main() -> None:
 
     from huggingface_hub import hf_hub_download
 
+    if not settings.hf_model_revision:
+        logger.warning(
+            "DELAY_RISK_HF_MODEL_REVISION이 설정되지 않아 기본 브랜치의 최신 커밋을 받습니다. "
+            "배포마다 다른 모델을 받을 수 있어 재현성이 깨지니, 운영 환경에서는 커밋 해시나 "
+            "태그로 고정하는 것을 권장합니다."
+        )
+
     logger.info(
-        "Hugging Face Hub에서 모델 다운로드 중: repo=%s file=%s",
+        "Hugging Face Hub에서 모델 다운로드 중: repo=%s file=%s revision=%s",
         settings.hf_model_repo_id,
         settings.model_filename,
+        settings.hf_model_revision or "(default)",
     )
     downloaded_path = hf_hub_download(
         repo_id=settings.hf_model_repo_id,
         filename=settings.model_filename,
+        revision=settings.hf_model_revision or None,
     )
 
     target_path.parent.mkdir(parents=True, exist_ok=True)

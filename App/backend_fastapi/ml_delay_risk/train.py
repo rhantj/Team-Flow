@@ -10,9 +10,6 @@ import argparse
 import logging
 
 from ml_delay_risk.models import _notebook_runtime
-from ml_delay_risk.models.dataset_builder import build_training_dataframe
-
-train_and_save = _notebook_runtime.load().train_and_save
 
 
 def main() -> None:
@@ -28,11 +25,13 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-    df, proxy_deadline_map, global_median = build_training_dataframe(limit=args.limit)
-    if df.empty:
-        raise SystemExit("학습 데이터가 비어 있습니다. MongoDB(ml_dashboard) 연결/컬렉션을 확인하세요.")
-
-    train_and_save(df, proxy_deadline_map, global_median, test_size=args.test_size)
+    # delay_model.ipynb의 학습 파이프라인(피처 선정 → 이슈 단위 층화 분할 → LightGBM 학습 →
+    # 평가 → 저장)을 노트북 그대로 실행한다. limit/test_size는 노트북 셀이
+    # globals().get("_TRAIN_LIMIT"/"_TRAIN_TEST_SIZE", 기본값)으로 읽어간다.
+    _notebook_runtime.load(
+        run_main=True,
+        initial_globals={"_TRAIN_LIMIT": args.limit, "_TRAIN_TEST_SIZE": args.test_size},
+    )
 
 
 if __name__ == "__main__":
