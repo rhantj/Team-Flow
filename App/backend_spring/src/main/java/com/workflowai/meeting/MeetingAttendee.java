@@ -32,4 +32,12 @@ public class MeetingAttendee {
     public Long getId() {
         return id;
     }
+
+    public Long getMeetingId() {
+        return meetingId;
+    }
+
+    public Long getUserId() {
+        return userId;
+    }
 }

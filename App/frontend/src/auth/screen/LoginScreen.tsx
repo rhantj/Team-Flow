@@ -3,14 +3,13 @@ import { AuthBrandPanel } from "../components/AuthBrandPanel";
 import { useAuth } from "../../global/hooks/useAuth";
 import { API_BASE_URL } from "../../global/api/apiClient";
 
-// [개발용] 역할별 테스트 로그인 - 프로덕션 빌드(import.meta.env.DEV === false)에는 아예 포함되지 않는다.
-// 백엔드도 workflow.demo.dev-login-enabled(prod 기본 false)로 별도 차단하므로 이중 안전장치.
 const DEV_TEST_ACCOUNTS = [
   { id: "1", name: "김민준", role: "팀장" },
   { id: "2", name: "이서연", role: "팀원" },
   { id: "3", name: "박지수", role: "팀원" },
   { id: "4", name: "최동혁", role: "심사자" },
 ];
+const demoAuthEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_AUTH === "true";
 
 export function LoginScreen() {
   const navigate = useNavigate();
@@ -50,7 +49,7 @@ export function LoginScreen() {
             </button>
           </p>
 
-          {import.meta.env.DEV && (
+          {demoAuthEnabled && (
             <div className="mt-8 pt-6 border-t border-border">
               <p className="text-center text-[11px] font-semibold text-muted-foreground mb-3">개발용 테스트 계정으로 입장</p>
               <div className="grid grid-cols-2 gap-2">

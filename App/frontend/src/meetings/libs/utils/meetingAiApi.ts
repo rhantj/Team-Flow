@@ -11,14 +11,17 @@ interface AnalyzeMeetingParams {
   participants: string[];
 }
 
-interface MeetingAnalysisResponse {
+export type MeetingAnalysisStatus = "PROCESSING" | "COMPLETED" | "FAILED";
+
+export interface MeetingAnalysisResponse {
   meetingId: string;
   projectId: string;
-  status: string;
+  status: MeetingAnalysisStatus;
   sourceType: string;
   fileName: string | null;
-  analysisSource: "FASTAPI" | "SPRING_FALLBACK";
-  analysis: MeetingAiResult;
+  analysisSource: "FASTAPI" | "SPRING_FALLBACK" | null;
+  analysis: MeetingAiResult | null;
+  errorMessage: string | null;
 }
 
 export async function analyzeMeeting(params: AnalyzeMeetingParams): Promise<MeetingAnalysisResponse> {
@@ -33,6 +36,16 @@ export async function analyzeMeeting(params: AnalyzeMeetingParams): Promise<Meet
   return apiFetch<MeetingAnalysisResponse>(`/projects/${params.projectId}/meetings/analyze`, {
     method: "POST",
     body: formData,
+  });
+}
+
+export async function fetchMeeting(projectId: string, meetingId: string): Promise<MeetingAnalysisResponse> {
+  return apiFetch<MeetingAnalysisResponse>(`/projects/${projectId}/meetings/${meetingId}`);
+}
+
+export async function retryMeetingAnalysis(projectId: string, meetingId: string): Promise<MeetingAnalysisResponse> {
+  return apiFetch<MeetingAnalysisResponse>(`/projects/${projectId}/meetings/${meetingId}/retry`, {
+    method: "POST",
   });
 }
 

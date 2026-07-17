@@ -117,6 +117,10 @@ public class Meeting {
         return originalFileName;
     }
 
+    public String getFileType() {
+        return fileType;
+    }
+
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }

@@ -9,7 +9,7 @@ import { MEMBERS } from "../../global/lib/mock/members";
 import { CATEGORIES } from "../../board/libs/mock/tasks";
 import type { Meeting, UploadFlow, UploadType, GenTodo, SavedMeetingRecord } from "../libs/types/meeting";
 import type { CatId, Priority, Task } from "../../board/libs/types/task";
-import { analyzeMeeting, fetchMeetings, registerMeetingTasks } from "../libs/utils/meetingAiApi";
+import { analyzeMeeting, fetchMeeting, fetchMeetings, registerMeetingTasks, retryMeetingAnalysis } from "../libs/utils/meetingAiApi";
 import type { MeetingAiResult } from "../libs/types/meetingAiTypes";
 import { DEMO_PROJECT_ID } from "../../board/libs/utils/taskApi";
 import { useAuth } from "../../global/hooks/useAuth";
@@ -43,6 +43,9 @@ import {
 } from "lucide-react";
 
 const CURRENT_USER_ROLE: "leader" | "member" = "leader";
+const MEETING_STATUS_POLL_INTERVAL_MS = 2000;
+const MEETING_STATUS_MAX_POLL_ATTEMPTS = 60;
+const MEETING_STATUS_MAX_NETWORK_FAILURES = 5;
 
 const groupTodosByAssignee = (list: GenTodo[], resolveAssignee: (todo: GenTodo) => string): GenTodo[] => {
   const UNASSIGNED_KEY = "__unassigned__";
@@ -295,6 +298,7 @@ export function MeetingsView() {
   const [uploadFileName, setUploadFileName] = useState("");
   const [uploadFileSize, setUploadFileSize] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [activeMeetingId, setActiveMeetingId] = useState<string | null>(null);
   const [analysisSource, setAnalysisSource] = useState<"fastapi"|"spring-fallback"|null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [panelTab, setPanelTab] = useState<"summary"|"todos"|"risks">("summary");
@@ -316,21 +320,112 @@ export function MeetingsView() {
   const [meetingListError, setMeetingListError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pdfCaptureRef = useRef<HTMLDivElement | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const analyzeStages = getAnalyzeStages(uploadType);
   const canAddManualTodo = CURRENT_USER_ROLE === "leader";
 
-  // Simulate analysis progress
+  // 가짜 진행률 애니메이션: 실제 서버 상태를 모르므로 90%에서 멈추고 대기한다.
+  // 실제 완료/실패 전환은 아래 polling(stopPolling/pollMeetingStatus)이 담당한다.
   useEffect(() => {
     if (uploadFlow !== "analyzing") return;
     let prog = 0; let stg = 0;
     const iv = setInterval(() => {
-      prog = Math.min(prog + 1.5, 100);
+      prog = Math.min(prog + 1.5, 90);
       stg = Math.min(Math.floor(prog / (100 / analyzeStages.length)), analyzeStages.length - 1);
       setAnalyzeStage(stg); setAnalyzeProgress(Math.round(prog));
-      if (prog >= 100) { clearInterval(iv); setTimeout(() => { setUploadFlow("results"); setPanelTab("summary"); }, 600); }
     }, 70);
     return () => clearInterval(iv);
   }, [uploadFlow, analyzeStages.length]);
+
+  const stopPolling = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
+
+  // "analyzing" 화면을 벗어나면(완료/실패/사용자 이탈) polling을 중단한다.
+  useEffect(() => {
+    if (uploadFlow !== "analyzing") stopPolling();
+  }, [uploadFlow]);
+
+  // unmount 시 polling 정리
+  useEffect(() => () => stopPolling(), []);
+
+  // meetingId를 대상으로 서버 분석 상태를 2초 간격으로 조회해 completed/failed를 반영한다.
+  const pollMeetingStatus = (meetingId: string, title: string, uploadedAt: string) => {
+    stopPolling();
+    let attempts = 0;
+    let consecutiveNetworkFailures = 0;
+    pollIntervalRef.current = setInterval(() => {
+      attempts += 1;
+      if (attempts > MEETING_STATUS_MAX_POLL_ATTEMPTS) {
+        stopPolling();
+        setAnalysisResult(null);
+        setSelTodos([]);
+        setAnalysisSource(null);
+        setAnalysisError("분석 시간이 초과되었습니다. 잠시 후 재시도해주세요.");
+        setUploadFlow("results");
+        return;
+      }
+
+      fetchMeeting(projectId, meetingId).then(response => {
+        consecutiveNetworkFailures = 0;
+        if (response.status === "PROCESSING") return;
+        stopPolling();
+        if (response.status === "COMPLETED" && response.analysis) {
+          const apiTodos = buildGeneratedTodos(response.analysis);
+          const source = response.analysisSource === "FASTAPI" ? "fastapi" : "spring-fallback";
+          const analyzedMeeting: Meeting = {
+            id: response.meetingId,
+            title: response.analysis.meeting_meta.title || title,
+            date: formatDisplayDate(response.analysis.meeting_meta.meeting_date || meetDate),
+            duration: "분석 완료",
+            status: "processed",
+            summary: response.analysis.summary,
+            decisions: response.analysis.decisions,
+            todos: response.analysis.todos.map(todo => {
+              const assignee = todo.assignee_candidate || "미배정";
+              const due = todo.due_date ? ` (${todo.due_date.slice(5).replace("-", ".")})` : "";
+              return `${assignee}: ${todo.title}${due}`;
+            }),
+            risks: response.analysis.risks,
+            analysisSource: source,
+            fileName: selectedFile?.name,
+            uploadedAt,
+            analyzedAt: new Date().toISOString(),
+          };
+          setAnalysisResult(response.analysis);
+          setSelTodos(apiTodos.map(t => t.id));
+          setAnalysisSource(source);
+          setMeetings(prev => {
+            const next = [analyzedMeeting, ...prev.filter(item => item.id !== analyzedMeeting.id)];
+            saveStoredMeetings(next);
+            return next;
+          });
+          setSelected(analyzedMeeting.id);
+          setUploadFlow("results");
+          setPanelTab("summary");
+        } else {
+          setAnalysisResult(null);
+          setSelTodos([]);
+          setAnalysisSource(null);
+          setAnalysisError(response.errorMessage ?? "분석 중 오류가 발생했습니다. 다시 시도해주세요.");
+          setUploadFlow("results");
+        }
+      }).catch(() => {
+        consecutiveNetworkFailures += 1;
+        if (consecutiveNetworkFailures >= MEETING_STATUS_MAX_NETWORK_FAILURES) {
+          stopPolling();
+          setAnalysisResult(null);
+          setSelTodos([]);
+          setAnalysisSource(null);
+          setAnalysisError("분석 상태 확인에 실패했습니다. 네트워크 상태를 확인한 뒤 다시 시도해주세요.");
+          setUploadFlow("results");
+        }
+      });
+    }, MEETING_STATUS_POLL_INTERVAL_MS);
+  };
 
   useEffect(() => {
     if (searchParams.get("upload") === "1") {
@@ -570,41 +665,34 @@ export function MeetingsView() {
       sourceType: uploadType,
       participants: partIds.map(id => MEMBERS.find(member => member.id === id)?.name ?? id),
     }).then(response => {
-      const apiTodos = buildGeneratedTodos(response.analysis);
-      const source = response.analysisSource === "FASTAPI" ? "fastapi" : "spring-fallback";
-      const analyzedMeeting: Meeting = {
-        id: response.meetingId,
-        title: response.analysis.meeting_meta.title || title,
-        date: formatDisplayDate(response.analysis.meeting_meta.meeting_date || meetDate),
-        duration: "분석 완료",
-        status: "processed",
-        summary: response.analysis.summary,
-        decisions: response.analysis.decisions,
-        todos: response.analysis.todos.map(todo => {
-          const assignee = todo.assignee_candidate || "미배정";
-          const due = todo.due_date ? ` (${todo.due_date.slice(5).replace("-", ".")})` : "";
-          return `${assignee}: ${todo.title}${due}`;
-        }),
-        risks: response.analysis.risks,
-        analysisSource: source,
-        fileName: selectedFile?.name,
-        uploadedAt,
-        analyzedAt: new Date().toISOString(),
-      };
-      setAnalysisResult(response.analysis);
-      setSelTodos(apiTodos.map(t => t.id));
-      setAnalysisSource(source);
-      setMeetings(prev => {
-        const next = [analyzedMeeting, ...prev.filter(item => item.id !== analyzedMeeting.id)];
-        saveStoredMeetings(next);
-        return next;
-      });
-      setSelected(analyzedMeeting.id);
+      setActiveMeetingId(response.meetingId);
+      pollMeetingStatus(response.meetingId, title, uploadedAt);
     }).catch(() => {
       setAnalysisResult(null);
       setSelTodos([]);
       setAnalysisSource(null);
       setAnalysisError("분석 서버 연결에 실패했습니다. Spring Boot와 FastAPI 서버가 실행 중인지 확인한 뒤 다시 시도해주세요.");
+      setUploadFlow("results");
+    });
+  };
+
+  const handleRetryAnalysis = () => {
+    if (!activeMeetingId) return;
+    const uploadedAt = new Date().toISOString();
+    setAnalysisResult(null);
+    setSelTodos([]);
+    setAnalysisSource(null);
+    setAnalysisError(null);
+    setAnalyzeStage(0);
+    setAnalyzeProgress(0);
+    setUploadFlow("analyzing");
+
+    void retryMeetingAnalysis(projectId, activeMeetingId).then(response => {
+      setActiveMeetingId(response.meetingId);
+      pollMeetingStatus(response.meetingId, meetTitle, uploadedAt);
+    }).catch(() => {
+      setAnalysisError("재분석 요청에 실패했습니다. 다시 시도해주세요.");
+      setUploadFlow("results");
     });
   };
 
@@ -782,7 +870,12 @@ export function MeetingsView() {
               {analysisError ?? "업로드한 회의록의 요약, 결정사항, To-Do, 위험요소를 정리하고 있습니다."}
             </p>
             <div className="flex gap-3 justify-center">
-              <button onClick={() => setUploadFlow("modal")} className="px-5 py-2.5 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity" style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
+              {analysisError && activeMeetingId && (
+                <button onClick={handleRetryAnalysis} className="px-5 py-2.5 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity" style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
+                  다시 분석
+                </button>
+              )}
+              <button onClick={() => setUploadFlow("modal")} className="px-5 py-2.5 text-sm font-medium border border-border rounded-xl hover:bg-muted transition-colors">
                 다시 업로드
               </button>
               <button onClick={() => setUploadFlow(null)} className="px-5 py-2.5 text-sm font-medium border border-border rounded-xl hover:bg-muted transition-colors">
