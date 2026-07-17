@@ -206,6 +206,21 @@ public class MeetingAnalysisService {
                 errorMessage
             );
         }
+        if (text.isBlank()) {
+            String errorMessage = MeetingAnalysisPersistence.REUPLOAD_READ_ERROR_MESSAGE;
+            meeting.setAnalysisErrorMessage(errorMessage);
+            meetingRepository.save(meeting);
+            return new MeetingAnalysisResponse(
+                meetingId,
+                String.valueOf(meeting.getProjectId()),
+                "FAILED",
+                meeting.getFileType(),
+                meeting.getOriginalFileName(),
+                null,
+                null,
+                errorMessage
+            );
+        }
         List<String> participantNames = meetingAttendeeRepository.findByMeetingId(id).stream()
             .map(attendee -> userRepository.findById(attendee.getUserId()).map(User::getName).orElse(null))
             .filter(name -> name != null)
@@ -501,28 +516,6 @@ public class MeetingAnalysisService {
 
     private String defaultString(String value, String defaultValue) {
         return value == null || value.isBlank() ? defaultValue : value;
-    }
-
-    private String buildMeetingIngestContent(MeetingAnalysisResult result) {
-        StringBuilder content = new StringBuilder(defaultString(result.summary(), ""));
-        if (result.decisions() != null && !result.decisions().isEmpty()) {
-            content.append("\n결정사항: ").append(String.join(", ", result.decisions()));
-        }
-        if (result.risks() != null && !result.risks().isEmpty()) {
-            content.append("\n위험요소: ").append(String.join(", ", result.risks()));
-        }
-        return content.toString();
-    }
-
-    private String buildActionItemIngestContent(MeetingActionItem item) {
-        StringBuilder content = new StringBuilder(item.getTitle());
-        if (item.getDescription() != null && !item.getDescription().isBlank()) {
-            content.append(" - ").append(item.getDescription());
-        }
-        if (item.getBasis() != null && !item.getBasis().isBlank()) {
-            content.append("\n근거: ").append(item.getBasis());
-        }
-        return content.toString();
     }
 
     private String buildTaskIngestContent(Task task) {

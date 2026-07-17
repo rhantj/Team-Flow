@@ -1,10 +1,12 @@
 package com.workflowai.meeting;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.workflowai.common.DemoDataService;
+import com.workflowai.rag.RagIngestService;
 import com.workflowai.user.UserRepository;
 import java.time.LocalDate;
 import java.util.List;
@@ -23,10 +25,11 @@ class MeetingAnalysisPersistenceTest {
     @Mock private MeetingActionItemRepository meetingActionItemRepository;
     @Mock private UserRepository userRepository;
     @Mock private DemoDataService demoDataService;
+    @Mock private RagIngestService ragIngestService;
 
     private MeetingAnalysisPersistence newPersistence() {
         return new MeetingAnalysisPersistence(
-            meetingRepository, meetingAnalysisRepository, meetingActionItemRepository, userRepository, demoDataService
+            meetingRepository, meetingAnalysisRepository, meetingActionItemRepository, userRepository, demoDataService, ragIngestService
         );
     }
 
@@ -35,6 +38,8 @@ class MeetingAnalysisPersistenceTest {
         MeetingAnalysisPersistence persistence = newPersistence();
         Meeting meeting = new Meeting(1L, "정기회의", "document", null, "processing", LocalDate.now(), "정기회의", "a.txt", null, 10L);
         when(meetingRepository.findById(5L)).thenReturn(Optional.of(meeting));
+        when(meetingAnalysisRepository.save(any(MeetingAnalysis.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(meetingActionItemRepository.save(any(MeetingActionItem.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         MeetingAnalysisResult result = new MeetingAnalysisResult(
             "요약",
@@ -70,6 +75,7 @@ class MeetingAnalysisPersistenceTest {
         assertThat(savedActionItem.getDueDate()).isEqualTo(LocalDate.parse("2026-07-20"));
         assertThat(savedActionItem.getRecommendedAssigneeId()).isNull();
         assertThat(savedActionItem.getFinalAssigneeId()).isNull();
+        verify(ragIngestService).ingestBestEffort(1L, "meeting", 5L, "요약\n결정사항: 결정1\n위험요소: 위험1");
     }
 
     @Test
