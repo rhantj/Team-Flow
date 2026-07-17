@@ -83,6 +83,7 @@ class MeetingAnalysisPersistenceTest {
         ArgumentCaptor<Meeting> meetingCaptor = ArgumentCaptor.forClass(Meeting.class);
         verify(meetingRepository).save(meetingCaptor.capture());
         assertThat(meetingCaptor.getValue().getAnalysisStatus()).isEqualTo("failed");
-        assertThat(meetingCaptor.getValue().getAnalysisErrorMessage()).isEqualTo("FastAPI 연결 실패");
+        assertThat(meetingCaptor.getValue().getAnalysisErrorMessage())
+            .isEqualTo(MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE);
     }
 }

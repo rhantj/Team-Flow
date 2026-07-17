@@ -1,10 +1,14 @@
 package com.workflowai.meeting;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
 @Component
 public class MeetingAnalysisRunner {
+    private static final Logger log = LoggerFactory.getLogger(MeetingAnalysisRunner.class);
+
     private final FastApiMeetingClient fastApiMeetingClient;
     private final FallbackMeetingAnalyzer fallbackMeetingAnalyzer;
     private final MeetingAnalysisPersistence meetingAnalysisPersistence;
@@ -38,14 +42,16 @@ public class MeetingAnalysisRunner {
                 analysisSource = "SPRING_FALLBACK";
             }
         } catch (Exception e) {
-            meetingAnalysisPersistence.saveAnalysisFailure(meetingId, e.getMessage());
+            log.warn("Meeting analysis failed. meetingId={}", meetingId, e);
+            meetingAnalysisPersistence.saveAnalysisFailure(meetingId, MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE);
             return;
         }
 
         try {
             meetingAnalysisPersistence.saveAnalysisSuccess(meetingId, result, analysisSource);
         } catch (Exception e) {
-            meetingAnalysisPersistence.saveAnalysisFailure(meetingId, e.getMessage());
+            log.warn("Meeting analysis persistence failed. meetingId={}", meetingId, e);
+            meetingAnalysisPersistence.saveAnalysisFailure(meetingId, MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE);
         }
     }
 }

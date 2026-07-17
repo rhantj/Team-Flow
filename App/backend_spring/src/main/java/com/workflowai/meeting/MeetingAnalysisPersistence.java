@@ -9,6 +9,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Component
 public class MeetingAnalysisPersistence {
+    public static final String DEFAULT_ANALYSIS_ERROR_MESSAGE = "회의록 분석 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
+    public static final String REUPLOAD_REQUIRED_ERROR_MESSAGE = "원본 음성/영상 파일은 재분석을 위해 다시 업로드해야 합니다.";
+
     private final MeetingRepository meetingRepository;
     private final MeetingAnalysisRepository meetingAnalysisRepository;
     private final MeetingActionItemRepository meetingActionItemRepository;
@@ -61,9 +64,16 @@ public class MeetingAnalysisPersistence {
     public void saveAnalysisFailure(Long meetingId, String errorMessage) {
         meetingRepository.findById(meetingId).ifPresent(meeting -> {
             meeting.setAnalysisStatus("failed");
-            meeting.setAnalysisErrorMessage(errorMessage);
+            meeting.setAnalysisErrorMessage(toSafeErrorMessage(errorMessage));
             meetingRepository.save(meeting);
         });
+    }
+
+    public static String toSafeErrorMessage(String errorMessage) {
+        if (REUPLOAD_REQUIRED_ERROR_MESSAGE.equals(errorMessage)) {
+            return REUPLOAD_REQUIRED_ERROR_MESSAGE;
+        }
+        return DEFAULT_ANALYSIS_ERROR_MESSAGE;
     }
 
     private Long resolveAssigneeByName(String name) {

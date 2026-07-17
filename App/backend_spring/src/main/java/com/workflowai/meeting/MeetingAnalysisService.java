@@ -3,6 +3,7 @@ package com.workflowai.meeting;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.Notification;
 import com.workflowai.notification.NotificationRepository;
+import com.workflowai.rag.RagIngestService;
 import com.workflowai.task.Task;
 import com.workflowai.task.TaskRepository;
 import com.workflowai.user.User;
@@ -33,6 +34,7 @@ public class MeetingAnalysisService {
     private final TaskRepository taskRepository;
     private final NotificationRepository notificationRepository;
     private final UserRepository userRepository;
+    private final RagIngestService ragIngestService;
     private final String uploadsDir;
 
     public MeetingAnalysisService(
@@ -45,6 +47,7 @@ public class MeetingAnalysisService {
         TaskRepository taskRepository,
         NotificationRepository notificationRepository,
         UserRepository userRepository,
+        RagIngestService ragIngestService,
         @Value("${workflow.uploads.dir}") String uploadsDir
     ) {
         this.meetingAnalysisRunner = meetingAnalysisRunner;
@@ -56,6 +59,7 @@ public class MeetingAnalysisService {
         this.taskRepository = taskRepository;
         this.notificationRepository = notificationRepository;
         this.userRepository = userRepository;
+        this.ragIngestService = ragIngestService;
         this.uploadsDir = uploadsDir;
     }
 
@@ -116,6 +120,9 @@ public class MeetingAnalysisService {
 
         if (!"completed".equals(meeting.getAnalysisStatus())) {
             String status = "failed".equals(meeting.getAnalysisStatus()) ? "FAILED" : "PROCESSING";
+            String errorMessage = "FAILED".equals(status)
+                ? MeetingAnalysisPersistence.toSafeErrorMessage(meeting.getAnalysisErrorMessage())
+                : null;
             return new MeetingAnalysisResponse(
                 meetingId,
                 String.valueOf(meeting.getProjectId()),
@@ -124,7 +131,7 @@ public class MeetingAnalysisService {
                 meeting.getOriginalFileName(),
                 null,
                 null,
-                meeting.getAnalysisErrorMessage()
+                errorMessage
             );
         }
 
@@ -168,7 +175,10 @@ public class MeetingAnalysisService {
             case "failed" -> "FAILED";
             default -> "PROCESSING";
         };
-        return new MeetingStatusResponse(meetingId, status, meeting.getAnalysisErrorMessage());
+        String errorMessage = "FAILED".equals(status)
+            ? MeetingAnalysisPersistence.toSafeErrorMessage(meeting.getAnalysisErrorMessage())
+            : null;
+        return new MeetingStatusResponse(meetingId, status, errorMessage);
     }
 
     public MeetingAnalysisResponse retry(String meetingId) {
@@ -182,7 +192,7 @@ public class MeetingAnalysisService {
 
         String text = extractTextFromStoredFile(meeting);
         if (text == null) {
-            String errorMessage = "원본 음성/영상 파일은 재분석을 위해 다시 업로드해야 합니다.";
+            String errorMessage = MeetingAnalysisPersistence.REUPLOAD_REQUIRED_ERROR_MESSAGE;
             meeting.setAnalysisErrorMessage(errorMessage);
             meetingRepository.save(meeting);
             return new MeetingAnalysisResponse(
@@ -280,8 +290,12 @@ public class MeetingAnalysisService {
         }
 
         Meeting meeting = meetingRepository.findById(meetingId).orElse(null);
+        Long taskProjectId = meeting == null ? null : meeting.getProjectId();
+        double position = taskRepository.findTopByProjectIdAndStatusOrderByPositionDesc(taskProjectId, "todo")
+            .map(t -> t.getPosition() + 1)
+            .orElse(0.0);
         Task task = taskRepository.save(new Task(
-            meeting == null ? null : meeting.getProjectId(),
+            taskProjectId,
             todo.title(),
             defaultString(todo.category(), "ETC"),
             "todo",
@@ -291,8 +305,10 @@ public class MeetingAnalysisService {
             todo.description(),
             "MEETING_AI",
             meetingId,
-            createdBy
+            createdBy,
+            position
         ));
+        ragIngestService.ingestBestEffort(task.getProjectId(), "task", task.getId(), buildTaskIngestContent(task));
 
         MeetingActionItem item = existingItem.orElseGet(() -> new MeetingActionItem(
             meetingId, todo.title(), todo.description(), todo.category(),
@@ -485,5 +501,35 @@ public class MeetingAnalysisService {
 
     private String defaultString(String value, String defaultValue) {
         return value == null || value.isBlank() ? defaultValue : value;
+    }
+
+    private String buildMeetingIngestContent(MeetingAnalysisResult result) {
+        StringBuilder content = new StringBuilder(defaultString(result.summary(), ""));
+        if (result.decisions() != null && !result.decisions().isEmpty()) {
+            content.append("\n결정사항: ").append(String.join(", ", result.decisions()));
+        }
+        if (result.risks() != null && !result.risks().isEmpty()) {
+            content.append("\n위험요소: ").append(String.join(", ", result.risks()));
+        }
+        return content.toString();
+    }
+
+    private String buildActionItemIngestContent(MeetingActionItem item) {
+        StringBuilder content = new StringBuilder(item.getTitle());
+        if (item.getDescription() != null && !item.getDescription().isBlank()) {
+            content.append(" - ").append(item.getDescription());
+        }
+        if (item.getBasis() != null && !item.getBasis().isBlank()) {
+            content.append("\n근거: ").append(item.getBasis());
+        }
+        return content.toString();
+    }
+
+    private String buildTaskIngestContent(Task task) {
+        StringBuilder content = new StringBuilder(task.getTitle());
+        if (task.getDescription() != null && !task.getDescription().isBlank()) {
+            content.append(" - ").append(task.getDescription());
+        }
+        return content.toString();
     }
 }

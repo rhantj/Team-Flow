@@ -11,6 +11,8 @@ import type { Meeting, UploadFlow, UploadType, GenTodo, SavedMeetingRecord } fro
 import type { CatId, Priority, Task } from "../../board/libs/types/task";
 import { analyzeMeeting, fetchMeeting, fetchMeetings, registerMeetingTasks, retryMeetingAnalysis } from "../libs/utils/meetingAiApi";
 import type { MeetingAiResult } from "../libs/types/meetingAiTypes";
+import { DEMO_PROJECT_ID } from "../../board/libs/utils/taskApi";
+import { useAuth } from "../../global/hooks/useAuth";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import {
@@ -41,6 +43,9 @@ import {
 } from "lucide-react";
 
 const CURRENT_USER_ROLE: "leader" | "member" = "leader";
+const MEETING_STATUS_POLL_INTERVAL_MS = 2000;
+const MEETING_STATUS_MAX_POLL_ATTEMPTS = 60;
+const MEETING_STATUS_MAX_NETWORK_FAILURES = 5;
 
 const groupTodosByAssignee = (list: GenTodo[], resolveAssignee: (todo: GenTodo) => string): GenTodo[] => {
   const UNASSIGNED_KEY = "__unassigned__";
@@ -270,6 +275,8 @@ const formatDateTime = (iso?: string) => {
 };
 
 export function MeetingsView() {
+  const { currentProjectId } = useAuth();
+  const projectId = String(currentProjectId ?? DEMO_PROJECT_ID);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [meetings, setMeetings] = useState<Meeting[]>(getStoredMeetings);
@@ -348,8 +355,22 @@ export function MeetingsView() {
   // meetingId를 대상으로 서버 분석 상태를 2초 간격으로 조회해 completed/failed를 반영한다.
   const pollMeetingStatus = (meetingId: string, title: string, uploadedAt: string) => {
     stopPolling();
+    let attempts = 0;
+    let consecutiveNetworkFailures = 0;
     pollIntervalRef.current = setInterval(() => {
-      fetchMeeting("demo-project", meetingId).then(response => {
+      attempts += 1;
+      if (attempts > MEETING_STATUS_MAX_POLL_ATTEMPTS) {
+        stopPolling();
+        setAnalysisResult(null);
+        setSelTodos([]);
+        setAnalysisSource(null);
+        setAnalysisError("분석 시간이 초과되었습니다. 잠시 후 재시도해주세요.");
+        setUploadFlow("results");
+        return;
+      }
+
+      fetchMeeting(projectId, meetingId).then(response => {
+        consecutiveNetworkFailures = 0;
         if (response.status === "PROCESSING") return;
         stopPolling();
         if (response.status === "COMPLETED" && response.analysis) {
@@ -393,9 +414,17 @@ export function MeetingsView() {
           setUploadFlow("results");
         }
       }).catch(() => {
-        // 네트워크 오류는 일시적일 수 있으므로 polling을 유지한다.
+        consecutiveNetworkFailures += 1;
+        if (consecutiveNetworkFailures >= MEETING_STATUS_MAX_NETWORK_FAILURES) {
+          stopPolling();
+          setAnalysisResult(null);
+          setSelTodos([]);
+          setAnalysisSource(null);
+          setAnalysisError("분석 상태 확인에 실패했습니다. 네트워크 상태를 확인한 뒤 다시 시도해주세요.");
+          setUploadFlow("results");
+        }
       });
-    }, 2000);
+    }, MEETING_STATUS_POLL_INTERVAL_MS);
   };
 
   useEffect(() => {
@@ -411,7 +440,7 @@ export function MeetingsView() {
   // 서버에 저장된 회의록 목록을 가져와 로컬에 없는 항목만 보충한다.
   // 실패해도 화면은 로컬 저장 목록으로 그대로 동작한다.
   useEffect(() => {
-    fetchMeetings("demo-project")
+    fetchMeetings(projectId)
       .then(list => {
         setMeetings(prev => {
           const existingIds = new Set(prev.map(m => m.id));
@@ -432,7 +461,7 @@ export function MeetingsView() {
         setTimeout(() => setMeetingListError(null), 4000);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [projectId]);
 
   const meeting = meetings.find(m => m.id === selected);
   // meetingId가 있으면 우선 사용, 없으면(review 화면에서 아직 meetings에 반영 전 등) meetTitle로 대체.
@@ -628,7 +657,7 @@ export function MeetingsView() {
     setUploadFlow("analyzing");
 
     void analyzeMeeting({
-      projectId: "demo-project",
+      projectId,
       file: selectedFile,
       title,
       meetingDate: meetDate,
@@ -658,7 +687,7 @@ export function MeetingsView() {
     setAnalyzeProgress(0);
     setUploadFlow("analyzing");
 
-    void retryMeetingAnalysis("demo-project", activeMeetingId).then(response => {
+    void retryMeetingAnalysis(projectId, activeMeetingId).then(response => {
       setActiveMeetingId(response.meetingId);
       pollMeetingStatus(response.meetingId, meetTitle, uploadedAt);
     }).catch(() => {
@@ -689,7 +718,7 @@ export function MeetingsView() {
 
     if (newTodos.length > 0) {
       try {
-        await registerMeetingTasks("demo-project", meetingIdentifier, newTodos.map(todo => toApiTodo(todo)));
+        await registerMeetingTasks(projectId, meetingIdentifier, newTodos.map(todo => toApiTodo(todo)));
       } catch {
         setRegisterMessage("서버에 업무 등록을 실패했습니다. 다시 시도해주세요.");
         setTimeout(() => setRegisterMessage(null), 2500);
@@ -707,6 +736,8 @@ export function MeetingsView() {
         priority: todo.priority,
         assignee: getAssignee(todo) || MEMBERS[0].id,
         dueDate: getDueDate(todo),
+        category: todo.category,
+        position: index,
         labels: [sourceLabel, cat.label],
         sourceMeetingTitle: meetingIdentifier,
       };
@@ -745,7 +776,7 @@ export function MeetingsView() {
     }
 
     try {
-      await registerMeetingTasks("demo-project", meetingIdentifier, newTodos.map(todo => ({
+      await registerMeetingTasks(projectId, meetingIdentifier, newTodos.map(todo => ({
         title: todo.title,
         description: "",
         assignee_candidate: todo.assigneeName,
@@ -769,6 +800,8 @@ export function MeetingsView() {
       priority: "medium",
       assignee: todo.assigneeId,
       dueDate: todo.dueDate,
+      category: "other",
+      position: index,
       labels: ["회의록 AI"],
       sourceMeetingTitle: meetingIdentifier,
     }));

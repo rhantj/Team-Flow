@@ -1,7 +1,6 @@
 import { useDrop } from "react-dnd";
 import { Plus } from "lucide-react";
 import { TaskCard } from "./TaskCard";
-import { TASK_CAT } from "../libs/mock/tasks";
 import { TASK_DRAG_TYPE, type TaskDragItem } from "../libs/utils/dnd";
 import type { Task, TaskStatus } from "../libs/types/task";
 
@@ -69,7 +68,7 @@ export function KanbanColumn({ col, tasks, compact, selectedId, onSelectTask, on
           <TaskCard
             key={task.id}
             task={task}
-            catId={TASK_CAT[task.id] ?? "other"}
+            catId={task.category}
             compact={compact}
             selected={selectedId === task.id}
             onSelect={() => onSelectTask(task.id)}

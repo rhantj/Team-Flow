@@ -10,7 +10,8 @@ public record TaskListItem(
     @Schema(description = "상태", example = "todo", allowableValues = {"todo", "inprogress", "blocked", "done"}) String status,
     @Schema(description = "담당자 ID (미배정이면 null)", example = "1") String assigneeId,
     @Schema(description = "마감일 (YYYY-MM-DD)", example = "2026-07-15") String dueDate,
-    @Schema(description = "우선순위", example = "HIGH") String priority
+    @Schema(description = "우선순위", example = "HIGH") String priority,
+    @Schema(description = "같은 status 안에서의 칸반 카드 순서(오름차순)", example = "0.0") double position
 ) {
     public static TaskListItem from(Task task) {
         return new TaskListItem(
@@ -20,7 +21,8 @@ public record TaskListItem(
             task.getStatus(),
             task.getAssigneeId() == null ? null : String.valueOf(task.getAssigneeId()),
             task.getDueDate() == null ? null : task.getDueDate().toString(),
-            task.getPriority()
+            task.getPriority(),
+            task.getPosition()
         );
     }
 }

@@ -27,7 +27,18 @@ workflow:
     base-url: ${WORKFLOW_AI_FASTAPI_URL:http://localhost:8000}
   cors:
     allowed-origins: ${WORKFLOW_CORS_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+  jwt:
+    secret: ${JWT_SECRET}
+    access-token-ttl-seconds: 1800
+    refresh-token-ttl-seconds: 1209600
+  google:
+    client-id: ${GOOGLE_CLIENT_ID:}
+    client-secret: ${GOOGLE_CLIENT_SECRET:}
+    redirect-uri: ${GOOGLE_REDIRECT_URI:http://localhost:8080/api/v1/auth/google/callback}
+  frontend:
+    base-url: ${WORKFLOW_FRONTEND_BASE_URL:http://localhost:5173}
   demo:
     seed-enabled: ${WORKFLOW_DEMO_SEED_ENABLED:true}
+    dev-login-enabled: ${WORKFLOW_DEMO_DEV_LOGIN_ENABLED:true}
   uploads:
     dir: ${WORKFLOW_UPLOADS_DIR:uploads}

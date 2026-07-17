@@ -49,6 +49,9 @@ public class Task {
     @Column(name = "created_by")
     private Long createdBy;
 
+    @Column(nullable = false)
+    private double position;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -69,7 +72,8 @@ public class Task {
         String description,
         String sourceType,
         Long sourceMeetingId,
-        Long createdBy
+        Long createdBy,
+        double position
     ) {
         this.projectId = projectId;
         this.title = title;
@@ -82,6 +86,7 @@ public class Task {
         this.sourceType = sourceType;
         this.sourceMeetingId = sourceMeetingId;
         this.createdBy = createdBy;
+        this.position = position;
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
     }
@@ -128,5 +133,28 @@ public class Task {
 
     public Long getSourceMeetingId() {
         return sourceMeetingId;
+    }
+
+    public double getPosition() {
+        return position;
+    }
+
+    /** 칸반 드래그앤드롭: 카드를 다른 컬럼/다른 위치로 옮긴다. */
+    public void moveTo(String status, double position) {
+        this.status = status;
+        this.position = position;
+    }
+
+    /**
+     * null인 필드는 변경하지 않는다(부분 수정). updated_at은 DB 트리거(trg_tasks_updated_at)가 갱신한다.
+     * 담당자 미배정/마감일 삭제처럼 "명시적으로 null로 비우기"는 아직 어떤 프론트 화면에서도 호출하지 않으므로 지원하지 않는다.
+     */
+    public void applyUpdate(String title, String category, Long assigneeId, LocalDate dueDate, String priority, String description) {
+        if (title != null) this.title = title;
+        if (category != null) this.category = category;
+        if (assigneeId != null) this.assigneeId = assigneeId;
+        if (dueDate != null) this.dueDate = dueDate;
+        if (priority != null) this.priority = priority;
+        if (description != null) this.description = description;
     }
 }

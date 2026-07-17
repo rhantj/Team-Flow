@@ -12,6 +12,7 @@ lightgbm==4.6.0
 transformers==4.48.0
 tokenizers>=0.21,<0.22
 faster-whisper==1.2.1
+matplotlib==3.10.9
 
 # LLM (6.6, LangChain은 미사용으로 보류)
 openai==1.59.7

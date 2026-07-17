@@ -11,7 +11,7 @@ import { useStoredActivity } from "../../board/libs/utils/activityStore";
 import { MEMBERS } from "../../global/lib/mock/members";
 import { GITHUB } from "../../github/libs/mock/github";
 import { WORKLOAD_DATA, PROGRESS_HISTORY } from "../libs/mock/workload";
-import { getDoneCount, getProgressPercent, getBlockedCount, getInProgressCount } from "../../board/libs/utils/taskService";
+import { getDoneCount, getProgressPercent, getBlockedCount, getInProgressCount, formatDueDate } from "../../board/libs/utils/taskService";
 import type { DetailPage } from "../../board/libs/types/task";
 import { useState } from "react";
 
@@ -153,7 +153,7 @@ export function DashboardView() {
                   <StatusIcon status={task.status} />
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-medium text-foreground truncate">{task.title}</div>
-                    <div className="text-[10px] text-muted-foreground">마감 {task.dueDate}</div>
+                    <div className="text-[10px] text-muted-foreground">마감 {formatDueDate(task.dueDate)}</div>
                   </div>
                   <Avatar member={m} size="sm" />
                 </div>

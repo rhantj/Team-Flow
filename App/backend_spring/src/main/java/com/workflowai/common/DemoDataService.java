@@ -1,7 +1,10 @@
 package com.workflowai.common;
 
 import com.workflowai.project.Project;
+import com.workflowai.project.ProjectMember;
+import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.project.ProjectRepository;
+import com.workflowai.project.ProjectRole;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
 import java.util.List;
@@ -21,24 +24,31 @@ public class DemoDataService implements ApplicationRunner {
     private static final String DEMO_PROJECT_TITLE = "데모 프로젝트";
     private static final String DEMO_PROJECT_ID_PARAM = "demo-project";
     private static final String DEMO_USER_PROVIDER = "demo";
-    private static final List<String[]> DEMO_MEMBERS = List.of(
-        new String[] {"1", "김민준"},
-        new String[] {"2", "이서연"},
-        new String[] {"3", "박지수"},
-        new String[] {"4", "최동혁"}
+
+    private record DemoMember(String mockId, String name, ProjectRole role) {
+    }
+
+    private static final List<DemoMember> DEMO_MEMBERS = List.of(
+        new DemoMember("1", "김민준", ProjectRole.LEADER),
+        new DemoMember("2", "이서연", ProjectRole.MEMBER),
+        new DemoMember("3", "박지수", ProjectRole.MEMBER),
+        new DemoMember("4", "최동혁", ProjectRole.REVIEWER)
     );
 
     private final ProjectRepository projectRepository;
     private final UserRepository userRepository;
+    private final ProjectMemberRepository projectMemberRepository;
     private final boolean seedEnabled;
 
     public DemoDataService(
         ProjectRepository projectRepository,
         UserRepository userRepository,
+        ProjectMemberRepository projectMemberRepository,
         @Value("${workflow.demo.seed-enabled:true}") boolean seedEnabled
     ) {
         this.projectRepository = projectRepository;
         this.userRepository = userRepository;
+        this.projectMemberRepository = projectMemberRepository;
         this.seedEnabled = seedEnabled;
     }
 
@@ -46,18 +56,20 @@ public class DemoDataService implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         if (!seedEnabled) return;
 
-        projectRepository.findFirstByTitle(DEMO_PROJECT_TITLE)
+        Project demoProject = projectRepository.findFirstByTitle(DEMO_PROJECT_TITLE)
             .orElseGet(() -> projectRepository.save(
                 new Project(DEMO_PROJECT_TITLE, "캡스톤디자인", "회의록 AI 데모/개발용 프로젝트")
             ));
 
-        for (String[] member : DEMO_MEMBERS) {
-            String mockId = member[0];
-            String name = member[1];
-            userRepository.findByProviderAndProviderId(DEMO_USER_PROVIDER, mockId)
+        for (DemoMember member : DEMO_MEMBERS) {
+            User user = userRepository.findByProviderAndProviderId(DEMO_USER_PROVIDER, member.mockId())
                 .orElseGet(() -> userRepository.save(
-                    new User("demo-user-" + mockId + "@workflow.ai", name, DEMO_USER_PROVIDER, mockId)
+                    new User("demo-user-" + member.mockId() + "@workflow.ai", member.name(), DEMO_USER_PROVIDER, member.mockId())
                 ));
+
+            if (!projectMemberRepository.existsByProjectIdAndUserId(demoProject.getId(), user.getId())) {
+                projectMemberRepository.save(new ProjectMember(demoProject.getId(), user.getId(), member.role()));
+            }
         }
     }
 

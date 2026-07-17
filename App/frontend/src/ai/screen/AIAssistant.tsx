@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { Sparkles, X, Send } from "lucide-react";
 import { CHAT_INIT, QUICK_QUESTIONS } from "../libs/mock/chat";
 import { useRagQuery } from "../libs/hooks/useRagQuery";
+import { DEMO_PROJECT_ID } from "../../board/libs/utils/taskApi";
+import { useAuth } from "../../global/hooks/useAuth";
 import type { ChatMsg } from "../libs/types/chat";
 
-const DEMO_PROJECT_ID = 1; // TODO(FS-1 인증 연동 후): 실제 로그인 세션의 프로젝트 ID로 교체
-
 export function AIAssistant({ onClose }: { onClose: () => void }) {
+  const { currentProjectId } = useAuth();
   const [messages, setMessages] = useState<ChatMsg[]>(CHAT_INIT.map(m => ({ role: m.role as "assistant", content: m.content })));
   const [input, setInput] = useState("");
   const { status, answer, error, ask } = useRagQuery();
@@ -27,8 +28,10 @@ export function AIAssistant({ onClose }: { onClose: () => void }) {
   const send = (text: string) => {
     if (!text.trim() || loading) return;
     setMessages(prev => [...prev, { role: "user", content: text }]);
-    setInput("");
-    ask(DEMO_PROJECT_ID, text);
+    ask(currentProjectId ?? DEMO_PROJECT_ID, text);
+    // 한글 등 IME 조합 완료 이벤트가 keydown 이후 뒤늦게 들어와 입력창을 다시 채우는 것을 피하기 위해
+    // 조합 이벤트가 먼저 처리되도록 한 틱 미뤄서 비운다.
+    setTimeout(() => setInput(""), 0);
   };
 
   return (

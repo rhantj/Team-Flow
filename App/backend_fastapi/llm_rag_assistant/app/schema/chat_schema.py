@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 class RagIngestRequest(BaseModel):
     project_id: int
-    source_type: Literal["meeting", "task"]
+    source_type: Literal["meeting", "task", "action_item"]
     source_id: int
     content: str
 
@@ -23,7 +23,7 @@ class RagQueryRequest(BaseModel):
 
 
 class RagSource(BaseModel):
-    source_type: Literal["meeting", "task"]
+    source_type: Literal["meeting", "task", "action_item"]
     source_id: int
     content_snippet: str
     similarity: float

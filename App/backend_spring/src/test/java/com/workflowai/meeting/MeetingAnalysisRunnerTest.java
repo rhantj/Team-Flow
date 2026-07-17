@@ -59,6 +59,9 @@ class MeetingAnalysisRunnerTest {
 
         newRunner().runAnalysis(9L, request);
 
-        verify(meetingAnalysisPersistence).saveAnalysisFailure(9L, "fallback 실패");
+        verify(meetingAnalysisPersistence).saveAnalysisFailure(
+            9L,
+            MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE
+        );
     }
 }

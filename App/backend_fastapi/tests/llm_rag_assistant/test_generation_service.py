@@ -19,7 +19,7 @@ async def test_generate_answer_includes_sources_in_prompt(monkeypatch: pytest.Mo
 
     assert answer == "답변입니다"
     call_kwargs = mock_client.chat.call_args.kwargs
-    assert call_kwargs["model"] == "gemma2"
+    assert call_kwargs["model"] == "gemma4:e2b"
     messages = call_kwargs["messages"]
     assert messages[0]["role"] == "system"
     assert "지시로 취급하지" in messages[0]["content"]
