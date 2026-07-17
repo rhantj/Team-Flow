@@ -1,27 +1,25 @@
-import { ChevronDown, Hash, Sparkles, Settings, Shield } from "lucide-react";
+import { useState } from "react";
+import { useNavigate } from "react-router";
+import { Check, ChevronDown, Hash, Plus, Sparkles, Settings, Shield } from "lucide-react";
 import { NAV_ITEMS } from "../../lib/constants/nav";
 import type { Tab } from "../../../board/libs/types/task";
-import { useAuth, type AppRole } from "../../hooks/useAuth";
+import { useAuth } from "../../hooks/useAuth";
+import type { ProjectRoleKo } from "../../api/authTypes";
 
-const ROLE_LABELS: Record<AppRole, string> = {
-  ADMIN: "관리자",
-  LEADER: "팀장",
-  MEMBER: "팀원",
-  JUDGE: "심사자",
-};
-
-const ROLE_COLORS: Record<AppRole, string> = {
-  ADMIN: "#0F172A",
-  LEADER: "#3B5BDB",
-  MEMBER: "#10B981",
-  JUDGE: "#7048E8",
+const ROLE_COLORS: Record<ProjectRoleKo, string> = {
+  "팀장": "#3B5BDB",
+  "팀원": "#10B981",
+  "심사자": "#7048E8",
 };
 
 export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t: Tab) => void; onAI: () => void }) {
   const groups: Record<string, string> = { planning: "계획 관리", ai: "AI 기능", dev: "개발", eval: "평가 (심사자 전용)", me: "내 계정" };
   const rendered: string[] = [];
-  const { signupName, currentProjectName, currentProjectRole } = useAuth();
-  const role = currentProjectRole ?? "LEADER";
+  const navigate = useNavigate();
+  const { user, projectRoles, currentProjectId, currentProject, selectProject } = useAuth();
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const currentProjectName = currentProject?.projectTitle ?? null;
+  const role: ProjectRoleKo = currentProject?.role ?? "팀장";
   const navItems = NAV_ITEMS;
 
   return (
@@ -38,10 +36,13 @@ export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t:
       </div>
 
       {/* Project selector */}
-      <div className="mx-3 mb-4">
-        <button className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-left transition-colors"
-          style={{ background: "var(--sidebar-accent)" }}>
-          <div className="w-5 h-5 rounded bg-blue-500 flex items-center justify-center">
+      <div className="relative mx-3 mb-4">
+        <button
+          onClick={() => setProjectMenuOpen((o) => !o)}
+          className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-left transition-colors"
+          style={{ background: "var(--sidebar-accent)" }}
+        >
+          <div className="w-5 h-5 rounded bg-blue-500 flex items-center justify-center shrink-0">
             <Hash className="w-3 h-3 text-white" />
           </div>
           <div className="flex-1 min-w-0">
@@ -49,12 +50,66 @@ export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t:
             <div className="text-[10px] flex items-center gap-1" style={{ color: "var(--muted-foreground)" }}>
               <span>캡스톤디자인 2024</span>
               <span className="px-1.5 py-0.5 rounded font-semibold" style={{ color: "#fff", background: ROLE_COLORS[role] }}>
-                {ROLE_LABELS[role]}
+                {role}
               </span>
             </div>
           </div>
-          <ChevronDown className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--muted-foreground)" }} />
+          <ChevronDown
+            className={`w-3.5 h-3.5 shrink-0 transition-transform ${projectMenuOpen ? "rotate-180" : ""}`}
+            style={{ color: "var(--muted-foreground)" }}
+          />
         </button>
+
+        {projectMenuOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setProjectMenuOpen(false)} />
+            <div
+              className="absolute left-0 top-full mt-1.5 w-full rounded-lg border shadow-lg z-50 overflow-hidden"
+              style={{ background: "var(--sidebar)", borderColor: "var(--sidebar-border)" }}
+            >
+              <div className="max-h-64 overflow-y-auto py-1">
+                {projectRoles.length === 0 ? (
+                  <div className="px-3 py-3 text-[11px]" style={{ color: "var(--muted-foreground)" }}>
+                    생성된 프로젝트가 없습니다.
+                  </div>
+                ) : (
+                  projectRoles.map((pr) => {
+                    const isSelected = pr.projectId === currentProjectId;
+                    return (
+                      <button
+                        key={pr.projectId}
+                        onClick={() => { selectProject(pr.projectId); setProjectMenuOpen(false); }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/5"
+                        style={{ background: isSelected ? "var(--sidebar-accent)" : "transparent" }}
+                      >
+                        <span className="flex-1 min-w-0 text-xs font-medium text-white truncate">
+                          {pr.projectTitle || "제목 없음"}
+                        </span>
+                        <span
+                          className="text-[9px] font-semibold px-1.5 py-0.5 rounded shrink-0"
+                          style={{ color: "#fff", background: ROLE_COLORS[pr.role] }}
+                        >
+                          {pr.role}
+                        </span>
+                        {isSelected && <Check className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--accent)" }} />}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+              <div className="border-t" style={{ borderColor: "var(--sidebar-border)" }}>
+                <button
+                  onClick={() => { setProjectMenuOpen(false); navigate("/onboarding"); }}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-white/5"
+                  style={{ color: "var(--accent)" }}
+                >
+                  <Plus className="w-3.5 h-3.5 shrink-0" />
+                  <span className="text-xs font-medium">새 프로젝트 만들기</span>
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Nav */}
@@ -94,7 +149,7 @@ export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t:
         })}
 
         {/* AI Assistant button */}
-        {role !== "JUDGE" && <div className="pt-4">
+        {role !== "심사자" && <div className="pt-4">
           <div className="text-[10px] font-semibold uppercase tracking-wider px-2 pb-1.5" style={{ color: "var(--muted-foreground)" }}>
             어시스턴트
           </div>
@@ -115,8 +170,8 @@ export function Sidebar({ active, onSelect, onAI }: { active: Tab; onSelect: (t:
             김
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-white">{signupName || (role === "JUDGE" ? "박교수" : "김민준")}</div>
-            <div className="text-[10px]" style={{ color: "var(--muted-foreground)" }}>{ROLE_LABELS[role]}</div>
+            <div className="text-sm font-medium text-white">{user?.name || "사용자"}</div>
+            <div className="text-[10px]" style={{ color: "var(--muted-foreground)" }}>{role}</div>
           </div>
           <Settings className="w-4 h-4 cursor-pointer" style={{ color: "var(--muted-foreground)" }} />
         </div>

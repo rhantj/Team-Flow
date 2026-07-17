@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.NotificationRepository;
+import com.workflowai.rag.RagIngestService;
 import com.workflowai.task.TaskRepository;
 import com.workflowai.user.UserRepository;
 import java.nio.file.Files;
@@ -35,12 +36,13 @@ class MeetingAnalysisServiceTest {
     @Mock private TaskRepository taskRepository;
     @Mock private NotificationRepository notificationRepository;
     @Mock private UserRepository userRepository;
+    @Mock private RagIngestService ragIngestService;
 
     private MeetingAnalysisService newService() {
         return new MeetingAnalysisService(
             meetingAnalysisRunner, demoDataService, meetingRepository, meetingAttendeeRepository,
             meetingAnalysisRepository, meetingActionItemRepository, taskRepository, notificationRepository,
-            userRepository, "/tmp/workflow-uploads"
+            userRepository, ragIngestService, "/tmp/workflow-uploads"
         );
     }
 
@@ -73,9 +75,11 @@ class MeetingAnalysisServiceTest {
     }
 
     @Test
-    void retryTransitionsFailedMeetingBackToProcessing() {
+    void retryTransitionsFailedMeetingBackToProcessing() throws Exception {
         MeetingAnalysisService service = newService();
-        Meeting meeting = new Meeting(1L, "정기회의", "document", null, "failed", LocalDate.now(), "정기회의", "x.txt", null, 5L);
+        Path textFile = Files.createTempFile("meeting-notes", ".txt");
+        Files.writeString(textFile, "재분석할 회의 내용");
+        Meeting meeting = new Meeting(1L, "정기회의", "document", textFile.toString(), "failed", LocalDate.now(), "정기회의", "x.txt", null, 5L);
         meeting.setAnalysisErrorMessage("이전 실패 사유");
         when(meetingRepository.findById(4L)).thenReturn(Optional.of(meeting));
         when(meetingAttendeeRepository.findByMeetingId(4L)).thenReturn(List.of());
@@ -86,8 +90,9 @@ class MeetingAnalysisServiceTest {
         assertThat(meeting.getAnalysisStatus()).isEqualTo("processing");
         assertThat(meeting.getAnalysisErrorMessage()).isNull();
         verify(meetingAnalysisRunner).runAnalysis(4L, new AiAnalyzeRequest(
-            "1", "정기회의", meeting.getMeetingDate().toString(), "정기회의", "document", "x.txt", "", List.of()
+            "1", "정기회의", meeting.getMeetingDate().toString(), "정기회의", "document", "x.txt", "재분석할 회의 내용", List.of()
         ));
+        Files.deleteIfExists(textFile);
     }
 
     @Test
@@ -103,10 +108,29 @@ class MeetingAnalysisServiceTest {
         MeetingAnalysisResponse response = service.retry("6");
 
         assertThat(response.status()).isEqualTo("FAILED");
-        assertThat(response.errorMessage()).isEqualTo("원본 음성/영상 파일은 재분석을 위해 다시 업로드해야 합니다.");
+        assertThat(response.errorMessage()).isEqualTo(MeetingAnalysisPersistence.REUPLOAD_REQUIRED_ERROR_MESSAGE);
         assertThat(meeting.getAnalysisStatus()).isEqualTo("failed");
-        assertThat(meeting.getAnalysisErrorMessage()).isEqualTo("원본 음성/영상 파일은 재분석을 위해 다시 업로드해야 합니다.");
+        assertThat(meeting.getAnalysisErrorMessage()).isEqualTo(MeetingAnalysisPersistence.REUPLOAD_REQUIRED_ERROR_MESSAGE);
         verify(meetingAnalysisRunner, org.mockito.Mockito.never()).runAnalysis(any(), any());
         Files.deleteIfExists(audioFile);
+    }
+
+    @Test
+    void retryFailsWithClearMessageWhenStoredFileIsEmpty() throws Exception {
+        MeetingAnalysisService service = newService();
+        Path emptyFile = Files.createTempFile("meeting-empty", ".txt");
+        Meeting meeting = new Meeting(
+            1L, "정기회의", "document", emptyFile.toString(), "failed", LocalDate.now(), "정기회의", "empty.txt", null, 5L
+        );
+        when(meetingRepository.findById(7L)).thenReturn(Optional.of(meeting));
+
+        MeetingAnalysisResponse response = service.retry("7");
+
+        assertThat(response.status()).isEqualTo("FAILED");
+        assertThat(response.errorMessage()).isEqualTo(MeetingAnalysisPersistence.REUPLOAD_READ_ERROR_MESSAGE);
+        assertThat(meeting.getAnalysisStatus()).isEqualTo("failed");
+        assertThat(meeting.getAnalysisErrorMessage()).isEqualTo(MeetingAnalysisPersistence.REUPLOAD_READ_ERROR_MESSAGE);
+        verify(meetingAnalysisRunner, org.mockito.Mockito.never()).runAnalysis(any(), any());
+        Files.deleteIfExists(emptyFile);
     }
 }

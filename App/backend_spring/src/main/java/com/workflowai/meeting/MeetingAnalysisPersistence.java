@@ -1,6 +1,7 @@
 package com.workflowai.meeting;
 
 import com.workflowai.common.DemoDataService;
+import com.workflowai.rag.RagIngestService;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
 import java.time.LocalDate;
@@ -9,24 +10,31 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Component
 public class MeetingAnalysisPersistence {
+    public static final String DEFAULT_ANALYSIS_ERROR_MESSAGE = "회의록 분석 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
+    public static final String REUPLOAD_REQUIRED_ERROR_MESSAGE = "원본 음성/영상 파일은 재분석을 위해 다시 업로드해야 합니다.";
+    public static final String REUPLOAD_READ_ERROR_MESSAGE = "원본 회의록 내용을 읽을 수 없어 재분석을 위해 다시 업로드해야 합니다.";
+
     private final MeetingRepository meetingRepository;
     private final MeetingAnalysisRepository meetingAnalysisRepository;
     private final MeetingActionItemRepository meetingActionItemRepository;
     private final UserRepository userRepository;
     private final DemoDataService demoDataService;
+    private final RagIngestService ragIngestService;
 
     public MeetingAnalysisPersistence(
         MeetingRepository meetingRepository,
         MeetingAnalysisRepository meetingAnalysisRepository,
         MeetingActionItemRepository meetingActionItemRepository,
         UserRepository userRepository,
-        DemoDataService demoDataService
+        DemoDataService demoDataService,
+        RagIngestService ragIngestService
     ) {
         this.meetingRepository = meetingRepository;
         this.meetingAnalysisRepository = meetingAnalysisRepository;
         this.meetingActionItemRepository = meetingActionItemRepository;
         this.userRepository = userRepository;
         this.demoDataService = demoDataService;
+        this.ragIngestService = ragIngestService;
     }
 
     @Transactional
@@ -34,12 +42,13 @@ public class MeetingAnalysisPersistence {
         Meeting meeting = meetingRepository.findById(meetingId).orElseThrow(
             () -> new IllegalStateException("Meeting not found: " + meetingId));
 
-        meetingAnalysisRepository.save(new MeetingAnalysis(
+        MeetingAnalysis analysis = meetingAnalysisRepository.save(new MeetingAnalysis(
             meetingId, result.summary(), result.decisions(), result.risks(), result.keywords(), analysisSource
         ));
+        ragIngestService.ingestBestEffort(meeting.getProjectId(), "meeting", analysis.getMeetingId(), buildMeetingIngestContent(result));
 
         for (MeetingTodo todo : result.todos()) {
-            meetingActionItemRepository.save(new MeetingActionItem(
+            MeetingActionItem actionItem = meetingActionItemRepository.save(new MeetingActionItem(
                 meetingId,
                 todo.title(),
                 todo.description(),
@@ -50,6 +59,9 @@ public class MeetingAnalysisPersistence {
                 todo.priority(),
                 null
             ));
+            if (actionItem != null) {
+                ragIngestService.ingestBestEffort(meeting.getProjectId(), "action_item", actionItem.getId(), buildActionItemIngestContent(actionItem));
+            }
         }
 
         meeting.setAnalysisStatus("completed");
@@ -61,9 +73,41 @@ public class MeetingAnalysisPersistence {
     public void saveAnalysisFailure(Long meetingId, String errorMessage) {
         meetingRepository.findById(meetingId).ifPresent(meeting -> {
             meeting.setAnalysisStatus("failed");
-            meeting.setAnalysisErrorMessage(errorMessage);
+            meeting.setAnalysisErrorMessage(toSafeErrorMessage(errorMessage));
             meetingRepository.save(meeting);
         });
+    }
+
+    public static String toSafeErrorMessage(String errorMessage) {
+        if (REUPLOAD_REQUIRED_ERROR_MESSAGE.equals(errorMessage)) {
+            return REUPLOAD_REQUIRED_ERROR_MESSAGE;
+        }
+        if (REUPLOAD_READ_ERROR_MESSAGE.equals(errorMessage)) {
+            return REUPLOAD_READ_ERROR_MESSAGE;
+        }
+        return DEFAULT_ANALYSIS_ERROR_MESSAGE;
+    }
+
+    private String buildMeetingIngestContent(MeetingAnalysisResult result) {
+        StringBuilder content = new StringBuilder(defaultString(result.summary(), ""));
+        if (result.decisions() != null && !result.decisions().isEmpty()) {
+            content.append("\n결정사항: ").append(String.join(", ", result.decisions()));
+        }
+        if (result.risks() != null && !result.risks().isEmpty()) {
+            content.append("\n위험요소: ").append(String.join(", ", result.risks()));
+        }
+        return content.toString();
+    }
+
+    private String buildActionItemIngestContent(MeetingActionItem item) {
+        StringBuilder content = new StringBuilder(defaultString(item.getTitle(), ""));
+        if (item.getDescription() != null && !item.getDescription().isBlank()) {
+            content.append(" - ").append(item.getDescription());
+        }
+        if (item.getBasis() != null && !item.getBasis().isBlank()) {
+            content.append("\n근거: ").append(item.getBasis());
+        }
+        return content.toString();
     }
 
     private Long resolveAssigneeByName(String name) {
@@ -89,5 +133,9 @@ public class MeetingAnalysisPersistence {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private String defaultString(String value, String defaultValue) {
+        return value == null || value.isBlank() ? defaultValue : value;
     }
 }

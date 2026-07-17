@@ -4,21 +4,22 @@ import { CatTag } from "./CatTag";
 import { CATEGORIES } from "../libs/mock/tasks";
 import { getCat } from "../libs/utils/taskService";
 import { CAT_MODAL_FIELDS } from "../libs/utils/catFields";
-import { getStoredTasks, saveStoredTasks } from "../libs/utils/localStore";
-import { addActivity } from "../libs/utils/activityStore";
+import { createTask, DEMO_PROJECT_ID } from "../libs/utils/taskApi";
 import { MEMBERS } from "../../global/lib/mock/members";
+import { useAuth } from "../../global/hooks/useAuth";
 import type { Priority, Task, TaskStatus } from "../libs/types/task";
 
-const CURRENT_USER = MEMBERS[0];
 const STEPS = ["카테고리 선택", "기본 정보", "추가 정보", "생성 완료"];
 
 interface AddTaskModalProps {
   open: boolean;
   initialStatus: TaskStatus;
   onClose: () => void;
+  onCreated: (task: Task) => void;
 }
 
-export function AddTaskModal({ open, initialStatus, onClose }: AddTaskModalProps) {
+export function AddTaskModal({ open, initialStatus, onClose, onCreated }: AddTaskModalProps) {
+  const { currentProjectId } = useAuth();
   const [step, setStep] = useState(0);
   const [selCat, setSelCat] = useState("");
   const [customCat, setCustomCat] = useState("");
@@ -29,6 +30,8 @@ export function AddTaskModal({ open, initialStatus, onClose }: AddTaskModalProps
   const [fPriority, setFPriority] = useState<Priority>("medium");
   const [fStatus, setFStatus] = useState<TaskStatus>("todo");
   const [fCriteria, setFCriteria] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -40,27 +43,36 @@ export function AddTaskModal({ open, initialStatus, onClose }: AddTaskModalProps
       setFDue("");
       setFPriority("medium");
       setFCriteria("");
+      setSubmitError(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialStatus]);
 
   if (!open) return null;
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (step === 2) {
-      const now = Date.now();
-      const cat = selCat === "other" ? "other" : selCat;
-      const newTask: Task = {
-        id: `TASK-${now}`,
-        title: fTitle.trim() || `${getCat(cat).label} 업무`,
-        status: fStatus,
-        priority: fPriority,
-        assignee: fAssignee,
-        dueDate: fDue ? fDue.slice(5).replace("-", ".") : "미정",
-        labels: [customCat.trim() || getCat(cat).label],
-      };
-      saveStoredTasks([newTask, ...getStoredTasks()]);
-      addActivity(`'${newTask.title}' 업무를 새로 추가했습니다.`, CURRENT_USER.name, "task-created");
+      const cat = selCat === "other" ? (customCat.trim() || "other") : selCat;
+      setSubmitting(true);
+      setSubmitError(null);
+      try {
+        const created = await createTask({
+          title: fTitle.trim() || `${getCat(selCat).label} 업무`,
+          category: cat,
+          status: fStatus,
+          assigneeId: fAssignee,
+          dueDate: fDue || null,
+          priority: fPriority,
+          description: fDesc.trim() || undefined,
+        }, currentProjectId ?? DEMO_PROJECT_ID);
+        onCreated(created);
+        setStep(step + 1);
+      } catch {
+        setSubmitError("업무 생성에 실패했습니다. 잠시 후 다시 시도해주세요.");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
     }
     setStep(step + 1);
   };
@@ -247,21 +259,24 @@ export function AddTaskModal({ open, initialStatus, onClose }: AddTaskModalProps
 
           {/* Modal footer */}
           {step < 3 && (
-            <div className="flex items-center justify-between px-6 py-4 border-t border-border">
-              <button
-                onClick={() => (step === 0 ? onClose() : setStep(step - 1))}
-                className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-muted-foreground border border-border rounded-xl hover:bg-muted transition-colors"
-              >
-                <ArrowLeft className="w-4 h-4" />{step === 0 ? "취소" : "이전"}
-              </button>
-              <button
-                onClick={handleNext}
-                disabled={step === 0 && !selCat}
-                className="flex items-center gap-1.5 px-5 py-2 text-sm font-semibold text-white rounded-xl disabled:opacity-40 hover:opacity-90 transition-opacity"
-                style={{ background: "linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}
-              >
-                {step === 2 ? "업무 생성 완료" : "다음 단계"}<ArrowRight className="w-4 h-4" />
-              </button>
+            <div className="flex flex-col gap-2 px-6 py-4 border-t border-border">
+              {submitError && <div className="text-xs text-red-600">{submitError}</div>}
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={() => (step === 0 ? onClose() : setStep(step - 1))}
+                  className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-muted-foreground border border-border rounded-xl hover:bg-muted transition-colors"
+                >
+                  <ArrowLeft className="w-4 h-4" />{step === 0 ? "취소" : "이전"}
+                </button>
+                <button
+                  onClick={handleNext}
+                  disabled={(step === 0 && !selCat) || submitting}
+                  className="flex items-center gap-1.5 px-5 py-2 text-sm font-semibold text-white rounded-xl disabled:opacity-40 hover:opacity-90 transition-opacity"
+                  style={{ background: "linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}
+                >
+                  {step === 2 ? (submitting ? "생성 중..." : "업무 생성 완료") : "다음 단계"}<ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           )}
         </div>

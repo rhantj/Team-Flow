@@ -4,6 +4,7 @@ import { CatTag } from "./CatTag";
 import { PriorityBadge } from "./PriorityBadge";
 import { MEMBERS } from "../../global/lib/mock/members";
 import { TASK_DRAG_TYPE, type TaskDragItem } from "../libs/utils/dnd";
+import { formatDueDate } from "../libs/utils/taskService";
 import type { Task } from "../libs/types/task";
 
 interface TaskCardProps {
@@ -84,7 +85,7 @@ export function TaskCard({ task, catId, compact, selected, onSelect, onReorder }
         <div className="flex items-center justify-between gap-1.5">
           <PriorityBadge priority={task.priority} />
           <div className="flex items-center gap-1.5 shrink-0">
-            <span className="text-[10px] text-muted-foreground">{task.dueDate}</span>
+            <span className="text-[10px] text-muted-foreground">{formatDueDate(task.dueDate)}</span>
             {m && (
               <div
                 className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0"

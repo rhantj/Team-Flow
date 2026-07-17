@@ -5,22 +5,15 @@ import { MEMBERS } from "../../lib/mock/members";
 import { TAB_TITLES } from "../../lib/constants/nav";
 import type { Tab } from "../../../board/libs/types/task";
 import { useStoredNotifications, markNotificationsRead } from "../../../board/libs/utils/activityStore";
-import { useAuth, type AppRole } from "../../hooks/useAuth";
+import { useAuth } from "../../hooks/useAuth";
+import type { ProjectRoleKo } from "../../api/authTypes";
 
 const CURRENT_USER = MEMBERS[0];
 
-const ROLE_LABELS: Record<AppRole, string> = {
-  ADMIN: "관리자",
-  LEADER: "팀장",
-  MEMBER: "팀원",
-  JUDGE: "심사자",
-};
-
-const ROLE_COLORS: Record<AppRole, string> = {
-  ADMIN: "#0F172A",
-  LEADER: "#3B5BDB",
-  MEMBER: "#10B981",
-  JUDGE: "#7048E8",
+const ROLE_COLORS: Record<ProjectRoleKo, string> = {
+  "팀장": "#3B5BDB",
+  "팀원": "#10B981",
+  "심사자": "#7048E8",
 };
 
 const DETAIL_TITLES: Record<string, string> = {
@@ -35,8 +28,9 @@ export function Header() {
   const location = useLocation();
   const [searchOpen, setSearchOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const { currentProjectName, currentProjectRole, logout } = useAuth();
-  const role = currentProjectRole ?? "LEADER";
+  const { currentProject, logout } = useAuth();
+  const currentProjectName = currentProject?.projectTitle ?? null;
+  const role: ProjectRoleKo = currentProject?.role ?? "팀장";
   const allNotifications = useStoredNotifications();
   const myNotifications = allNotifications.filter(n => n.recipientId === CURRENT_USER.id);
   const unreadCount = myNotifications.filter(n => !n.read).length;
@@ -56,7 +50,7 @@ export function Header() {
         <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
         <span className="text-muted-foreground truncate max-w-[220px]">{currentProjectName || "스마트 주차 관리 시스템"}</span>
         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-white" style={{ background: ROLE_COLORS[role] }}>
-          {ROLE_LABELS[role]}
+          {role}
         </span>
         <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
         {detailPage ? (

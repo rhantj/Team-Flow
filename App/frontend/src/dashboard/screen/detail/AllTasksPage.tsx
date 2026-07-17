@@ -8,6 +8,7 @@ import { PriorityBadge } from "../../../board/components/PriorityBadge";
 import { SourceBadge } from "../../../github/components/SourceBadge";
 import { TASK_SOURCES } from "../../../board/libs/mock/tasks";
 import { useStoredTasks } from "../../../global/hooks/useStoredTasks";
+import { formatDueDate } from "../../../board/libs/utils/taskService";
 import { MEMBERS } from "../../../global/lib/mock/members";
 import type { TaskStatus } from "../../../board/libs/types/task";
 import {
@@ -140,7 +141,8 @@ export function AllTasksPage() {
               const member = MEMBERS.find(m => m.id === task.assignee)!;
               const src = TASK_SOURCES[task.id] ?? "직접 생성";
               const isSelected = selected.includes(task.id);
-              const isDueSoon = task.status !== "done" && task.dueDate <= "12.18";
+              // "12.18"이던 예전 임계값을 동일 시점의 ISO 날짜로 옮긴 것 - 동작은 그대로, 비교 방식만 ISO 문자열 비교로 변경.
+              const isDueSoon = task.status !== "done" && task.dueDate !== "" && task.dueDate <= "2025-12-18";
               return (
                 <tr key={task.id} className={`hover:bg-muted/30 transition-colors ${isSelected ? "bg-blue-50/40" : ""}`}>
                   <td className="pl-4 pr-2 py-3">
@@ -168,7 +170,7 @@ export function AllTasksPage() {
                   <td className="px-3 py-3"><PriorityBadge priority={task.priority} /></td>
                   <td className="px-3 py-3">
                     <span className={`text-xs font-medium ${isDueSoon ? "text-amber-600" : "text-muted-foreground"}`}>
-                      {isDueSoon && "⚠ "}{task.dueDate}
+                      {isDueSoon && "⚠ "}{formatDueDate(task.dueDate)}
                     </span>
                   </td>
                   <td className="px-3 py-3"><SourceBadge source={src} /></td>

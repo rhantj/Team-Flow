@@ -25,7 +25,7 @@ import {
   CONTRIB_REPORTS,
   REVIEWER_ACTIVITIES,
   REVIEWER_TEAMS,
-} from "../../board/libs/mock/reviewer";
+} from "../../global/lib/mock/reviewer";
 
 type Team = (typeof REVIEWER_TEAMS)[number];
 type EvalStatus = Team["evalStatus"];

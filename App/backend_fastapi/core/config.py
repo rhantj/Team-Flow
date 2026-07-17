@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     database_url: str
     ollama_host: str = "http://localhost:11434"
     embedding_model: str = "nomic-embed-text"
-    generation_model: str = "gemma2"
+    generation_model: str = "gemma4:e2b"
 
 
 @lru_cache

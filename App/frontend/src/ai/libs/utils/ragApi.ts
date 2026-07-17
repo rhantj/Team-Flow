@@ -1,6 +1,7 @@
 import type { RagSource } from "../types/chat";
+import { tokenStore } from "../../../global/api/tokenStore";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080/api";
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080/api/v1").replace(/\/v1$/, "");
 
 interface ApiEnvelope<T> {
   success: boolean;
@@ -27,9 +28,13 @@ interface RagQueryResult {
 }
 
 export async function queryRag(projectId: number, question: string): Promise<RagQueryResult> {
+  const accessToken = tokenStore.getAccessToken();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+
   const response = await fetch(`${API_BASE_URL}/ai/rag/query`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ project_id: projectId, question }),
   });
 

@@ -1,6 +1,5 @@
 import type { MeetingAiResult, MeetingAiTodo } from "../types/meetingAiTypes";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080/api/v1";
+import { apiFetch } from "../../../global/api/apiClient";
 
 interface AnalyzeMeetingParams {
   projectId: string;
@@ -10,12 +9,6 @@ interface AnalyzeMeetingParams {
   meetingKind: string;
   sourceType: "document" | "audio" | "video";
   participants: string[];
-}
-
-interface ApiEnvelope<T> {
-  success: boolean;
-  data: T;
-  error?: { code: string; message: string } | null;
 }
 
 export type MeetingAnalysisStatus = "PROCESSING" | "COMPLETED" | "FAILED";
@@ -31,17 +24,6 @@ export interface MeetingAnalysisResponse {
   errorMessage: string | null;
 }
 
-async function unwrapEnvelope<T>(response: Response, failureMessage: string): Promise<T> {
-  if (!response.ok) {
-    throw new Error(`${failureMessage}: ${response.status}`);
-  }
-  const body = await response.json() as ApiEnvelope<T>;
-  if (!body.success) {
-    throw new Error(body.error?.message ?? failureMessage);
-  }
-  return body.data;
-}
-
 export async function analyzeMeeting(params: AnalyzeMeetingParams): Promise<MeetingAnalysisResponse> {
   const formData = new FormData();
   if (params.file) formData.append("file", params.file);
@@ -51,23 +33,20 @@ export async function analyzeMeeting(params: AnalyzeMeetingParams): Promise<Meet
   formData.append("sourceType", params.sourceType);
   params.participants.forEach(participant => formData.append("participants", participant));
 
-  const response = await fetch(`${API_BASE_URL}/projects/${params.projectId}/meetings/analyze`, {
+  return apiFetch<MeetingAnalysisResponse>(`/projects/${params.projectId}/meetings/analyze`, {
     method: "POST",
     body: formData,
   });
-  return unwrapEnvelope<MeetingAnalysisResponse>(response, "Meeting analysis failed");
 }
 
 export async function fetchMeeting(projectId: string, meetingId: string): Promise<MeetingAnalysisResponse> {
-  const response = await fetch(`${API_BASE_URL}/projects/${projectId}/meetings/${meetingId}`);
-  return unwrapEnvelope<MeetingAnalysisResponse>(response, "Meeting fetch failed");
+  return apiFetch<MeetingAnalysisResponse>(`/projects/${projectId}/meetings/${meetingId}`);
 }
 
 export async function retryMeetingAnalysis(projectId: string, meetingId: string): Promise<MeetingAnalysisResponse> {
-  const response = await fetch(`${API_BASE_URL}/projects/${projectId}/meetings/${meetingId}/retry`, {
+  return apiFetch<MeetingAnalysisResponse>(`/projects/${projectId}/meetings/${meetingId}/retry`, {
     method: "POST",
   });
-  return unwrapEnvelope<MeetingAnalysisResponse>(response, "Meeting retry failed");
 }
 
 export interface MeetingSummaryDto {
@@ -79,8 +58,7 @@ export interface MeetingSummaryDto {
 }
 
 export async function fetchMeetings(projectId: string): Promise<MeetingSummaryDto[]> {
-  const response = await fetch(`${API_BASE_URL}/projects/${projectId}/meetings`);
-  return unwrapEnvelope<MeetingSummaryDto[]>(response, "Meeting list fetch failed");
+  return apiFetch<MeetingSummaryDto[]>(`/projects/${projectId}/meetings`);
 }
 
 export interface TaskRegisterResponseDto {
@@ -94,10 +72,8 @@ export async function registerMeetingTasks(
   meetingId: string,
   todos: MeetingAiTodo[]
 ): Promise<TaskRegisterResponseDto> {
-  const response = await fetch(`${API_BASE_URL}/projects/${projectId}/meetings/${meetingId}/tasks/register`, {
+  return apiFetch<TaskRegisterResponseDto>(`/projects/${projectId}/meetings/${meetingId}/tasks/register`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ todos }),
   });
-  return unwrapEnvelope<TaskRegisterResponseDto>(response, "Task register failed");
 }

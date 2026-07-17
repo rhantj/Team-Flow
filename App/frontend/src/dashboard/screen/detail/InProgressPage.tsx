@@ -4,6 +4,7 @@ import { TaskStatusPill } from "../../../board/components/TaskStatusPill";
 import { PriorityBadge } from "../../../board/components/PriorityBadge";
 import { IN_PROGRESS_META } from "../../../board/libs/mock/tasks";
 import { useStoredTasks } from "../../../global/hooks/useStoredTasks";
+import { formatDueDate } from "../../../board/libs/utils/taskService";
 import { MEMBERS } from "../../../global/lib/mock/members";
 import {
   Sparkles,
@@ -111,7 +112,7 @@ export function InProgressPage() {
                       마지막 업데이트 {meta.lastUpdate}
                     </span>
                     <span className="text-xs font-semibold text-foreground bg-muted px-2 py-1 rounded-lg">
-                      마감 {task.dueDate}
+                      마감 {formatDueDate(task.dueDate)}
                     </span>
                   </div>
                 </div>
