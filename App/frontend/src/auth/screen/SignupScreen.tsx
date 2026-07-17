@@ -43,6 +43,7 @@ export function SignupScreen() {
   };
 
   const handleApproveDemo = () => {
+    if (!demoAuthEnabled) return;
     approveProfessorSignup(name || "박교수");
     navigate("/projects");
   };

@@ -181,6 +181,21 @@ public class MeetingAnalysisService {
         }
 
         String text = extractTextFromStoredFile(meeting);
+        if (text == null) {
+            String errorMessage = "원본 음성/영상 파일은 재분석을 위해 다시 업로드해야 합니다.";
+            meeting.setAnalysisErrorMessage(errorMessage);
+            meetingRepository.save(meeting);
+            return new MeetingAnalysisResponse(
+                meetingId,
+                String.valueOf(meeting.getProjectId()),
+                "FAILED",
+                meeting.getFileType(),
+                meeting.getOriginalFileName(),
+                null,
+                null,
+                errorMessage
+            );
+        }
         List<String> participantNames = meetingAttendeeRepository.findByMeetingId(id).stream()
             .map(attendee -> userRepository.findById(attendee.getUserId()).map(User::getName).orElse(null))
             .filter(name -> name != null)
@@ -429,7 +444,7 @@ public class MeetingAnalysisService {
                 return extractDocxTextFromBytes(bytes);
             }
             if (!textLike) {
-                return "업로드 파일명: " + meeting.getOriginalFileName() + ". 바이너리 문서는 FastAPI 문서 파서 또는 STT 단계에서 텍스트 추출 예정.";
+                return null;
             }
             return new String(bytes, StandardCharsets.UTF_8);
         } catch (IOException e) {

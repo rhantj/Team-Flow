@@ -23,6 +23,7 @@ export function LoginScreen() {
   };
 
   const handleJudgeDemoLogin = () => {
+    if (!demoAuthEnabled) return;
     login("JUDGE");
     navigate("/projects");
   };

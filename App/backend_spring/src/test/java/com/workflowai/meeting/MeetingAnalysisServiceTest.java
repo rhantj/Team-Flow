@@ -11,6 +11,8 @@ import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.NotificationRepository;
 import com.workflowai.task.TaskRepository;
 import com.workflowai.user.UserRepository;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -86,5 +88,25 @@ class MeetingAnalysisServiceTest {
         verify(meetingAnalysisRunner).runAnalysis(4L, new AiAnalyzeRequest(
             "1", "정기회의", meeting.getMeetingDate().toString(), "정기회의", "document", "x.txt", "", List.of()
         ));
+    }
+
+    @Test
+    void retryFailsWithClearMessageWhenStoredFileIsNotTextExtractable() throws Exception {
+        MeetingAnalysisService service = newService();
+        Path audioFile = Files.createTempFile("meeting-audio", ".mp3");
+        Files.write(audioFile, new byte[] { 0, 1, 2, 3 });
+        Meeting meeting = new Meeting(
+            1L, "정기회의", "audio", audioFile.toString(), "failed", LocalDate.now(), "정기회의", "recording.mp3", null, 5L
+        );
+        when(meetingRepository.findById(6L)).thenReturn(Optional.of(meeting));
+
+        MeetingAnalysisResponse response = service.retry("6");
+
+        assertThat(response.status()).isEqualTo("FAILED");
+        assertThat(response.errorMessage()).isEqualTo("원본 음성/영상 파일은 재분석을 위해 다시 업로드해야 합니다.");
+        assertThat(meeting.getAnalysisStatus()).isEqualTo("failed");
+        assertThat(meeting.getAnalysisErrorMessage()).isEqualTo("원본 음성/영상 파일은 재분석을 위해 다시 업로드해야 합니다.");
+        verify(meetingAnalysisRunner, org.mockito.Mockito.never()).runAnalysis(any(), any());
+        Files.deleteIfExists(audioFile);
     }
 }
