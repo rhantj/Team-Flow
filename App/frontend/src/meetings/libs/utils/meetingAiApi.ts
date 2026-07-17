@@ -18,14 +18,28 @@ interface ApiEnvelope<T> {
   error?: { code: string; message: string } | null;
 }
 
-interface MeetingAnalysisResponse {
+export type MeetingAnalysisStatus = "PROCESSING" | "COMPLETED" | "FAILED";
+
+export interface MeetingAnalysisResponse {
   meetingId: string;
   projectId: string;
-  status: string;
+  status: MeetingAnalysisStatus;
   sourceType: string;
   fileName: string | null;
-  analysisSource: "FASTAPI" | "SPRING_FALLBACK";
-  analysis: MeetingAiResult;
+  analysisSource: "FASTAPI" | "SPRING_FALLBACK" | null;
+  analysis: MeetingAiResult | null;
+  errorMessage: string | null;
+}
+
+async function unwrapEnvelope<T>(response: Response, failureMessage: string): Promise<T> {
+  if (!response.ok) {
+    throw new Error(`${failureMessage}: ${response.status}`);
+  }
+  const body = await response.json() as ApiEnvelope<T>;
+  if (!body.success) {
+    throw new Error(body.error?.message ?? failureMessage);
+  }
+  return body.data;
 }
 
 export async function analyzeMeeting(params: AnalyzeMeetingParams): Promise<MeetingAnalysisResponse> {
@@ -41,16 +55,19 @@ export async function analyzeMeeting(params: AnalyzeMeetingParams): Promise<Meet
     method: "POST",
     body: formData,
   });
+  return unwrapEnvelope<MeetingAnalysisResponse>(response, "Meeting analysis failed");
+}
 
-  if (!response.ok) {
-    throw new Error(`Meeting analysis failed: ${response.status}`);
-  }
+export async function fetchMeeting(projectId: string, meetingId: string): Promise<MeetingAnalysisResponse> {
+  const response = await fetch(`${API_BASE_URL}/projects/${projectId}/meetings/${meetingId}`);
+  return unwrapEnvelope<MeetingAnalysisResponse>(response, "Meeting fetch failed");
+}
 
-  const body = await response.json() as ApiEnvelope<MeetingAnalysisResponse>;
-  if (!body.success) {
-    throw new Error(body.error?.message ?? "Meeting analysis failed");
-  }
-  return body.data;
+export async function retryMeetingAnalysis(projectId: string, meetingId: string): Promise<MeetingAnalysisResponse> {
+  const response = await fetch(`${API_BASE_URL}/projects/${projectId}/meetings/${meetingId}/retry`, {
+    method: "POST",
+  });
+  return unwrapEnvelope<MeetingAnalysisResponse>(response, "Meeting retry failed");
 }
 
 export interface MeetingSummaryDto {
@@ -63,14 +80,7 @@ export interface MeetingSummaryDto {
 
 export async function fetchMeetings(projectId: string): Promise<MeetingSummaryDto[]> {
   const response = await fetch(`${API_BASE_URL}/projects/${projectId}/meetings`);
-  if (!response.ok) {
-    throw new Error(`Meeting list fetch failed: ${response.status}`);
-  }
-  const body = await response.json() as ApiEnvelope<MeetingSummaryDto[]>;
-  if (!body.success) {
-    throw new Error(body.error?.message ?? "Meeting list fetch failed");
-  }
-  return body.data;
+  return unwrapEnvelope<MeetingSummaryDto[]>(response, "Meeting list fetch failed");
 }
 
 export interface TaskRegisterResponseDto {
@@ -89,12 +99,5 @@ export async function registerMeetingTasks(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ todos }),
   });
-  if (!response.ok) {
-    throw new Error(`Task register failed: ${response.status}`);
-  }
-  const body = await response.json() as ApiEnvelope<TaskRegisterResponseDto>;
-  if (!body.success) {
-    throw new Error(body.error?.message ?? "Task register failed");
-  }
-  return body.data;
+  return unwrapEnvelope<TaskRegisterResponseDto>(response, "Task register failed");
 }

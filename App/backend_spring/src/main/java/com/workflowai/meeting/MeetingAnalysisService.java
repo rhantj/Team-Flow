@@ -24,8 +24,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class MeetingAnalysisService {
-    private final FastApiMeetingClient fastApiMeetingClient;
-    private final FallbackMeetingAnalyzer fallbackMeetingAnalyzer;
+    private final MeetingAnalysisRunner meetingAnalysisRunner;
     private final DemoDataService demoDataService;
     private final MeetingRepository meetingRepository;
     private final MeetingAttendeeRepository meetingAttendeeRepository;
@@ -37,8 +36,7 @@ public class MeetingAnalysisService {
     private final String uploadsDir;
 
     public MeetingAnalysisService(
-        FastApiMeetingClient fastApiMeetingClient,
-        FallbackMeetingAnalyzer fallbackMeetingAnalyzer,
+        MeetingAnalysisRunner meetingAnalysisRunner,
         DemoDataService demoDataService,
         MeetingRepository meetingRepository,
         MeetingAttendeeRepository meetingAttendeeRepository,
@@ -49,8 +47,7 @@ public class MeetingAnalysisService {
         UserRepository userRepository,
         @Value("${workflow.uploads.dir}") String uploadsDir
     ) {
-        this.fastApiMeetingClient = fastApiMeetingClient;
-        this.fallbackMeetingAnalyzer = fallbackMeetingAnalyzer;
+        this.meetingAnalysisRunner = meetingAnalysisRunner;
         this.demoDataService = demoDataService;
         this.meetingRepository = meetingRepository;
         this.meetingAttendeeRepository = meetingAttendeeRepository;
@@ -62,7 +59,6 @@ public class MeetingAnalysisService {
         this.uploadsDir = uploadsDir;
     }
 
-    @Transactional
     public MeetingAnalysisResponse analyze(
         String projectId,
         MultipartFile file,
@@ -92,6 +88,10 @@ public class MeetingAnalysisService {
             file == null ? null : file.getSize()
         ));
 
+        meeting.setFilePath(storeUploadedFile(meeting.getId(), file));
+        meetingRepository.save(meeting);
+        saveAttendees(meeting.getId(), safeParticipants(participants));
+
         AiAnalyzeRequest request = new AiAnalyzeRequest(
             projectId,
             resolvedTitle,
@@ -102,48 +102,10 @@ public class MeetingAnalysisService {
             text,
             participants == null ? List.of() : participants
         );
-
-        MeetingAnalysisResult result;
-        String analysisSource;
-        try {
-            result = fastApiMeetingClient.analyze(request);
-            if (result == null) {
-                result = fallbackMeetingAnalyzer.analyze(request);
-                analysisSource = "SPRING_FALLBACK";
-            } else {
-                analysisSource = "FASTAPI";
-            }
-        } catch (Exception ignored) {
-            result = fallbackMeetingAnalyzer.analyze(request);
-            analysisSource = "SPRING_FALLBACK";
-        }
-
-        meeting.setFilePath(storeUploadedFile(meeting.getId(), file));
-        meeting.setAnalysisStatus("completed");
-        meetingRepository.save(meeting);
-
-        meetingAnalysisRepository.save(new MeetingAnalysis(
-            meeting.getId(), result.summary(), result.decisions(), result.risks(), result.keywords(), analysisSource
-        ));
-
-        for (MeetingTodo todo : result.todos()) {
-            meetingActionItemRepository.save(new MeetingActionItem(
-                meeting.getId(),
-                todo.title(),
-                todo.description(),
-                todo.category(),
-                resolveAssigneeByName(todo.assignee_candidate()),
-                resolveAssignee(todo.assignee_id()),
-                parseDateOrNull(todo.due_date()),
-                todo.priority(),
-                null
-            ));
-        }
-
-        saveAttendees(meeting.getId(), safeParticipants(participants));
+        meetingAnalysisRunner.runAnalysis(meeting.getId(), request);
 
         String meetingId = String.valueOf(meeting.getId());
-        return new MeetingAnalysisResponse(meetingId, projectId, "COMPLETED", resolvedSourceType, fileName, analysisSource, result);
+        return new MeetingAnalysisResponse(meetingId, projectId, "PROCESSING", resolvedSourceType, fileName, null, null, null);
     }
 
     public MeetingAnalysisResponse find(String meetingId) {
@@ -151,6 +113,21 @@ public class MeetingAnalysisService {
         if (id == null) return null;
         Meeting meeting = meetingRepository.findById(id).orElse(null);
         if (meeting == null) return null;
+
+        if (!"completed".equals(meeting.getAnalysisStatus())) {
+            String status = "failed".equals(meeting.getAnalysisStatus()) ? "FAILED" : "PROCESSING";
+            return new MeetingAnalysisResponse(
+                meetingId,
+                String.valueOf(meeting.getProjectId()),
+                status,
+                meeting.getMeetingType(),
+                meeting.getOriginalFileName(),
+                null,
+                null,
+                meeting.getAnalysisErrorMessage()
+            );
+        }
+
         MeetingAnalysis analysis = meetingAnalysisRepository.findById(id).orElse(null);
         if (analysis == null) return null;
 
@@ -176,7 +153,80 @@ public class MeetingAnalysisService {
             meeting.getMeetingType(),
             meeting.getOriginalFileName(),
             analysis.getAnalysisEngine(),
-            result
+            result,
+            null
+        );
+    }
+
+    public MeetingStatusResponse findStatus(String meetingId) {
+        Long id = parseLongOrNull(meetingId);
+        if (id == null) return null;
+        Meeting meeting = meetingRepository.findById(id).orElse(null);
+        if (meeting == null) return null;
+        String status = switch (meeting.getAnalysisStatus()) {
+            case "completed" -> "COMPLETED";
+            case "failed" -> "FAILED";
+            default -> "PROCESSING";
+        };
+        return new MeetingStatusResponse(meetingId, status, meeting.getAnalysisErrorMessage());
+    }
+
+    public MeetingAnalysisResponse retry(String meetingId) {
+        Long id = parseLongOrNull(meetingId);
+        if (id == null) return null;
+        Meeting meeting = meetingRepository.findById(id).orElse(null);
+        if (meeting == null) return null;
+        if (!"failed".equals(meeting.getAnalysisStatus())) {
+            throw new IllegalStateException("MEETING_NOT_FAILED");
+        }
+
+        String text = extractTextFromStoredFile(meeting);
+        if (text == null) {
+            String errorMessage = "원본 음성/영상 파일은 재분석을 위해 다시 업로드해야 합니다.";
+            meeting.setAnalysisErrorMessage(errorMessage);
+            meetingRepository.save(meeting);
+            return new MeetingAnalysisResponse(
+                meetingId,
+                String.valueOf(meeting.getProjectId()),
+                "FAILED",
+                meeting.getFileType(),
+                meeting.getOriginalFileName(),
+                null,
+                null,
+                errorMessage
+            );
+        }
+        List<String> participantNames = meetingAttendeeRepository.findByMeetingId(id).stream()
+            .map(attendee -> userRepository.findById(attendee.getUserId()).map(User::getName).orElse(null))
+            .filter(name -> name != null)
+            .toList();
+
+        AiAnalyzeRequest request = new AiAnalyzeRequest(
+            String.valueOf(meeting.getProjectId()),
+            meeting.getTitle(),
+            meeting.getMeetingDate() == null ? LocalDate.now().toString() : meeting.getMeetingDate().toString(),
+            defaultString(meeting.getMeetingType(), "정기회의"),
+            defaultString(meeting.getFileType(), "document"),
+            meeting.getOriginalFileName(),
+            text,
+            participantNames
+        );
+
+        meeting.setAnalysisStatus("processing");
+        meeting.setAnalysisErrorMessage(null);
+        meetingRepository.save(meeting);
+
+        meetingAnalysisRunner.runAnalysis(id, request);
+
+        return new MeetingAnalysisResponse(
+            meetingId,
+            String.valueOf(meeting.getProjectId()),
+            "PROCESSING",
+            meeting.getFileType(),
+            meeting.getOriginalFileName(),
+            null,
+            null,
+            null
         );
     }
 
@@ -383,8 +433,35 @@ public class MeetingAnalysisService {
         }
     }
 
+    private String extractTextFromStoredFile(Meeting meeting) {
+        String filePath = meeting.getFilePath();
+        if (filePath == null || filePath.isBlank()) return "";
+        String fileName = meeting.getOriginalFileName() == null ? "" : meeting.getOriginalFileName().toLowerCase();
+        boolean textLike = fileName.endsWith(".txt") || fileName.endsWith(".md") || fileName.endsWith(".csv") || fileName.endsWith(".json");
+        try {
+            byte[] bytes = Files.readAllBytes(Path.of(filePath));
+            if (fileName.endsWith(".docx")) {
+                return extractDocxTextFromBytes(bytes);
+            }
+            if (!textLike) {
+                return null;
+            }
+            return new String(bytes, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
     private String extractDocxText(MultipartFile file) {
-        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(file.getBytes()))) {
+        try {
+            return extractDocxTextFromBytes(file.getBytes());
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    private String extractDocxTextFromBytes(byte[] bytes) {
+        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
             ZipEntry entry;
             while ((entry = zip.getNextEntry()) != null) {
                 if (!"word/document.xml".equals(entry.getName())) continue;
