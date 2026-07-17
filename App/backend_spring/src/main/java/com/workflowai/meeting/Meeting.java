@@ -40,9 +40,6 @@ public class Meeting {
     @Column(name = "original_file_name")
     private String originalFileName;
 
-    @Column(name = "analysis_error_message", columnDefinition = "text")
-    private String analysisErrorMessage;
-
     @Column(name = "uploaded_by")
     private Long uploadedBy;
 
@@ -122,14 +119,6 @@ public class Meeting {
 
     public String getFileType() {
         return fileType;
-    }
-
-    public String getAnalysisErrorMessage() {
-        return analysisErrorMessage;
-    }
-
-    public void setAnalysisErrorMessage(String analysisErrorMessage) {
-        this.analysisErrorMessage = analysisErrorMessage;
     }
 
     public LocalDateTime getCreatedAt() {

@@ -89,7 +89,12 @@ class MeetingAnalysisPersistenceTest {
         ArgumentCaptor<Meeting> meetingCaptor = ArgumentCaptor.forClass(Meeting.class);
         verify(meetingRepository).save(meetingCaptor.capture());
         assertThat(meetingCaptor.getValue().getAnalysisStatus()).isEqualTo("failed");
-        assertThat(meetingCaptor.getValue().getAnalysisErrorMessage())
+
+        ArgumentCaptor<MeetingAnalysis> analysisCaptor = ArgumentCaptor.forClass(MeetingAnalysis.class);
+        verify(meetingAnalysisRepository).save(analysisCaptor.capture());
+        assertThat(analysisCaptor.getValue().getSummary())
             .isEqualTo(MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE);
+        assertThat(analysisCaptor.getValue().getAnalysisEngine())
+            .isEqualTo(MeetingAnalysisPersistence.FAILURE_ANALYSIS_SOURCE);
     }
 }

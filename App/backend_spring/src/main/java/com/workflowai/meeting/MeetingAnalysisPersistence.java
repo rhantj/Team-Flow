@@ -5,6 +5,7 @@ import com.workflowai.rag.RagIngestService;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
 import java.time.LocalDate;
+import java.util.List;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -13,6 +14,7 @@ public class MeetingAnalysisPersistence {
     public static final String DEFAULT_ANALYSIS_ERROR_MESSAGE = "회의록 분석 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
     public static final String REUPLOAD_REQUIRED_ERROR_MESSAGE = "원본 음성/영상 파일은 재분석을 위해 다시 업로드해야 합니다.";
     public static final String REUPLOAD_READ_ERROR_MESSAGE = "원본 회의록 내용을 읽을 수 없어 재분석을 위해 다시 업로드해야 합니다.";
+    public static final String FAILURE_ANALYSIS_SOURCE = "FAILURE";
 
     private final MeetingRepository meetingRepository;
     private final MeetingAnalysisRepository meetingAnalysisRepository;
@@ -65,7 +67,6 @@ public class MeetingAnalysisPersistence {
         }
 
         meeting.setAnalysisStatus("completed");
-        meeting.setAnalysisErrorMessage(null);
         meetingRepository.save(meeting);
     }
 
@@ -73,7 +74,14 @@ public class MeetingAnalysisPersistence {
     public void saveAnalysisFailure(Long meetingId, String errorMessage) {
         meetingRepository.findById(meetingId).ifPresent(meeting -> {
             meeting.setAnalysisStatus("failed");
-            meeting.setAnalysisErrorMessage(toSafeErrorMessage(errorMessage));
+            meetingAnalysisRepository.save(new MeetingAnalysis(
+                meetingId,
+                toSafeErrorMessage(errorMessage),
+                List.of(),
+                List.of(),
+                List.of(),
+                FAILURE_ANALYSIS_SOURCE
+            ));
             meetingRepository.save(meeting);
         });
     }
