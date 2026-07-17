@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -23,6 +24,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 class MeetingAnalysisServiceTest {
@@ -63,6 +66,50 @@ class MeetingAnalysisServiceTest {
         verify(meetingRepository, atLeastOnce()).save(meetingCaptor.capture());
         assertThat(meetingCaptor.getAllValues().get(0).getAnalysisStatus()).isEqualTo("processing");
         verify(meetingAnalysisRunner).runAnalysis(any(), any(AiAnalyzeRequest.class));
+    }
+
+    @Test
+    void analyzeStartsRunnerAfterTransactionCommitWhenSynchronizationIsActive() {
+        MeetingAnalysisService service = newService();
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(meetingRepository.save(any(Meeting.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            MockMultipartFile file = new MockMultipartFile("file", "notes.txt", "text/plain", "회의 내용".getBytes());
+            MeetingAnalysisResponse response = service.analyze(
+                "demo-project", file, "7차 정기회의", "2026-07-15", "정기회의", "document", List.of("김민준")
+            );
+
+            assertThat(response.status()).isEqualTo("PROCESSING");
+            verify(meetingAnalysisRunner, never()).runAnalysis(any(), any(AiAnalyzeRequest.class));
+
+            TransactionSynchronizationManager.getSynchronizations()
+                .forEach(TransactionSynchronization::afterCommit);
+
+            verify(meetingAnalysisRunner).runAnalysis(any(), any(AiAnalyzeRequest.class));
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void findUsesFileTypeAsResponseSourceTypeForProcessingAndCompletedMeetings() {
+        MeetingAnalysisService service = newService();
+        Meeting processingMeeting = new Meeting(1L, "정기회의", "audio", null, "processing", LocalDate.now(), "정기회의", "recording.mp3", null, 5L);
+        Meeting completedMeeting = new Meeting(1L, "정기회의", "video", null, "completed", LocalDate.now(), "정기회의", "meeting.mp4", null, 5L);
+        when(meetingRepository.findById(8L)).thenReturn(Optional.of(processingMeeting));
+        when(meetingRepository.findById(9L)).thenReturn(Optional.of(completedMeeting));
+        when(meetingAnalysisRepository.findById(9L)).thenReturn(Optional.of(new MeetingAnalysis(
+            9L, "요약", List.of(), List.of(), List.of(), "SPRING_FALLBACK"
+        )));
+        when(meetingActionItemRepository.findByMeetingId(9L)).thenReturn(List.of());
+
+        MeetingAnalysisResponse processingResponse = service.find("8");
+        MeetingAnalysisResponse completedResponse = service.find("9");
+
+        assertThat(processingResponse.sourceType()).isEqualTo("audio");
+        assertThat(completedResponse.sourceType()).isEqualTo("video");
     }
 
     @Test

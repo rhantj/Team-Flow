@@ -21,6 +21,8 @@ import java.util.zip.ZipInputStream;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 @Service
@@ -63,6 +65,7 @@ public class MeetingAnalysisService {
         this.uploadsDir = uploadsDir;
     }
 
+    @Transactional
     public MeetingAnalysisResponse analyze(
         String projectId,
         MultipartFile file,
@@ -106,7 +109,7 @@ public class MeetingAnalysisService {
             text,
             participants == null ? List.of() : participants
         );
-        meetingAnalysisRunner.runAnalysis(meeting.getId(), request);
+        runAnalysisAfterCommit(meeting.getId(), request);
 
         String meetingId = String.valueOf(meeting.getId());
         return new MeetingAnalysisResponse(meetingId, projectId, "PROCESSING", resolvedSourceType, fileName, null, null, null);
@@ -127,7 +130,7 @@ public class MeetingAnalysisService {
                 meetingId,
                 String.valueOf(meeting.getProjectId()),
                 status,
-                meeting.getMeetingType(),
+                meeting.getFileType(),
                 meeting.getOriginalFileName(),
                 null,
                 null,
@@ -157,7 +160,7 @@ public class MeetingAnalysisService {
             meetingId,
             String.valueOf(meeting.getProjectId()),
             "COMPLETED",
-            meeting.getMeetingType(),
+            meeting.getFileType(),
             meeting.getOriginalFileName(),
             analysis.getAnalysisEngine(),
             result,
@@ -407,6 +410,19 @@ public class MeetingAnalysisService {
             userRepository.findFirstByName(name)
                 .ifPresent(user -> meetingAttendeeRepository.save(new MeetingAttendee(meetingId, user.getId())));
         }
+    }
+
+    private void runAnalysisAfterCommit(Long meetingId, AiAnalyzeRequest request) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            meetingAnalysisRunner.runAnalysis(meetingId, request);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                meetingAnalysisRunner.runAnalysis(meetingId, request);
+            }
+        });
     }
 
     private Long resolveAssignee(String assigneeIdParam) {
