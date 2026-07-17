@@ -106,7 +106,10 @@ services:
         condition: service_started
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_ENABLE_DEMO_AUTH: ${VITE_ENABLE_DEMO_AUTH:-true}
     container_name: workflow-frontend
     environment:
       API_PROXY_TARGET: http://backend-spring:8080
