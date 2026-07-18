@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -17,7 +18,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-// TODO: 실제 인증이 도입되면 프로젝트 멤버십/담당자 권한 검사를 여기에도 추가해야 한다(TaskController와 동일한 상태).
+// DONE: @projectAccess.isMember(#projectId)로 프로젝트 멤버십 검사 적용 완료 (2026-07-18).
+// TODO: currentActorId()가 항상 mock 사용자 "1"이라 실제 로그인 사용자가 활동 로그에 반영되지 않는다.
+// 남은 과제는 document_고무서에 별도 기록.
 @Tag(name = "업무 체크리스트", description = "업무 안 체크리스트 항목 조회/생성/수정/삭제 API")
 @RestController
 @RequestMapping("/api/v1/projects/{projectId}/tasks/{taskId}/checklists")
@@ -55,6 +58,7 @@ public class ChecklistController {
 
     @Operation(summary = "체크리스트 조회", description = "업무에 등록된 체크리스트 항목을 등록 순서대로 조회합니다.")
     @GetMapping
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ResponseEntity<ApiResponse<List<ChecklistItemDto>>> getChecklist(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId
@@ -70,6 +74,7 @@ public class ChecklistController {
 
     @Operation(summary = "체크리스트 항목 생성", description = "업무에 새 체크리스트 항목을 추가합니다.")
     @PostMapping
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ResponseEntity<ApiResponse<ChecklistItemDto>> createChecklistItem(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId,
@@ -92,6 +97,7 @@ public class ChecklistController {
 
     @Operation(summary = "체크리스트 항목 수정", description = "체크리스트 항목의 내용 또는 완료 여부를 부분 수정합니다.")
     @PatchMapping("/{checklistId}")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ResponseEntity<ApiResponse<ChecklistItemDto>> updateChecklistItem(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId,
@@ -123,6 +129,7 @@ public class ChecklistController {
 
     @Operation(summary = "체크리스트 항목 삭제", description = "체크리스트 항목을 삭제합니다.")
     @DeleteMapping("/{checklistId}")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ResponseEntity<ApiResponse<Void>> deleteChecklistItem(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId,

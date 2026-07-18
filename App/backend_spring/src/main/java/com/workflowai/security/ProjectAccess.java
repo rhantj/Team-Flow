@@ -1,5 +1,6 @@
 package com.workflowai.security;
 
+import com.workflowai.common.DemoDataService;
 import com.workflowai.project.ProjectMemberRepository;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -8,9 +9,11 @@ import org.springframework.stereotype.Component;
 @Component("projectAccess")
 public class ProjectAccess {
     private final ProjectMemberRepository projectMemberRepository;
+    private final DemoDataService demoDataService;
 
-    public ProjectAccess(ProjectMemberRepository projectMemberRepository) {
+    public ProjectAccess(ProjectMemberRepository projectMemberRepository, DemoDataService demoDataService) {
         this.projectMemberRepository = projectMemberRepository;
+        this.demoDataService = demoDataService;
     }
 
     public boolean hasRole(Long projectId, String role) {
@@ -29,6 +32,18 @@ public class ProjectAccess {
             return false;
         }
         return projectMemberRepository.existsByProjectIdAndUserId(projectId, userId);
+    }
+
+    /**
+     * 프론트가 경로에 그대로 쓰는 projectId 문자열("demo-project" 등)용 오버로드.
+     * DemoDataService.resolveProjectId로 실제 project.id(Long)로 바꾼 뒤 멤버십을 검사한다.
+     */
+    public boolean isMember(String projectIdParam) {
+        try {
+            return isMember(demoDataService.resolveProjectId(projectIdParam));
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     private Long currentUserId() {

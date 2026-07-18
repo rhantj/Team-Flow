@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+// DONE: @projectAccess.isMember(#projectId)로 프로젝트 멤버십 검사 적용 완료 (2026-07-18).
 @Tag(
     name = "회의록 AI",
     description = "회의록 업로드, AI 분석, 분석 결과 조회, To-Do 후보 승인 및 업무 등록 API"
@@ -38,6 +40,7 @@ public class MeetingAnalysisController {
             + "상태는 GET /{meetingId} 또는 GET /{meetingId}/status로 조회합니다."
     )
     @PostMapping(value = "/analyze", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ApiResponse<MeetingAnalysisResponse> analyze(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "회의록 원본 파일 (문서/음성/영상)") @RequestPart(value = "file", required = false) MultipartFile file,
@@ -63,6 +66,7 @@ public class MeetingAnalysisController {
         description = "프로젝트에 등록된 회의록 목록을 최신순으로 조회합니다."
     )
     @GetMapping
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ApiResponse<List<MeetingSummary>> getMeetings(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId
     ) {
@@ -74,6 +78,7 @@ public class MeetingAnalysisController {
         description = "회의록의 분석 상태(processing/completed/failed)와, 완료된 경우 분석 결과 및 To-Do 후보 목록을 조회합니다."
     )
     @GetMapping("/{meetingId}")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ResponseEntity<ApiResponse<MeetingAnalysisResponse>> getMeeting(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "회의록 ID", example = "demo-project-1") @PathVariable String meetingId
@@ -90,6 +95,7 @@ public class MeetingAnalysisController {
         description = "분석 결과 없이 상태(processing/completed/failed)와 실패 사유만 가볍게 조회합니다."
     )
     @GetMapping("/{meetingId}/status")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ResponseEntity<ApiResponse<MeetingStatusResponse>> getMeetingStatus(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "회의록 ID", example = "demo-project-1") @PathVariable String meetingId
@@ -106,6 +112,7 @@ public class MeetingAnalysisController {
         description = "분석에 실패한(failed) 회의록을 processing 상태로 전환하고 백그라운드 분석을 재실행합니다."
     )
     @PostMapping("/{meetingId}/retry")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ResponseEntity<ApiResponse<MeetingAnalysisResponse>> retryAnalysis(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "회의록 ID", example = "demo-project-1") @PathVariable String meetingId
@@ -126,6 +133,7 @@ public class MeetingAnalysisController {
         description = "팀장이 승인한 회의록 기반 To-Do 후보를 실제 업무(Task)로 등록합니다. 등록된 업무는 업무보드와 대시보드에서 사용할 수 있습니다."
     )
     @PostMapping("/{meetingId}/tasks/register")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ApiResponse<TaskRegisterResponse> registerTasks(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "회의록 ID", example = "demo-project-1") @PathVariable String meetingId,

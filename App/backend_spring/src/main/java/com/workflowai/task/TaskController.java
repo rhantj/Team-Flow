@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -66,6 +67,7 @@ public class TaskController {
         description = "프로젝트에 등록된 업무(Task)를 최신순으로 조회합니다. 회의록 AI가 등록한 업무와 수동 등록 업무를 모두 포함합니다."
     )
     @GetMapping
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ApiResponse<List<TaskListItem>> getTasks(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId
     ) {
@@ -83,14 +85,17 @@ public class TaskController {
             .orElse(0.0);
     }
 
-    // TODO: 실제 인증이 도입되면 프로젝트 멤버십/담당자 권한 검사를 여기(생성/수정/상태변경)에 추가해야 한다.
-    // 지금은 데모 프로젝트 하나만 존재하고 로그인이 없어 누구나 호출 가능한 상태다.
+    // DONE: @projectAccess.isMember(#projectId)로 프로젝트 멤버십 검사 적용 완료 (2026-07-18).
+    // TODO: createTask/updateTask는 assigneeId를, updatePosition 등은 activity 기록 시 currentActorId()가
+    // 항상 mock 사용자 "1"이라 실제 로그인 사용자가 반영되지 않는다. 이 부분은 남은 과제로
+    // document_고무서에 별도 기록.
 
     @Operation(
         summary = "업무 생성",
         description = "업무보드에서 새 업무를 직접 생성합니다."
     )
     @PostMapping
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ResponseEntity<ApiResponse<TaskListItem>> createTask(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @RequestBody TaskCreateRequest request
@@ -134,6 +139,7 @@ public class TaskController {
         description = "칸반 보드 드래그앤드롭으로 업무의 상태(컬럼)와 그 컬럼 안에서의 순서(position)를 함께 변경합니다."
     )
     @PatchMapping("/{taskId}/position")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ResponseEntity<ApiResponse<TaskListItem>> updatePosition(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId,
@@ -162,6 +168,7 @@ public class TaskController {
         description = "업무의 제목/카테고리/담당자/마감일/우선순위/설명을 부분 수정합니다. null인 필드는 변경하지 않습니다."
     )
     @PatchMapping("/{taskId}")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ResponseEntity<ApiResponse<TaskListItem>> updateTask(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId,
@@ -219,6 +226,7 @@ public class TaskController {
         description = "업무를 영구적으로 삭제합니다."
     )
     @DeleteMapping("/{taskId}")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ResponseEntity<ApiResponse<Void>> deleteTask(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId
