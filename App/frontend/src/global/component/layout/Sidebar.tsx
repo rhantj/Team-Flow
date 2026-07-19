@@ -30,7 +30,7 @@ export function Sidebar({ active, onSelect, onAI, collapsed, onToggleCollapsed, 
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const currentProjectName = currentProject?.projectTitle ?? null;
   const role: ProjectRoleKo = currentProject?.role ?? "팀장";
-  const navItems = NAV_ITEMS;
+  const navItems = NAV_ITEMS.filter((item) => item.activate !== false);
 
   return (
     <div
