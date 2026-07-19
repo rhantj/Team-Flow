@@ -345,12 +345,12 @@ public class MeetingAnalysisService {
         Long meetingDbId = parseLongOrNull(meetingId);
         if (meetingDbId == null) return null;
         String filePath = meeting.getFilePath();
-        meetingActionItemRepository.deleteByMeetingId(meetingDbId);
         meetingAttendeeRepository.deleteByMeetingId(meetingDbId);
         if (meetingAnalysisRepository.existsById(meetingDbId)) {
             meetingAnalysisRepository.deleteById(meetingDbId);
         }
         if (deleteLinkedTasks) {
+            meetingActionItemRepository.deleteByMeetingId(meetingDbId);
             taskRepository.deleteBySourceMeetingId(meetingDbId);
         } else {
             taskRepository.clearSourceMeetingId(meetingDbId);

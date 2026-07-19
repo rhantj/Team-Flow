@@ -169,7 +169,7 @@ CREATE TABLE meetings (
     CONSTRAINT fk_meetings_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 COMMENT ON TABLE meetings IS '회의록/녹음 업로드';
-COMMENT ON COLUMN meetings.file_type IS 'document/audio/video';
+COMMENT ON COLUMN meetings.file_type IS 'document/audio';
 COMMENT ON COLUMN meetings.analysis_status IS '비동기 분석 상태';
 
 CREATE TABLE meeting_attendees (

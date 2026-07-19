@@ -45,11 +45,11 @@ public class MeetingAnalysisController {
     @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ResponseEntity<ApiResponse<MeetingAnalysisResponse>> analyze(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
-        @Parameter(description = "회의록 원본 파일 (문서/음성/영상)") @RequestPart(value = "file", required = false) MultipartFile file,
+        @Parameter(description = "회의록 원본 파일 (문서/음성)") @RequestPart(value = "file", required = false) MultipartFile file,
         @Parameter(description = "회의 제목", example = "7차 정기회의") @RequestParam(value = "title", required = false) String title,
         @Parameter(description = "회의 날짜 (YYYY-MM-DD)", example = "2026-07-09") @RequestParam(value = "meetingDate", required = false) String meetingDate,
         @Parameter(description = "회의 유형", example = "정기회의") @RequestParam(value = "meetingKind", required = false) String meetingKind,
-        @Parameter(description = "업로드 파일 유형", example = "document", schema = @Schema(allowableValues = {"document", "audio", "video"})) @RequestParam(value = "sourceType", required = false) String sourceType,
+        @Parameter(description = "업로드 파일 유형", example = "document", schema = @Schema(allowableValues = {"document", "audio"})) @RequestParam(value = "sourceType", required = false) String sourceType,
         @Parameter(description = "참석자 이름 목록 (attendeeIds가 없을 때만 사용되는 하위호환 경로)", example = "[\"김민준\", \"이서연\"]") @RequestParam(value = "participants", required = false) List<String> participants,
         @Parameter(description = "참석자 사용자 ID 목록 (프로젝트 멤버만 허용)", example = "[1, 2]") @RequestParam(value = "attendeeIds", required = false) List<Long> attendeeIds
     ) {

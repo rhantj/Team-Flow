@@ -7,7 +7,7 @@ interface AnalyzeMeetingParams {
   title: string;
   meetingDate: string;
   meetingKind: string;
-  sourceType: "document" | "audio" | "video";
+  sourceType: "document" | "audio";
   participants: string[];
   attendeeIds?: number[];
 }

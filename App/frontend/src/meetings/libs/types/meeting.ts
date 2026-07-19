@@ -10,7 +10,7 @@ export interface Meeting {
 }
 
 export type UploadFlow = null | "modal" | "analyzing" | "results" | "review" | "done";
-export type UploadType = null | "document" | "audio" | "video";
+export type UploadType = null | "document" | "audio";
 
 export interface GenTodo {
   id: string; title: string; desc: string; category: string;

@@ -203,7 +203,7 @@ class MeetingAnalysisServiceTest {
 
         assertThat(response.meetingId()).isEqualTo("8");
         assertThat(response.status()).isEqualTo("DELETED");
-        verify(meetingActionItemRepository).deleteByMeetingId(8L);
+        verify(meetingActionItemRepository, never()).deleteByMeetingId(any());
         verify(meetingAttendeeRepository).deleteByMeetingId(8L);
         verify(taskRepository).clearSourceMeetingId(8L);
         verify(taskRepository, never()).deleteBySourceMeetingId(any());

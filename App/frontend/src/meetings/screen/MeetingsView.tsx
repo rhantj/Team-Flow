@@ -39,7 +39,6 @@ import {
   ArrowLeft,
   Check,
   Users,
-  Film,
   ListChecks,
   Radio,
   Trash2,
@@ -109,15 +108,8 @@ const AUDIO_ANALYZE_STAGES = [
   "업무 자동 생성 중", "역할 분배 생성 중",
 ];
 
-const VIDEO_ANALYZE_STAGES = [
-  "파일 업로드 완료", "영상 음성 트랙 추출 중", "음성 변환 중",
-  "회의 내용 분석 중", "핵심 결정사항 추출 중",
-  "업무 자동 생성 중", "역할 분배 생성 중",
-];
-
 const getAnalyzeStages = (type: UploadType): string[] => {
   if (type === "audio") return AUDIO_ANALYZE_STAGES;
-  if (type === "video") return VIDEO_ANALYZE_STAGES;
   return DOCUMENT_ANALYZE_STAGES;
 };
 
@@ -571,7 +563,6 @@ export function MeetingsView() {
   const UPLOAD_TYPES = [
     { id:"document", label:"문서 업로드", desc:"PDF, Word, TXT, HWP 등 회의록 문서", icon:FileText, accept:".pdf,.doc,.docx,.txt,.hwp", color:"#3B5BDB", bg:"rgba(59,91,219,0.1)", note:"텍스트를 추출해 AI가 분석합니다." },
     { id:"audio",    label:"음성파일 업로드", desc:"mp3, wav, m4a 등 녹음파일", icon:Radio,    accept:".mp3,.wav,.m4a,.ogg", color:"#7048E8", bg:"rgba(112,72,232,0.1)", note:"음성을 텍스트로 변환한 뒤 분석합니다." },
-    { id:"video",    label:"영상파일 업로드", desc:"mp4, mov, Zoom/Discord 녹화본", icon:Film,  accept:".mp4,.mov,.avi,.webm", color:"#10B981", bg:"rgba(16,185,129,0.1)", note:"음성 트랙을 추출해 분석합니다." },
   ] as const;
 
   const MEET_KINDS = ["정기회의","중간점검","발표준비","개발회의","기타"];
@@ -1859,7 +1850,7 @@ export function MeetingsView() {
                 <FileAudio className="w-7 h-7 text-slate-400" />
               </div>
               <div className="text-sm font-semibold text-foreground mb-1">아직 업로드한 회의록이 없습니다</div>
-              <div className="text-xs leading-relaxed mb-4">문서, 음성, 영상 파일을 업로드하면 AI 분석 결과가 이곳에 자동으로 쌓입니다.</div>
+              <div className="text-xs leading-relaxed mb-4">문서 또는 음성 파일을 업로드하면 AI 분석 결과가 이곳에 자동으로 쌓입니다.</div>
               <button onClick={() => { setUploadFlow("modal"); setModalStep(0); setUploadType(null); setUploadFileName(""); setUploadFileSize(""); setSelectedFile(null); setAnalysisError(null); }}
                 className="px-4 py-2 rounded-xl text-xs font-semibold text-white hover:opacity-90 transition-opacity"
                 style={{ background:"linear-gradient(135deg,#7048E8,#4F6EF7)" }}>
