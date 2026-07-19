@@ -1,10 +1,40 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AuthProvider } from "../../hooks/useAuth";
+import type { ProjectRoleSummary } from "../../api/authTypes";
+import { RequireRole } from "../../hooks/useAuthGuard";
 import { Sidebar } from "./Sidebar";
+
+const mockAuth = vi.hoisted(() => ({
+  state: {
+    isAuthenticated: true,
+    loading: false,
+    user: { id: 1, email: "leader@example.com", name: "김팀장" },
+    projectRoles: [] as ProjectRoleSummary[],
+    currentProjectId: null as number | null,
+    currentProject: null as ProjectRoleSummary | null,
+    selectProject: vi.fn(),
+    loginWithGoogle: vi.fn(),
+    logout: vi.fn(),
+    refreshMe: vi.fn(),
+  },
+}));
+
+vi.mock("../../hooks/useAuth", () => ({
+  useAuth: () => mockAuth.state,
+}));
+
+const leaderProject: ProjectRoleSummary = { projectId: 1, projectTitle: "팀장 프로젝트", role: "팀장" };
+const memberProject: ProjectRoleSummary = { projectId: 2, projectTitle: "팀원 프로젝트", role: "팀원" };
+const reviewerProject: ProjectRoleSummary = { projectId: 3, projectTitle: "심사 프로젝트", role: "심사자" };
+
+function setCurrentProject(project: ProjectRoleSummary, projectRoles: ProjectRoleSummary[] = [project]) {
+  mockAuth.state.projectRoles = projectRoles;
+  mockAuth.state.currentProjectId = project.projectId;
+  mockAuth.state.currentProject = project;
+}
 
 function renderSidebar(overrides: Partial<ComponentProps<typeof Sidebar>> = {}) {
   const props: ComponentProps<typeof Sidebar> = {
@@ -18,16 +48,18 @@ function renderSidebar(overrides: Partial<ComponentProps<typeof Sidebar>> = {}) 
   };
   return render(
     <MemoryRouter>
-      <AuthProvider>
-        <Sidebar {...props} />
-      </AuthProvider>
+      <Sidebar {...props} />
     </MemoryRouter>
   );
 }
 
 describe("Sidebar", () => {
   beforeEach(() => {
-    localStorage.clear();
+    setCurrentProject(leaderProject);
+    mockAuth.state.selectProject.mockClear();
+    mockAuth.state.loginWithGoogle.mockClear();
+    mockAuth.state.logout.mockClear();
+    mockAuth.state.refreshMe.mockClear();
   });
 
   it("shows menu labels and logo text when expanded", () => {
@@ -83,5 +115,59 @@ describe("Sidebar", () => {
     renderSidebar();
     const nav = screen.getByRole("navigation");
     expect(nav).toHaveClass("scrollbar-thin-dark");
+  });
+
+  it("hides reviewer-only navigation when the current project role is not reviewer", () => {
+    setCurrentProject(memberProject, [reviewerProject, memberProject]);
+    renderSidebar();
+    expect(screen.queryByRole("button", { name: "기여도 분석" })).not.toBeInTheDocument();
+    expect(screen.queryByText("평가 (심사자 전용)")).not.toBeInTheDocument();
+  });
+
+  it("shows reviewer-only navigation for a reviewer current project", () => {
+    setCurrentProject(reviewerProject, [leaderProject, reviewerProject]);
+    renderSidebar();
+    expect(screen.getByRole("button", { name: "기여도 분석" })).toBeInTheDocument();
+    expect(screen.getByText("평가 (심사자 전용)")).toBeInTheDocument();
+  });
+});
+
+describe("RequireRole", () => {
+  beforeEach(() => {
+    setCurrentProject(memberProject, [reviewerProject, memberProject]);
+  });
+
+  it("redirects away from reviewer-only routes when the current project role is not reviewer", () => {
+    render(
+      <MemoryRouter initialEntries={["/contributors"]}>
+        <Routes>
+          <Route element={<RequireRole allow={["심사자"]} />}>
+            <Route path="/contributors" element={<div>Reviewer content</div>} />
+          </Route>
+          <Route path="/dashboard" element={<div>Dashboard fallback</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByText("Reviewer content")).not.toBeInTheDocument();
+    expect(screen.getByText("Dashboard fallback")).toBeInTheDocument();
+  });
+
+  it("allows reviewer-only routes when the current project role is reviewer", () => {
+    setCurrentProject(reviewerProject, [leaderProject, reviewerProject]);
+
+    render(
+      <MemoryRouter initialEntries={["/contributors"]}>
+        <Routes>
+          <Route element={<RequireRole allow={["심사자"]} />}>
+            <Route path="/contributors" element={<div>Reviewer content</div>} />
+          </Route>
+          <Route path="/dashboard" element={<div>Dashboard fallback</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText("Reviewer content")).toBeInTheDocument();
+    expect(screen.queryByText("Dashboard fallback")).not.toBeInTheDocument();
   });
 });

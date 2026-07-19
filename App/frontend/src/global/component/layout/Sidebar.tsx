@@ -30,7 +30,11 @@ export function Sidebar({ active, onSelect, onAI, collapsed, onToggleCollapsed, 
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const currentProjectName = currentProject?.projectTitle ?? null;
   const role: ProjectRoleKo = currentProject?.role ?? "팀장";
-  const navItems = NAV_ITEMS.filter((item) => item.activate !== false);
+  const navItems = NAV_ITEMS.filter((item) => {
+    if (item.activate === false) return false;
+    if (item.id === "contributors") return role === "심사자";
+    return true;
+  });
 
   return (
     <div

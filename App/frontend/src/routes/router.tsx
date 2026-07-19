@@ -1,5 +1,5 @@
 import { createBrowserRouter, Navigate } from "react-router";
-import { RequireAuth } from "../global/hooks/useAuthGuard";
+import { RequireAuth, RequireRole } from "../global/hooks/useAuthGuard";
 import { AppShell } from "../global/component/layout/AppShell";
 import { LoginScreen } from "../auth/screen/LoginScreen";
 import { SignupScreen } from "../auth/screen/SignupScreen";
@@ -46,7 +46,12 @@ export const router = createBrowserRouter([
           { path: "meetings", element: <MeetingsView /> },
           { path: "deliverables", element: <DeliverablesView /> },
           { path: "github", element: <GithubView /> },
-          { path: "contributors", element: <ContributorsView /> },
+          {
+            element: <RequireRole allow={["심사자"]} />,
+            children: [
+              { path: "contributors", element: <ContributorsView /> },
+            ],
+          },
           { path: "mypage", element: <MyPageRoute /> },
         ],
       },

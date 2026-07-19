@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @Tag(name = "AI RAG 어시스턴트", description = "프로젝트 데이터 기반 RAG 질의응답 API")
 @RestController
-@RequestMapping("/api/ai/rag")
+@RequestMapping("/api/v1/ai/rag")
 public class RagController {
     private final FastApiRagClient fastApiRagClient;
     private final RagRateLimiter rateLimiter;
