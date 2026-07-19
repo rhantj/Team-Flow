@@ -1,12 +1,14 @@
 package com.workflowai.meeting;
 
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -19,6 +21,37 @@ class MeetingAnalysisControllerTest {
 
     @Mock
     private MeetingAnalysisService meetingAnalysisService;
+
+    @Test
+    void getMeetingsPassesProjectIdToService() throws Exception {
+        when(meetingAnalysisService.findByProject("project-a")).thenReturn(List.of(
+            new MeetingSummary("11", "A 프로젝트 회의", "2026-07-19", "정기회의", "completed")
+        ));
+        MeetingAnalysisController controller = new MeetingAnalysisController(meetingAnalysisService);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        mockMvc.perform(get("/api/v1/projects/project-a/meetings"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data[0].meetingId").value("11"));
+
+        verify(meetingAnalysisService).findByProject("project-a");
+    }
+
+    @Test
+    void attendanceSummaryPassesProjectIdToService() throws Exception {
+        when(meetingAnalysisService.attendanceSummary("project-a")).thenReturn(List.of(
+            new MeetingAttendanceSummary(2L, "이서연", 1, 2, 50)
+        ));
+        MeetingAnalysisController controller = new MeetingAnalysisController(meetingAnalysisService);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        mockMvc.perform(get("/api/v1/projects/project-a/meetings/attendance-summary"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data[0].userId").value(2))
+            .andExpect(jsonPath("$.data[0].attendanceRate").value(50));
+
+        verify(meetingAnalysisService).attendanceSummary("project-a");
+    }
 
     @Test
     void statusReturns404WhenMeetingMissing() throws Exception {

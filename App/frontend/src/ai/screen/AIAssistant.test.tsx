@@ -3,6 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { AIAssistant } from "./AIAssistant";
 
+vi.mock("../../global/hooks/useAuth", () => ({
+  useAuth: () => ({ currentProjectId: 1 }),
+}));
+
 describe("AIAssistant", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
