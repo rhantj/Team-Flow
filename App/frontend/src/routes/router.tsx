@@ -17,7 +17,6 @@ import { ActivityPage } from "../dashboard/screen/detail/ActivityPage";
 import { BoardView } from "../board/screen/BoardView";
 import { MeetingsView } from "../meetings/screen/MeetingsView";
 import { DeliverablesView } from "../deliverables/screen/DeliverablesView";
-import { GithubView } from "../github/screen/GithubView";
 import { ContributorsView } from "../contributors/screen/ContributorsView";
 import { MyPageRoute } from "../mypage/screen/MyPageRoute";
 
@@ -45,7 +44,6 @@ export const router = createBrowserRouter([
           { path: "board", element: <BoardView /> },
           { path: "meetings", element: <MeetingsView /> },
           { path: "deliverables", element: <DeliverablesView /> },
-          { path: "github", element: <GithubView /> },
           {
             element: <RequireRole allow={["심사자"]} />,
             children: [

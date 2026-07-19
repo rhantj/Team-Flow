@@ -47,12 +47,13 @@ export function DashboardView() {
   const inProgress = getInProgressCount(TASKS);
 
   const deliverablesActive = NAV_ITEMS.find((item) => item.id === "deliverables")?.activate !== false;
+  const githubActive = NAV_ITEMS.find((item) => item.id === "github")?.activate !== false;
 
   const QUICK_ACTIONS = [
     { label: "새 업무 추가", icon: Plus, color: "#3B5BDB", onClick: () => navigate("/board?openAdd=1") },
     { label: "회의록 업로드", icon: Upload, color: "#7048E8", onClick: () => navigate("/meetings?upload=1") },
     ...(deliverablesActive ? [{ label: "산출물 생성", icon: Package, color: "#0F766E", onClick: () => navigate("/deliverables") }] : []),
-    { label: "GitHub 연동", icon: Github, color: "#374151", onClick: () => navigate("/github") },
+    ...(githubActive ? [{ label: "GitHub 연동", icon: Github, color: "#374151", onClick: () => navigate("/github") }] : []),
     { label: "AI 어시스턴트 열기", icon: Sparkles, color: "#F59E0B", onClick: () => window.dispatchEvent(new Event(OPEN_AI_ASSISTANT_EVENT)) },
     { label: "업무 보드 이동", icon: Columns3, color: "#0EA5E9", onClick: () => navigate("/board") },
     { label: "미배정 업무 보기", icon: Users, color: "#EC4899", onClick: () => navigate("/dashboard/all-tasks") },
@@ -220,7 +221,7 @@ export function DashboardView() {
                 </div>
               </div>
             ))}
-            {GITHUB.slice(0, Math.max(0, 5 - recentActivity.length)).map((g, i) => (
+            {githubActive && GITHUB.slice(0, Math.max(0, 5 - recentActivity.length)).map((g, i) => (
               <div key={i} className="flex items-start gap-2.5">
                 <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5" style={{ background: g.type === "pr" ? "#EEF1FB" : g.type === "merge" ? "#ECFDF5" : "#F4F6FA" }}>
                   {g.type === "pr" && <GitPullRequest className="w-3 h-3" style={{ color: "#3B5BDB" }} />}
