@@ -13,6 +13,12 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/workflow}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
     password: ${SPRING_DATASOURCE_PASSWORD:root}
+    hikari:
+      data-source-properties:
+        # Supabase Supavisor(pgbouncer) 트랜잭션 풀러(6543)는 커넥션마다 다른
+        # 물리 세션을 재사용하므로, PgJDBC 서버사이드 prepared statement 캐시를
+        # 켜두면 이름이 충돌해 "prepared statement already exists" 에러가 난다.
+        prepareThreshold: 0
   jpa:
     open-in-view: false
     database-platform: org.hibernate.dialect.PostgreSQLDialect
