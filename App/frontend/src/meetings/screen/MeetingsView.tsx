@@ -13,6 +13,7 @@ import { analyzeMeeting, fetchMeeting, fetchMeetings, registerMeetingTasks, retr
 import type { MeetingAiResult } from "../libs/types/meetingAiTypes";
 import { DEMO_PROJECT_ID } from "../../board/libs/utils/taskApi";
 import { useAuth } from "../../global/hooks/useAuth";
+import { getProjectMembers, type MemberResponse } from "../../global/api/projectsApi";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import {
@@ -43,6 +44,7 @@ import {
 } from "lucide-react";
 
 const CURRENT_USER_ROLE: "leader" | "member" = "leader";
+const PARTICIPANT_COLORS = ["#3B5BDB", "#7048E8", "#10B981", "#F59E0B", "#EC4899", "#0EA5E9"];
 const MEETING_STATUS_POLL_INTERVAL_MS = 2000;
 const MEETING_STATUS_MAX_POLL_ATTEMPTS = 60;
 const MEETING_STATUS_MAX_NETWORK_FAILURES = 5;
@@ -279,8 +281,8 @@ export function MeetingsView() {
   const projectId = String(currentProjectId ?? DEMO_PROJECT_ID);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [meetings, setMeetings] = useState<Meeting[]>(getStoredMeetings);
-  const [selected, setSelected] = useState<string|null>("m1");
+  const [meetings, setMeetings] = useState<Meeting[]>(() => getStoredMeetings(projectId));
+  const [selected, setSelected] = useState<string|null>(() => getStoredMeetings(projectId)[0]?.id ?? null);
   const [uploadFlow, setUploadFlow] = useState<UploadFlow>(null);
   const [uploadType, setUploadType] = useState<UploadType>(null);
   const [modalStep, setModalStep] = useState(0);
@@ -289,7 +291,8 @@ export function MeetingsView() {
   const [meetTitle, setMeetTitle] = useState("");
   const [meetDate, setMeetDate] = useState(getTodayIsoDate());
   const [meetKind, setMeetKind] = useState("정기회의");
-  const [partIds, setPartIds] = useState<string[]>(["1","2","3","4"]);
+  const [partIds, setPartIds] = useState<string[]>([]);
+  const [projectMembers, setProjectMembers] = useState<MemberResponse[]>([]);
   const [analysisResult, setAnalysisResult] = useState<MeetingAiResult | null>(null);
   const [selTodos, setSelTodos] = useState<string[]>([]);
   const [todoAssignees, setTodoAssignees] = useState<Record<string,string>>({});
@@ -400,7 +403,7 @@ export function MeetingsView() {
           setAnalysisSource(source);
           setMeetings(prev => {
             const next = [analyzedMeeting, ...prev.filter(item => item.id !== analyzedMeeting.id)];
-            saveStoredMeetings(next);
+            saveStoredMeetings(next, projectId);
             return next;
           });
           setSelected(analyzedMeeting.id);
@@ -440,21 +443,23 @@ export function MeetingsView() {
   // 서버에 저장된 회의록 목록을 가져와 로컬에 없는 항목만 보충한다.
   // 실패해도 화면은 로컬 저장 목록으로 그대로 동작한다.
   useEffect(() => {
+    const cached = getStoredMeetings(projectId);
+    setMeetings(cached);
+    setSelected(cached[0]?.id ?? null);
     fetchMeetings(projectId)
       .then(list => {
-        setMeetings(prev => {
-          const existingIds = new Set(prev.map(m => m.id));
-          const additions: Meeting[] = list
-            .filter(dto => !existingIds.has(dto.meetingId))
-            .map(dto => ({
-              id: dto.meetingId,
-              title: dto.title,
-              date: dto.meetingDate ?? "",
-              duration: dto.analysisStatus === "completed" ? "분석 완료" : dto.analysisStatus,
-              status: dto.analysisStatus === "completed" ? "processed" : dto.analysisStatus === "pending" ? "pending" : "processing",
-            }));
-          return additions.length === 0 ? prev : [...additions, ...prev];
-        });
+        const serverMeetings: Meeting[] = list.map(dto => ({
+          id: dto.meetingId,
+          title: dto.title,
+          date: dto.meetingDate ?? "",
+          duration: dto.analysisStatus === "completed" ? "분석 완료" : dto.analysisStatus,
+          status: dto.analysisStatus === "completed" ? "processed" : dto.analysisStatus === "pending" ? "pending" : "processing",
+        }));
+        const serverIds = new Set(serverMeetings.map(meeting => meeting.id));
+        const merged = [...serverMeetings, ...cached.filter(meeting => !serverIds.has(meeting.id))];
+        setMeetings(merged);
+        setSelected(current => (current && merged.some(meeting => meeting.id === current)) ? current : merged[0]?.id ?? null);
+        saveStoredMeetings(merged, projectId);
       })
       .catch(() => {
         setMeetingListError("서버에서 회의록 목록을 불러오지 못했습니다. 로컬 저장 목록만 표시됩니다.");
@@ -462,6 +467,17 @@ export function MeetingsView() {
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  // 참석자 체크 목록은 현재 프로젝트의 실제 멤버만 보여준다.
+  useEffect(() => {
+    if (currentProjectId == null) {
+      setProjectMembers([]);
+      return;
+    }
+    getProjectMembers(currentProjectId)
+      .then(setProjectMembers)
+      .catch(() => setProjectMembers([]));
+  }, [currentProjectId]);
 
   const meeting = meetings.find(m => m.id === selected);
   // meetingId가 있으면 우선 사용, 없으면(review 화면에서 아직 meetings에 반영 전 등) meetTitle로 대체.
@@ -546,7 +562,7 @@ export function MeetingsView() {
       title: meetTitle,
       meetingDate: meetDate,
       meetingKind: meetKind,
-      participants: partIds.map(id => MEMBERS.find(m => m.id === id)?.name ?? id),
+      participants: partIds.map(id => projectMembers.find(member => String(member.userId) === id)?.name ?? id),
       originalFileName: selectedFile?.name ?? uploadFileName ?? "",
       fileType: uploadType,
       summary: analysisResult.summary,
@@ -556,8 +572,8 @@ export function MeetingsView() {
       createdAt: new Date().toISOString(),
       source: "MEETING_AI",
     };
-    const next = [record, ...getSavedMeetings().filter(item => item.meetingId !== meetingId)];
-    saveSavedMeetings(next);
+    const next = [record, ...getSavedMeetings(projectId).filter(item => item.meetingId !== meetingId)];
+    saveSavedMeetings(next, projectId);
     setSaveMeetingMessage("회의록이 저장되었습니다.");
     setTimeout(() => setSaveMeetingMessage(null), 2500);
   };
@@ -642,6 +658,10 @@ export function MeetingsView() {
       setAnalysisError("분석할 회의록 파일을 먼저 업로드해주세요.");
       return;
     }
+    if (partIds.length === 0) {
+      setAnalysisError("참석자를 1명 이상 선택해주세요.");
+      return;
+    }
     const uploadedAt = new Date().toISOString();
     const title = meetTitle.trim() || stripFileExtension(selectedFile.name);
     setMeetTitle(title);
@@ -663,7 +683,8 @@ export function MeetingsView() {
       meetingDate: meetDate,
       meetingKind: meetKind,
       sourceType: uploadType,
-      participants: partIds.map(id => MEMBERS.find(member => member.id === id)?.name ?? id),
+      participants: partIds.map(id => projectMembers.find(member => String(member.userId) === id)?.name ?? id),
+      attendeeIds: partIds.map(Number),
     }).then(response => {
       setActiveMeetingId(response.meetingId);
       pollMeetingStatus(response.meetingId, title, uploadedAt);
@@ -1490,19 +1511,25 @@ export function MeetingsView() {
                       {/* Participants */}
                       <div>
                         <label className="text-xs font-semibold text-foreground block mb-2">참석자</label>
-                        <div className="flex flex-wrap gap-2">
-                          {MEMBERS.map(m => {
-                            const sel = partIds.includes(m.id);
-                            return (
-                              <button key={m.id} onClick={() => setPartIds(p => sel ? p.filter(x=>x!==m.id) : [...p,m.id])}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${sel ? "border-blue-400 bg-blue-50 text-blue-700" : "border-border bg-card text-muted-foreground hover:border-slate-300"}`}>
-                                <div className="w-4 h-4 rounded-full flex items-center justify-center text-white text-[8px] font-bold" style={{ background:m.color }}>{m.initials}</div>
-                                {m.name}
-                                {sel && <Check className="w-3 h-3" />}
-                              </button>
-                            );
-                          })}
-                        </div>
+                        {projectMembers.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">프로젝트 멤버 정보를 불러오는 중입니다.</p>
+                        ) : (
+                          <div className="flex flex-wrap gap-2">
+                            {projectMembers.map(m => {
+                              const id = String(m.userId);
+                              const sel = partIds.includes(id);
+                              const color = PARTICIPANT_COLORS[m.userId % PARTICIPANT_COLORS.length];
+                              return (
+                                <button key={id} onClick={() => setPartIds(p => sel ? p.filter(x=>x!==id) : [...p,id])}
+                                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${sel ? "border-blue-400 bg-blue-50 text-blue-700" : "border-border bg-card text-muted-foreground hover:border-slate-300"}`}>
+                                  <div className="w-4 h-4 rounded-full flex items-center justify-center text-white text-[8px] font-bold" style={{ background:color }}>{m.name.slice(0,1)}</div>
+                                  {m.name}
+                                  {sel && <Check className="w-3 h-3" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
 
                       {/* Auto analyze toggle */}

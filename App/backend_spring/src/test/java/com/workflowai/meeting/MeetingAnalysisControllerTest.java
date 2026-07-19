@@ -21,7 +21,7 @@ class MeetingAnalysisControllerTest {
 
     @Test
     void statusReturns404WhenMeetingMissing() throws Exception {
-        when(meetingAnalysisService.findStatus("999")).thenReturn(null);
+        when(meetingAnalysisService.findStatus("demo-project", "999")).thenReturn(null);
         MeetingAnalysisController controller = new MeetingAnalysisController(meetingAnalysisService);
         MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
 
@@ -32,7 +32,7 @@ class MeetingAnalysisControllerTest {
 
     @Test
     void retryReturns409WhenMeetingIsNotFailed() throws Exception {
-        when(meetingAnalysisService.retry("42")).thenThrow(new IllegalStateException("MEETING_NOT_FAILED"));
+        when(meetingAnalysisService.retry("demo-project", "42")).thenThrow(new IllegalStateException("MEETING_NOT_FAILED"));
         MeetingAnalysisController controller = new MeetingAnalysisController(meetingAnalysisService);
         MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
 

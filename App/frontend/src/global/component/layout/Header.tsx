@@ -28,7 +28,10 @@ export function Header() {
   const location = useLocation();
   const [searchOpen, setSearchOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const { currentProject, logout } = useAuth();
+  const { user, currentProject, logout } = useAuth();
+  // 온라인 상태 API/WebSocket이 아직 없어 우선 현재 로그인한 사용자만 표시한다.
+  // 추후 실시간 접속자 목록이 생기면 이 배열만 그 소스로 교체하면 된다.
+  const onlineUsers = user ? [user] : [];
   const currentProjectName = currentProject?.projectTitle ?? null;
   const role: ProjectRoleKo = currentProject?.role ?? "팀장";
   const allNotifications = useStoredNotifications();
@@ -116,11 +119,11 @@ export function Header() {
           )}
         </div>
 
-        {/* Team avatars */}
+        {/* 현재 접속 중인 사용자 아바타 */}
         <div className="flex -space-x-2 ml-1">
-          {MEMBERS.map(m => (
-            <div key={m.id} title={m.name} className="w-8 h-8 rounded-full border-2 border-card flex items-center justify-center text-white text-xs font-semibold" style={{ background: m.color }}>
-              {m.initials}
+          {onlineUsers.map(onlineUser => (
+            <div key={onlineUser.id} title={onlineUser.name} className="w-8 h-8 rounded-full border-2 border-card flex items-center justify-center text-white text-xs font-semibold" style={{ background: "#3B5BDB" }}>
+              {onlineUser.name.slice(0, 1)}
             </div>
           ))}
         </div>

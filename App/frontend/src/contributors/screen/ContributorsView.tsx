@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import {
   Activity,
@@ -26,6 +26,8 @@ import {
   REVIEWER_ACTIVITIES,
   REVIEWER_TEAMS,
 } from "../../global/lib/mock/reviewer";
+import { fetchAttendanceSummary, type MeetingAttendanceSummaryDto } from "../../meetings/libs/utils/meetingAiApi";
+import { useAuth } from "../../global/hooks/useAuth";
 
 type Team = (typeof REVIEWER_TEAMS)[number];
 type EvalStatus = Team["evalStatus"];
@@ -60,8 +62,22 @@ function percent(value: number, total: number) {
 export function ContributorsView() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { currentProjectId } = useAuth();
   const [selectedMemberId, setSelectedMemberId] = useState(CONTRIB_REPORTS[0]?.memberId ?? "");
   const [query, setQuery] = useState("");
+  // 실제 회의 참석 데이터로 목업 회의 참여 지표를 보강한다. 실패하면 목업 값을 그대로 쓴다.
+  const [attendanceSummaries, setAttendanceSummaries] = useState<MeetingAttendanceSummaryDto[]>([]);
+  useEffect(() => {
+    if (currentProjectId == null) {
+      setAttendanceSummaries([]);
+      return;
+    }
+    fetchAttendanceSummary(String(currentProjectId)).then(setAttendanceSummaries).catch(() => setAttendanceSummaries([]));
+  }, [currentProjectId]);
+  const attendanceByMemberId = useMemo(
+    () => Object.fromEntries(attendanceSummaries.map((summary) => [String(summary.userId), summary])),
+    [attendanceSummaries],
+  );
   const [publicFlags, setPublicFlags] = useState<Record<string, boolean>>(
     Object.fromEntries(CONTRIB_REPORTS.map((report) => [report.memberId, report.isPublic])) as Record<string, boolean>,
   );
@@ -244,8 +260,11 @@ export function ContributorsView() {
                         <div className="text-[10px] text-muted-foreground">{taskRate}%</div>
                       </div>
                       <div className="text-xs text-foreground">
-                        <span className="font-bold">{report.meetings}</span>
+                        <span className="font-bold">{attendanceByMemberId[report.memberId]?.meetingsAttended ?? report.meetings}</span>
                         <span className="text-muted-foreground">회</span>
+                        {attendanceByMemberId[report.memberId] && (
+                          <div className="text-[10px] text-muted-foreground">참석률 {attendanceByMemberId[report.memberId].attendanceRate}%</div>
+                        )}
                       </div>
                       <div className="text-xs text-foreground">
                         <div className="flex items-center gap-1">

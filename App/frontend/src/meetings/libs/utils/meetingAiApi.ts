@@ -9,9 +9,16 @@ interface AnalyzeMeetingParams {
   meetingKind: string;
   sourceType: "document" | "audio" | "video";
   participants: string[];
+  attendeeIds?: number[];
 }
 
 export type MeetingAnalysisStatus = "PROCESSING" | "COMPLETED" | "FAILED";
+
+export interface AttendeeSummary {
+  id: number;
+  name: string | null;
+  role: string | null;
+}
 
 export interface MeetingAnalysisResponse {
   meetingId: string;
@@ -22,6 +29,7 @@ export interface MeetingAnalysisResponse {
   analysisSource: "FASTAPI" | "SPRING_FALLBACK" | null;
   analysis: MeetingAiResult | null;
   errorMessage: string | null;
+  attendees: AttendeeSummary[];
 }
 
 export async function analyzeMeeting(params: AnalyzeMeetingParams): Promise<MeetingAnalysisResponse> {
@@ -32,11 +40,24 @@ export async function analyzeMeeting(params: AnalyzeMeetingParams): Promise<Meet
   formData.append("meetingKind", params.meetingKind);
   formData.append("sourceType", params.sourceType);
   params.participants.forEach(participant => formData.append("participants", participant));
+  (params.attendeeIds ?? []).forEach(attendeeId => formData.append("attendeeIds", String(attendeeId)));
 
   return apiFetch<MeetingAnalysisResponse>(`/projects/${params.projectId}/meetings/analyze`, {
     method: "POST",
     body: formData,
   });
+}
+
+export interface MeetingAttendanceSummaryDto {
+  userId: number;
+  name: string | null;
+  meetingsAttended: number;
+  totalMeetings: number;
+  attendanceRate: number;
+}
+
+export async function fetchAttendanceSummary(projectId: string): Promise<MeetingAttendanceSummaryDto[]> {
+  return apiFetch<MeetingAttendanceSummaryDto[]>(`/projects/${projectId}/meetings/attendance-summary`);
 }
 
 export async function fetchMeeting(projectId: string, meetingId: string): Promise<MeetingAnalysisResponse> {
