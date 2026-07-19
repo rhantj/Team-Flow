@@ -368,9 +368,11 @@ export function MeetingsView() {
   const [meetingListError, setMeetingListError] = useState<string | null>(null);
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
   const [deletingMeetingId, setDeletingMeetingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Meeting | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pdfCaptureRef = useRef<HTMLDivElement | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollSessionRef = useRef(0);
   const analyzeStages = getAnalyzeStages(uploadType);
   const canAddManualTodo = CURRENT_USER_ROLE === "leader";
 
@@ -388,6 +390,7 @@ export function MeetingsView() {
   }, [uploadFlow, analyzeStages.length]);
 
   const stopPolling = () => {
+    pollSessionRef.current += 1;
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
@@ -405,9 +408,12 @@ export function MeetingsView() {
   // meetingId를 대상으로 서버 분석 상태를 2초 간격으로 조회해 completed/failed를 반영한다.
   const pollMeetingStatus = (meetingId: string, title: string, uploadedAt: string) => {
     stopPolling();
+    const pollSessionId = pollSessionRef.current + 1;
+    pollSessionRef.current = pollSessionId;
     let attempts = 0;
     let consecutiveNetworkFailures = 0;
     pollIntervalRef.current = setInterval(() => {
+      if (pollSessionRef.current !== pollSessionId) return;
       attempts += 1;
       if (attempts > MEETING_STATUS_MAX_POLL_ATTEMPTS) {
         stopPolling();
@@ -420,6 +426,7 @@ export function MeetingsView() {
       }
 
       fetchMeeting(projectId, meetingId).then(response => {
+        if (pollSessionRef.current !== pollSessionId) return;
         consecutiveNetworkFailures = 0;
         if (response.status === "PROCESSING") return;
         stopPolling();
@@ -451,6 +458,7 @@ export function MeetingsView() {
           setUploadFlow("results");
         }
       }).catch(() => {
+        if (pollSessionRef.current !== pollSessionId) return;
         consecutiveNetworkFailures += 1;
         if (consecutiveNetworkFailures >= MEETING_STATUS_MAX_NETWORK_FAILURES) {
           stopPolling();
@@ -841,12 +849,10 @@ export function MeetingsView() {
     }
   };
 
-  const handleDeleteMeeting = async (target: Meeting) => {
+  const handleDeleteMeeting = async (target: Meeting, deleteLinkedTasks: boolean) => {
     if (deletingMeetingId) return;
-    const confirmed = window.confirm(`'${target.title}' 회의록을 삭제할까요?`);
-    if (!confirmed) return;
-    const deleteLinkedTasks = window.confirm("업무보드에 등록된 To-Do도 같이 삭제할까요?\n\n확인: 회의록과 연동 업무 모두 삭제\n취소: 회의록만 삭제");
 
+    setDeleteTarget(null);
     setDeletingMeetingId(target.id);
     setMeetingListError(null);
     setDeleteMessage(null);
@@ -1033,6 +1039,48 @@ export function MeetingsView() {
         <div className="text-base font-bold text-foreground">회의록을 삭제하는 중입니다</div>
         <div className="text-xs text-muted-foreground mt-2 leading-relaxed">
           회의록 데이터와 선택한 연동 정보를 정리하고 있습니다.
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  const renderDeleteConfirmModal = () => deleteTarget ? (
+    <div className="fixed inset-0 z-[65] flex items-center justify-center px-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setDeleteTarget(null)} />
+      <div className="relative w-full max-w-md rounded-2xl bg-white shadow-2xl border border-border p-6">
+        <div className="w-12 h-12 rounded-2xl bg-red-50 border border-red-100 flex items-center justify-center mb-4">
+          <Trash2 className="w-6 h-6 text-red-600" />
+        </div>
+        <h2 className="text-lg font-bold text-foreground">회의록 삭제</h2>
+        <p className="text-sm text-muted-foreground leading-relaxed mt-2">
+          '{deleteTarget.title}' 회의록을 삭제합니다. 업무보드에 등록된 To-Do는 선택에 따라 유지하거나 함께 삭제할 수 있습니다.
+        </p>
+        <div className="mt-5 rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-xs text-slate-600 leading-relaxed">
+          <strong className="text-slate-900">회의록만 삭제</strong>를 선택하면 업무 목록은 그대로 남고, 원본 회의록 연결만 해제됩니다.
+        </div>
+        <div className="mt-6 flex flex-col sm:flex-row gap-2 justify-end">
+          <button
+            type="button"
+            onClick={() => setDeleteTarget(null)}
+            className="px-4 py-2 text-sm font-medium border border-border rounded-xl hover:bg-muted transition-colors"
+          >
+            취소
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleDeleteMeeting(deleteTarget, false)}
+            className="px-4 py-2 text-sm font-semibold border border-blue-200 text-blue-700 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors"
+          >
+            회의록만 삭제
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleDeleteMeeting(deleteTarget, true)}
+            className="px-4 py-2 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity"
+            style={{ background: "linear-gradient(135deg,#EF4444,#DC2626)" }}
+          >
+            회의록 + To-Do 삭제
+          </button>
         </div>
       </div>
     </div>
@@ -1600,6 +1648,7 @@ export function MeetingsView() {
     <div className="flex h-full overflow-hidden relative" style={{ fontFamily:"'Inter','Noto Sans KR',sans-serif" }}>
       {renderRegisteringOverlay()}
       {renderDeletingOverlay()}
+      {renderDeleteConfirmModal()}
       {/* ── Upload modal ── */}
       {uploadFlow === "modal" && (
         <>
@@ -1838,7 +1887,7 @@ export function MeetingsView() {
                     type="button"
                     onClick={event => {
                       event.stopPropagation();
-                      void handleDeleteMeeting(m);
+                      setDeleteTarget(m);
                     }}
                     disabled={Boolean(deletingMeetingId)}
                     className="p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
