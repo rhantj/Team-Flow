@@ -239,7 +239,7 @@ export function Sidebar({ active, onSelect, onAI, collapsed, onToggleCollapsed, 
       <div className="p-3 border-t" style={{ borderColor: "var(--sidebar-border)" }}>
         <div className={`flex items-center gap-2.5 px-2 py-1.5 ${collapsed ? "justify-center" : ""}`}>
           <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-semibold shrink-0" style={{ background: "#3B5BDB" }}>
-            김
+            {(user?.name || "사용자").charAt(0)}
           </div>
           {!collapsed && (
             <div className="flex-1 min-w-0">
