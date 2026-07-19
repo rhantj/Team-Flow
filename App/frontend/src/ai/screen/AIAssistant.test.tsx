@@ -4,8 +4,10 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { AIAssistant } from "./AIAssistant";
 import { apiFetch } from "../../global/api/apiClient";
 
+let mockCurrentProjectId: number | null = 1;
+
 vi.mock("../../global/hooks/useAuth", () => ({
-  useAuth: () => ({ currentProjectId: 1 }),
+  useAuth: () => ({ currentProjectId: mockCurrentProjectId }),
 }));
 
 vi.mock("../../global/api/apiClient", () => ({
@@ -15,6 +17,7 @@ vi.mock("../../global/api/apiClient", () => ({
 describe("AIAssistant", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    mockCurrentProjectId = 1;
   });
 
   it("renders initial assistant greeting", () => {
@@ -45,5 +48,17 @@ describe("AIAssistant", () => {
     await userEvent.type(textbox, "질문{enter}");
 
     await waitFor(() => expect(screen.getByText("로그인이 필요합니다.")).toBeInTheDocument());
+  });
+
+  it("shows an empty project message instead of calling RAG when no project is selected", async () => {
+    mockCurrentProjectId = null;
+
+    render(<AIAssistant onClose={() => {}} />);
+    const textbox = screen.getByPlaceholderText("프로젝트에 대해 무엇이든 물어보세요...");
+    await userEvent.type(textbox, "회의록 요약해줘");
+    await userEvent.click(screen.getByRole("button", { name: "전송" }));
+
+    expect(apiFetch).not.toHaveBeenCalled();
+    expect(screen.getByText("아직 연결된 프로젝트가 없습니다. 프로젝트를 만들고 회의록을 업로드한 뒤 다시 질문해주세요.")).toBeInTheDocument();
   });
 });
