@@ -173,3 +173,15 @@ Supabase 실 데이터로 확인한 실제 `category` 값은 `{QA, ai-ml, backen
 ```sql
 DELETE FROM public.tasks WHERE source_type = 'jira01_test_import';
 ```
+
+## 8. FastAPI 서비스 통합 확인 (로드맵 2번째 항목)
+
+`/ai/score/workload`는 이미 `App/backend_fastapi/app/main.py`에 등록돼 있었다(로드맵 항목이
+가리키는 `App/backend_fastapi/main.py`는 실제로는 아무 데도 안 쓰이는 빈 TODO 스텁 —
+Dockerfile도 `app/` 디렉터리만 COPY하고 `uvicorn app.main:app`으로 기동해서 이 스텁은
+이미지에 포함조차 안 됨). 지금까지의 검증은 전부 `TestClient`(인프로세스) 기준이었어서,
+실제로 `uvicorn app.main:app`을 로컬 포트에 띄워 `curl -X POST ".../ai/score/workload?project_id=1"`로
+진짜 HTTP 호출까지 확인했다 — 7장에서 Python으로 직접 호출했던 것과 동일한 응답을 정상 수신.
+
+로드맵 항목은 종결. 다만 안 쓰이는 `App/backend_fastapi/main.py` 스텁은 계속 혼란을 줄 수 있어서
+삭제할지, FS-1 등 다른 담당자와 확인 후 결정할지는 별도로 정할 필요가 있다.

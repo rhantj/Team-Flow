@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -20,7 +21,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-// TODO: 실제 인증이 도입되면 프로젝트 멤버십/작성자 권한 검사(본인 코멘트만 수정/삭제 등)를 여기에도 추가해야 한다.
+// DONE: @projectAccess.isMember(#projectId)로 프로젝트 멤버십 검사 적용 완료 (2026-07-18).
+// TODO: createComment가 request.authorId()를 그대로 신뢰해 로그인 사용자가 아닌 임의 명의로
+// 코멘트가 남을 수 있다(CurrentUser.id() 기반으로 교체 필요). 남은 과제는 document_고무서에 별도 기록.
 @Tag(name = "업무 코멘트", description = "업무에 대한 코멘트 조회/작성/수정/삭제 API")
 @RestController
 @RequestMapping("/api/v1/projects/{projectId}/tasks/{taskId}/comments")
@@ -61,6 +64,7 @@ public class TaskCommentController {
 
     @Operation(summary = "코멘트 조회", description = "업무에 등록된 코멘트를 작성 순서대로 조회합니다.")
     @GetMapping
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ResponseEntity<ApiResponse<List<TaskCommentDto>>> getComments(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId
@@ -78,6 +82,7 @@ public class TaskCommentController {
 
     @Operation(summary = "코멘트 작성", description = "업무에 새 코멘트를 남깁니다.")
     @PostMapping
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ResponseEntity<ApiResponse<TaskCommentDto>> createComment(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId,
@@ -103,6 +108,7 @@ public class TaskCommentController {
 
     @Operation(summary = "코멘트 수정", description = "코멘트 내용을 수정합니다.")
     @PatchMapping("/{commentId}")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ResponseEntity<ApiResponse<TaskCommentDto>> updateComment(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId,
@@ -129,6 +135,7 @@ public class TaskCommentController {
 
     @Operation(summary = "코멘트 삭제", description = "코멘트를 삭제합니다.")
     @DeleteMapping("/{commentId}")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ResponseEntity<ApiResponse<Void>> deleteComment(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId,

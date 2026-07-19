@@ -16,7 +16,7 @@ import asyncio
 
 import asyncpg
 
-from core.config import get_settings
+from core.db import create_pool
 from llm_rag_assistant.app.services.ingestion_service import ingest_content
 
 _ALREADY_INGESTED_SQL = """
@@ -114,10 +114,7 @@ async def backfill_tasks(pool: asyncpg.Pool) -> int:
 
 
 async def main() -> None:
-    settings = get_settings()
-    pool = await asyncpg.create_pool(
-        dsn=settings.database_url, min_size=1, max_size=5, statement_cache_size=0
-    )
+    pool = await create_pool()
     try:
         meeting_count = await backfill_meetings(pool)
         action_item_count = await backfill_action_items(pool)
