@@ -43,6 +43,7 @@ import {
   ListChecks,
   Radio,
   Trash2,
+  Loader2,
 } from "lucide-react";
 
 const CURRENT_USER_ROLE: "leader" | "member" = "leader";
@@ -363,6 +364,7 @@ export function MeetingsView() {
   const [pdfExportMessage, setPdfExportMessage] = useState<string | null>(null);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [registerMessage, setRegisterMessage] = useState<string | null>(null);
+  const [isRegisteringTasks, setIsRegisteringTasks] = useState(false);
   const [meetingListError, setMeetingListError] = useState<string | null>(null);
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
   const [deletingMeetingId, setDeletingMeetingId] = useState<string | null>(null);
@@ -885,6 +887,7 @@ export function MeetingsView() {
   };
 
   const registerSelectedTodos = async () => {
+    if (isRegisteringTasks) return;
     const existingTasks = getStoredTasks();
     const existingKeys = new Set(
       existingTasks.map(task => buildTodoRegistrationKey(task.sourceMeetingTitle ?? "", task.title, task.assignee, task.dueDate))
@@ -904,42 +907,46 @@ export function MeetingsView() {
       return;
     }
 
-    if (newTodos.length > 0) {
-      try {
+    setIsRegisteringTasks(true);
+    setRegisterMessage("업무보드에 등록 중입니다...");
+    try {
+      if (newTodos.length > 0) {
         await registerMeetingTasks(projectId, meetingIdentifier, newTodos.map(todo => toApiTodo(todo)));
-      } catch {
-        setRegisterMessage("서버에 업무 등록을 실패했습니다. 다시 시도해주세요.");
-        setTimeout(() => setRegisterMessage(null), 2500);
-        return;
       }
-    }
 
-    const createdTasks: Task[] = newTodos.map((todo, index) => {
-      const cat = getCat(todo.category);
-      const sourceLabel = todo.source === "MEETING_AI" ? "회의록 AI" : "직접 추가";
-      return {
-        id: `AI-${now}-${String(index + 1).padStart(2, "0")}`,
-        title: todo.title,
-        status: "todo",
-        priority: todo.priority,
-        assignee: getAssignee(todo) || MEMBERS[0].id,
-        dueDate: getDueDate(todo),
-        category: todo.category,
-        position: index,
-        labels: [sourceLabel, cat.label],
-        sourceMeetingTitle: meetingIdentifier,
-      };
-    });
+      const createdTasks: Task[] = newTodos.map((todo, index) => {
+        const cat = getCat(todo.category);
+        const sourceLabel = todo.source === "MEETING_AI" ? "회의록 AI" : "직접 추가";
+        return {
+          id: `AI-${now}-${String(index + 1).padStart(2, "0")}`,
+          title: todo.title,
+          status: "todo",
+          priority: todo.priority,
+          assignee: getAssignee(todo) || MEMBERS[0].id,
+          dueDate: getDueDate(todo),
+          category: todo.category,
+          position: index,
+          labels: [sourceLabel, cat.label],
+          sourceMeetingTitle: meetingIdentifier,
+        };
+      });
 
-    if (createdTasks.length > 0) {
-      saveStoredTasks([...createdTasks, ...existingTasks]);
-      addActivity(`회의록 AI로 '${meetingIdentifier}'의 업무 ${createdTasks.length}건을 업무보드에 등록했습니다.`, "김민준", "meeting-registered");
+      if (createdTasks.length > 0) {
+        saveStoredTasks([...createdTasks, ...existingTasks]);
+        addActivity(`회의록 AI로 '${meetingIdentifier}'의 업무 ${createdTasks.length}건을 업무보드에 등록했습니다.`, "김민준", "meeting-registered");
+      }
+      setUploadFlow("done");
+    } catch {
+      setRegisterMessage("서버에 업무 등록을 실패했습니다. 다시 시도해주세요.");
+      setTimeout(() => setRegisterMessage(null), 2500);
+    } finally {
+      setIsRegisteringTasks(false);
     }
-    setUploadFlow("done");
   };
 
   // 회의 상세 화면(meeting.todos, 문자열 배열)에서 "업무로 등록" 클릭 시 실행.
   const handleRegisterMeetingTodos = async () => {
+    if (isRegisteringTasks) return;
     if (!meeting || !meeting.todos || meeting.todos.length === 0) return;
     const existingTasks = getStoredTasks();
     const existingKeys = new Set(
@@ -963,6 +970,8 @@ export function MeetingsView() {
       return;
     }
 
+    setIsRegisteringTasks(true);
+    setRegisterMessage("업무보드에 등록 중입니다...");
     try {
       await registerMeetingTasks(projectId, meetingIdentifier, newTodos.map(todo => ({
         title: todo.title,
@@ -974,30 +983,45 @@ export function MeetingsView() {
         category: "ETC",
         needs_leader_review: false,
       })));
+
+      const now = Date.now();
+      const createdTasks: Task[] = newTodos.map((todo, index) => ({
+        id: `AI-${now}-${String(index + 1).padStart(2, "0")}`,
+        title: todo.title,
+        status: "todo",
+        priority: "medium",
+        assignee: todo.assigneeId,
+        dueDate: todo.dueDate,
+        category: "other",
+        position: index,
+        labels: ["회의록 AI"],
+        sourceMeetingTitle: meetingIdentifier,
+      }));
+      saveStoredTasks([...createdTasks, ...existingTasks]);
+      addActivity(`회의록 AI로 '${meetingIdentifier}'의 업무 ${createdTasks.length}건을 업무보드에 등록했습니다.`, "김민준", "meeting-registered");
+      setRegisterMessage("업무 보드에 등록되었습니다.");
+      setTimeout(() => setRegisterMessage(null), 2500);
     } catch {
       setRegisterMessage("서버에 업무 등록을 실패했습니다. 다시 시도해주세요.");
       setTimeout(() => setRegisterMessage(null), 2500);
-      return;
+    } finally {
+      setIsRegisteringTasks(false);
     }
-
-    const now = Date.now();
-    const createdTasks: Task[] = newTodos.map((todo, index) => ({
-      id: `AI-${now}-${String(index + 1).padStart(2, "0")}`,
-      title: todo.title,
-      status: "todo",
-      priority: "medium",
-      assignee: todo.assigneeId,
-      dueDate: todo.dueDate,
-      category: "other",
-      position: index,
-      labels: ["회의록 AI"],
-      sourceMeetingTitle: meetingIdentifier,
-    }));
-    saveStoredTasks([...createdTasks, ...existingTasks]);
-    addActivity(`회의록 AI로 '${meetingIdentifier}'의 업무 ${createdTasks.length}건을 업무보드에 등록했습니다.`, "김민준", "meeting-registered");
-    setRegisterMessage("업무 보드에 등록되었습니다.");
-    setTimeout(() => setRegisterMessage(null), 2500);
   };
+
+  const renderRegisteringOverlay = () => isRegisteringTasks ? (
+    <div className="fixed inset-0 z-[70] bg-white/65 backdrop-blur-sm flex items-center justify-center px-4">
+      <div className="w-full max-w-sm rounded-2xl border border-blue-100 bg-white shadow-2xl px-6 py-7 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center mx-auto mb-4">
+          <Loader2 className="w-7 h-7 text-blue-600 animate-spin" />
+        </div>
+        <div className="text-base font-bold text-foreground">업무보드에 등록 중입니다</div>
+        <div className="text-xs text-muted-foreground mt-2 leading-relaxed">
+          선택한 To-Do를 업무보드에 저장하고 담당자 정보를 반영하는 중입니다.
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   // ── Analyzing screen ────────────────────────────────────────────────────────
   const renderAnalyzing = () => (
@@ -1329,6 +1353,7 @@ export function MeetingsView() {
     const approvedCount = selTodos.length;
     return (
       <div className="h-full flex flex-col overflow-hidden" style={{ fontFamily:"'Inter','Noto Sans KR',sans-serif" }}>
+        {renderRegisteringOverlay()}
         {/* Header */}
         <div className="shrink-0 px-6 pt-5 pb-4 border-b border-border">
           <div className="flex items-start justify-between mb-3">
@@ -1353,10 +1378,11 @@ export function MeetingsView() {
                   </button>
                 ) : (
                   <button onClick={registerSelectedTodos}
-                    disabled={approvedCount === 0}
+                    disabled={approvedCount === 0 || isRegisteringTasks}
                     className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50"
                     style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
-                    <CheckCircle2 className="w-4 h-4" />{approvedCount}개 업무 보드에 등록
+                    {isRegisteringTasks ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                    {isRegisteringTasks ? "업무보드 등록 중" : `${approvedCount}개 업무 보드에 등록`}
                   </button>
                 )}
               </div>
@@ -1557,6 +1583,7 @@ export function MeetingsView() {
 
   return (
     <div className="flex h-full overflow-hidden relative" style={{ fontFamily:"'Inter','Noto Sans KR',sans-serif" }}>
+      {renderRegisteringOverlay()}
       {/* ── Upload modal ── */}
       {uploadFlow === "modal" && (
         <>
@@ -1869,9 +1896,10 @@ export function MeetingsView() {
                   ) : (
                     <button
                       onClick={handleRegisterMeetingTodos}
-                      disabled={meeting.todos.length === 0}
-                      className="text-xs font-medium text-blue-600 hover:text-blue-700 disabled:text-slate-400 disabled:cursor-not-allowed">
-                      업무로 등록
+                      disabled={meeting.todos.length === 0 || isRegisteringTasks}
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700 disabled:text-slate-400 disabled:cursor-not-allowed">
+                      {isRegisteringTasks && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      {isRegisteringTasks ? "등록 중" : "업무로 등록"}
                     </button>
                   )}
                 </div>
