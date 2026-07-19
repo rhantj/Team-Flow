@@ -1,6 +1,9 @@
 server:
   port: ${PORT:8080}
   address: 0.0.0.0
+  # nginx 뒤에서 TLS가 종료되는 배포 환경에서는 framework로 켠다(docker-compose.prod.yml).
+  # 켜지 않으면 X-Forwarded-Proto를 무시하고 리다이렉트 URL을 http://로 만들어 OAuth가 깨진다.
+  forward-headers-strategy: ${SERVER_FORWARD_HEADERS_STRATEGY:none}
 
 spring:
   application:
