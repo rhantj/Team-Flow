@@ -49,14 +49,27 @@ def main() -> None:
         settings.model_filename,
         settings.hf_model_revision or "(default)",
     )
-    downloaded_path = hf_hub_download(
-        repo_id=settings.hf_model_repo_id,
-        filename=settings.model_filename,
-        revision=settings.hf_model_revision or None,
-    )
+    try:
+        downloaded_path = hf_hub_download(
+            repo_id=settings.hf_model_repo_id,
+            filename=settings.model_filename,
+            revision=settings.hf_model_revision or None,
+        )
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(downloaded_path, target_path)
+    except Exception:
+        # 네트워크 오류, 잘못된 repo/revision, private 저장소 토큰 누락 등으로 여기서
+        # 예외가 나면 docker-entrypoint.sh가 set -e 때문에 컨테이너 기동 자체를 멈춰버린다.
+        # 모델 없이도 서버는 뜰 수 있어야 하므로(health가 model_loaded=False를 보고하고,
+        # predict 계열은 503을 반환) 예외를 삼키고 기동을 계속한다.
+        logger.exception(
+            "Hugging Face Hub 모델 다운로드 실패. 모델 없이 서버 기동을 계속합니다 "
+            "(관련 API는 모델을 준비하기 전까지 503을 반환합니다). repo=%s revision=%s",
+            settings.hf_model_repo_id,
+            settings.hf_model_revision or "(default)",
+        )
+        return
 
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy(downloaded_path, target_path)
     logger.info("모델 다운로드 완료: %s", target_path)
 
 

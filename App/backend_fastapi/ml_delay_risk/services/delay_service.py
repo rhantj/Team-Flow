@@ -18,10 +18,6 @@ from ml_delay_risk.models.mongo_client import get_database
 from ml_delay_risk.models.snapshot_repository import fetch_snapshot
 from ml_delay_risk.config import get_settings
 
-_notebook = _notebook_runtime.load()
-predict_class_probabilities = _notebook.predict_class_probabilities
-proxy_deadline_for = _notebook.proxy_deadline_for
-
 
 def _fetch_issue(issue_key: str) -> dict[str, Any]:
     settings = get_settings()
@@ -39,6 +35,11 @@ def predict_for_issue(issue_key: str) -> dict[str, Any]:
     db = get_database()
     issue = _fetch_issue(issue_key)
 
+    # 모듈 임포트 시점이 아니라 요청 처리 시점에 로드해야, delay_model.ipynb가 깨져도
+    # 서버 전체(다른 라우터 포함)가 기동조차 못 하는 사태를 막을 수 있다. 최초 성공 이후로는
+    # _notebook_runtime이 내부적으로 캐시하므로 매 요청마다 다시 실행하지는 않는다.
+    notebook = _notebook_runtime.load()
+
     created = issue.get("created")
     if created is None:
         raise HTTPException(
@@ -46,7 +47,7 @@ def predict_for_issue(issue_key: str) -> dict[str, Any]:
         )
 
     static_features = build_static_features(issue)
-    proxy_deadline_hours = proxy_deadline_for(
+    proxy_deadline_hours = notebook.proxy_deadline_for(
         static_features["issuetype_name"], static_features["priority_name"]
     )
 
@@ -76,7 +77,7 @@ def predict_for_issue(issue_key: str) -> dict[str, Any]:
         "snapshot_offset_days": dynamic_features["elapsed_hours_at_cutoff"] / 24.0,
     }
 
-    probabilities = predict_class_probabilities(feature_row)
+    probabilities = notebook.predict_class_probabilities(feature_row)
     predicted_index = max(range(len(probabilities)), key=lambda i: probabilities[i])
 
     return {
