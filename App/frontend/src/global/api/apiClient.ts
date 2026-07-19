@@ -80,6 +80,10 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}, retry
   const body = await readJsonEnvelope<T>(response);
   if (!response.ok) {
     const message = body?.error?.message ?? (response.status === 404 ? "요청한 항목을 찾을 수 없습니다." : "요청에 실패했습니다.");
+    if (response.status === 401) {
+      tokenStore.clear();
+      window.dispatchEvent(new CustomEvent(AUTH_LOGOUT_EVENT));
+    }
     throw new ApiRequestError(message, response.status, body?.error?.code);
   }
   if (!body) {

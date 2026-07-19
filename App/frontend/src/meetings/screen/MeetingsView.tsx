@@ -483,7 +483,7 @@ export function MeetingsView() {
     fetchMeetings(projectId)
       .then(list => {
         const deletedMeetingIds = getDeletedMeetingIds(projectId);
-        const serverMeetings: Meeting[] = list.filter(dto => !deletedMeetingIds.has(dto.meetingId)).map(dto => ({
+        const serverMeetings: Meeting[] = list.map(dto => ({
           id: dto.meetingId,
           title: dto.title,
           date: dto.meetingDate ?? "",
@@ -871,12 +871,16 @@ export function MeetingsView() {
         setDeleteMessage("서버에 없는 회의록이라 목록에서 제거했습니다.");
         setTimeout(() => setDeleteMessage(null), 2500);
       } else {
-        if (deleteLinkedTasks) {
-          await removeLinkedLocalTasks(target);
-        }
-        removeMeetingFromLocalState(target.id);
-        const status = error instanceof ApiRequestError ? ` (${error.status})` : "";
-        setMeetingListError(`서버 삭제는 실패했지만${status}, 화면 목록에서는 제거했습니다. 백엔드 재시작 후에도 다시 뜨면 알려주세요.`);
+        const statusCode = error instanceof ApiRequestError ? error.status : null;
+        const isAuthError = statusCode === 401 || message.includes("인증이 만료") || message.includes("다시 로그인");
+        const isPermissionError = statusCode === 403;
+        const status = statusCode ? ` (${statusCode})` : "";
+        const errorMessage = isAuthError
+          ? "로그인이 만료되어 DB 삭제가 되지 않았습니다. 다시 로그인 후 삭제해주세요."
+          : isPermissionError
+            ? "프로젝트 권한이 없어 DB 삭제가 되지 않았습니다. 권한을 확인해주세요."
+            : `서버 삭제에 실패했습니다${status}. DB에는 삭제되지 않았습니다. 잠시 후 다시 시도해주세요.`;
+        setMeetingListError(errorMessage);
         setTimeout(() => setMeetingListError(null), 6000);
       }
     } finally {

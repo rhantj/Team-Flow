@@ -117,6 +117,26 @@ public class AuthController {
         }
     }
 
+    @Operation(
+        summary = "[개발용] 데모 계정 JWT 발급",
+        description = "프론트 개발 화면에서 리다이렉트 없이 데모 계정 JWT를 받아 저장할 때 사용한다. "
+            + "workflow.demo.dev-login-enabled=false(프로덕션 기본값)이면 404를 반환한다."
+    )
+    @GetMapping("/dev-login-token/{demoUserId}")
+    public ResponseEntity<ApiResponse<AuthTokenResponse>> devLoginToken(@PathVariable String demoUserId) {
+        if (!devLoginEnabled) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.fail("DEV_LOGIN_DISABLED", "개발용 로그인이 비활성화되어 있습니다."));
+        }
+        try {
+            return ResponseEntity.ok(ApiResponse.ok(authService.devLogin(demoUserId)));
+        } catch (Exception e) {
+            log.warn("데모 토큰 로그인 실패: {}", demoUserId, e);
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.fail("DEMO_USER_NOT_FOUND", "테스트 계정을 찾을 수 없습니다."));
+        }
+    }
+
     @Operation(summary = "Refresh Token으로 Access Token 재발급")
     @PostMapping("/refresh")
     public ApiResponse<AuthTokenResponse> refresh(@Valid @RequestBody RefreshRequest request) {
