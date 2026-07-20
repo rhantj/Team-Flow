@@ -315,7 +315,21 @@ git commit -m "feat: 기여도 점수(/ai/score/contribution) Spring 연동 - Co
 
 ---
 
-### Task 2: 권한(REVIEWER) 보안 테스트
+### Task 2: 권한(REVIEWER) 보안 테스트 — **스코프에서 제외됨 (2026-07-20)**
+
+> 실행하지 않음. `@WebMvcTest(ContributionReportController.class)`를 그대로 실행해보니
+> (Task 2 착수 전 사전 확인) 저희 작업과 무관한 기존 문제로 이미 실패하고 있었다 —
+> `WorkFlowAiBackendApplication`의 명시적 `@EnableJpaRepositories`/`@ComponentScan`이
+> `@WebMvcTest`의 컨텍스트 격리를 무력화해서, 앱 전체 컨트롤러 그래프(`ActivityController`
+> → `AuthController`/`GoogleOAuthService` 등)가 연쇄적으로 끌려들어와 실패한다. 개별
+> 컨트롤러를 `@MockBean`으로 회피하는 것도 시도했으나 다른 무관한 컨트롤러가 계속
+> 새로 걸려서 실용적이지 않다고 판단, 이번 스코프에서는 이 테스트를 만들지 않기로 함.
+> 근본 원인/재현 방법/제안 수정 방향은 `document_이은주/2026-07-20-webmvctest-infra-issue.md`에
+> 정리해서 팀에 공유함. `@PreAuthorize` 어노테이션 자체는 이미 동작이 검증된
+> `ContributionReportController`와 정확히 같은 형태로 Task 1에 반영돼 있음(코드 리뷰로
+> 확인 가능, 자동화 테스트만 없음).
+
+(아래는 원래 계획했던 내용 — 위 사유로 실행하지 않음, 기록용으로 남겨둠)
 
 **Files:**
 - Test: `App/backend_spring/src/test/java/com/workflowai/contribution/ContributionScoreSecurityTest.java`
