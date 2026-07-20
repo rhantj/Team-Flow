@@ -2,21 +2,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from ml_delay_risk.schema.delay_schema import (
-    BatchPredictRequest,
-    BatchPredictResponse,
-    HealthResponse,
-    PredictRequest,
-    PredictResponse,
-)
 from ml_delay_risk.models import delay_model
-from ml_delay_risk.services.delay_service import predict_for_issue
+from ml_delay_risk.schema.delay_schema import HealthResponse, TaskDelayPredictResponse
+from ml_delay_risk.services.task_delay_service import run_delay_risk_for_project
 
-router = APIRouter(prefix="/ai/delay-risk", tags=["delay-risk"])
-# router = APIRouter(prefix="/ai/predict", tags=["delay-risk"])
+router = APIRouter(prefix="/ai/predict/delay", tags=["delay-risk"])
 
 
-@router.get("/health", response_model=HealthResponse)
+@router.get("/health", response_model=HealthResponse)  ## 서비스와 모델의 준비 상태 체크(health check)
 def health() -> HealthResponse:
     try:
         delay_model.load_artifact()
@@ -26,21 +19,16 @@ def health() -> HealthResponse:
     return HealthResponse(service="ml-delayrisk-classification", status="UP", model_loaded=model_loaded)
 
 
-@router.post("/predict", response_model=PredictResponse)
-def predict(request: PredictRequest) -> PredictResponse:
+@router.post("/tasks/predict", response_model=TaskDelayPredictResponse)
+def predict_tasks_for_project(project_id: int) -> TaskDelayPredictResponse:
+    """Supabase tasks/milestones/task_checklists를 읽어 프로젝트의 미완료 업무 전체를
+    예측하고 ml_predictions에 적재한 뒤 결과를 반환한다 (Spring 대시보드가 이 엔드포인트를 호출)."""
     try:
-        result = predict_for_issue(request.issue_key)
+        predictions = run_delay_risk_for_project(project_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return PredictResponse(**result)
-
-
-@router.post("/predict/batch", response_model=BatchPredictResponse)
-def predict_batch(request: BatchPredictRequest) -> BatchPredictResponse:
-    results = []
-    for issue_key in request.issue_keys:
-        try:
-            results.append(PredictResponse(**predict_for_issue(issue_key)))
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return BatchPredictResponse(results=results)
+    return TaskDelayPredictResponse(
+        project_id=project_id,
+        predicted_count=len(predictions),
+        results=predictions,
+    )

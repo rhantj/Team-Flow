@@ -26,12 +26,19 @@ Jira 필드 결측 시 쓰는 것과 동일한 방어적 기본값 패턴이다.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 import pandas as pd
 
-from ml_delay_risk.db import get_engine, insert_predictions, load_tasks_for_project
+from ml_delay_risk.config import get_settings
+from ml_delay_risk.db import (
+    get_engine,
+    insert_predictions,
+    load_task_activities_for_project,
+    load_task_comments_for_project,
+    load_tasks_for_project,
+)
 from ml_delay_risk.models import delay_model
 from ml_delay_risk.models.feature_engineering import RISK_CLASS_API_LABELS, is_blocked_status
 
@@ -67,13 +74,37 @@ def _milestone_completion_map(tasks_df: pd.DataFrame) -> dict[int, float]:
     return completion
 
 
+def _group_by_task_id(df: pd.DataFrame) -> dict[int, pd.DataFrame]:
+    """task_id 컬럼 기준으로 묶어서 {task_id: 해당 업무의 행들} 딕셔너리로 변환.
+
+    build_feature_row가 업무 1건씩 처리하므로, project 전체를 한 번에 조회한 뒤
+    여기서 미리 나눠두면 업무마다 DB를 다시 조회할 필요가 없다.
+    """
+    if df.empty:
+        return {}
+    return {int(task_id): group for task_id, group in df.groupby("task_id")}
+
+
+def _rows_before_cutoff(rows: Optional[pd.DataFrame], cutoff: datetime) -> pd.DataFrame:
+    if rows is None or rows.empty:
+        return pd.DataFrame(columns=["created_at"])
+    return rows[rows["created_at"] <= cutoff]
+
+
 def build_feature_row(
     task_row: pd.Series,
     *,
     now: datetime,
     milestone_completion: dict[int, float],
+    comments: Optional[pd.DataFrame] = None,
+    activities: Optional[pd.DataFrame] = None,
 ) -> dict[str, Any]:
-    """tasks/milestones/task_checklists 조인 결과 한 행을 delay_model 피처 딕셔너리로 변환."""
+    """tasks/milestones/task_checklists 조인 결과 한 행을 delay_model 피처 딕셔너리로 변환.
+
+    comments/activities는 이 업무(task_id) 하나에 대한 task_comments/activities 원본 행들이다
+    (없으면 None — 단위 테스트 등 호출부가 굳이 안 만들어도 되도록). cutoff(now) 이후 데이터는
+    Jira 학습 파이프라인과 동일하게 여기서 걸러내 데이터 누수를 막는다.
+    """
     title = task_row.get("title") or ""
     category = task_row.get("category") or "Unknown"
     priority = task_row.get("priority") or "Unknown"
@@ -113,6 +144,26 @@ def build_feature_row(
     assignee_id = task_row.get("assignee_id")
     assignee_at_cutoff = str(int(assignee_id)) if pd.notna(assignee_id) else "unassigned"
 
+    # <실제 Supabase 데이터로 계산 — task_comments/activities>
+    # 이 두 피처는 예전에는 대응 테이블이 없어 0으로만 채웠지만, task_comments(댓글)와
+    # activities(업무 변경 로그)가 실제로 존재하므로 cutoff(now) 이전 데이터만 걸러서 계산한다.
+    comments_before_cutoff = _rows_before_cutoff(comments, now)
+    num_comments_before_cutoff = len(comments_before_cutoff)
+    if num_comments_before_cutoff:
+        num_unique_commenters = int(comments_before_cutoff["author_id"].nunique())
+        hours_since_last_comment = _hours_between(comments_before_cutoff["created_at"].max(), now)
+    else:
+        num_unique_commenters = 0
+        hours_since_last_comment = elapsed_hours
+
+    activities_before_cutoff = _rows_before_cutoff(activities, now)
+    num_events_before_cutoff = len(activities_before_cutoff)
+
+    recent_window_start = now - timedelta(days=get_settings().recent_activity_window_days)
+    recent_comments = int((comments_before_cutoff["created_at"] >= recent_window_start).sum())
+    recent_events = int((activities_before_cutoff["created_at"] >= recent_window_start).sum())
+    activity_count_recent_window = recent_comments + recent_events
+
     return {
         "issue_key": f"TASK-{int(task_row['task_id'])}",
         "project_key": f"P{int(task_row['project_id'])}",
@@ -138,16 +189,16 @@ def build_feature_row(
         "summary_length": len(title),
         "status_at_cutoff": status_at_cutoff,
         "assignee_at_cutoff": assignee_at_cutoff,
-        "num_events_before_cutoff": 0,
+        "num_events_before_cutoff": num_events_before_cutoff,
         "num_status_changes": 0,
         "num_assignee_changes": 0,
         "num_reopens": 0,
         "hours_in_current_status": hours_in_current_status,
         "blocked_hours_before_cutoff": blocked_hours,
         "blocked_ratio_at_cutoff": blocked_hours / proxy_deadline_hours if proxy_deadline_hours > 0 else 0.0,
-        "num_comments_before_cutoff": 0,
-        "num_unique_commenters": 0,
-        "hours_since_last_comment": elapsed_hours,
+        "num_comments_before_cutoff": num_comments_before_cutoff,
+        "num_unique_commenters": num_unique_commenters,
+        "hours_since_last_comment": hours_since_last_comment,
         "num_worklog_entries": 0,
         "num_unique_workers": 0,
         "time_spent_seconds_before_cutoff": 0,
@@ -156,13 +207,30 @@ def build_feature_row(
         "elapsed_ratio_at_cutoff": elapsed_ratio,
         "hours_until_deadline_at_cutoff": hours_until_deadline,
         "imbalance_index_at_cutoff": imbalance_index,
-        "activity_count_recent_window": 0,
+        "activity_count_recent_window": activity_count_recent_window,
         "is_self_assigned": False,
+        # Jira 학습 데이터는 이슈 생성 후 1/3/7/14/30일째 스냅샷을 떠서 정수로 기록했지만,
+        # 실시간 추론에서는 "생성 후 며칠째인지"를 연속값으로 근사한다 — 예전
+        # delay_service.py(Jira 이슈 실시간 추론)가 쓰던 것과 동일한 방식.
+        "snapshot_offset_days": elapsed_hours / 24.0,
     }
 
 
-def predict_for_task_row(task_row: pd.Series, *, now: pd.Timestamp, milestone_completion: dict[int, float]) -> dict[str, Any]:
-    feature_row = build_feature_row(task_row, now=now, milestone_completion=milestone_completion)
+def predict_for_task_row(
+    task_row: pd.Series,
+    *,
+    now: pd.Timestamp,
+    milestone_completion: dict[int, float],
+    comments: Optional[pd.DataFrame] = None,
+    activities: Optional[pd.DataFrame] = None,
+) -> dict[str, Any]:
+    feature_row = build_feature_row(
+        task_row,
+        now=now,
+        milestone_completion=milestone_completion,
+        comments=comments,
+        activities=activities,
+    )
     probabilities = delay_model.predict_class_probabilities(feature_row)
     predicted_index = max(range(len(probabilities)), key=lambda i: probabilities[i])
     risk_class = RISK_CLASS_API_LABELS[predicted_index]
@@ -193,8 +261,19 @@ def run_delay_risk_for_project(project_id: int) -> list[dict[str, Any]]:
     now = datetime.utcnow()
     milestone_completion = _milestone_completion_map(tasks_df)
 
+    # 업무마다 DB를 따로 조회하지 않도록, 프로젝트 전체 댓글/활동 로그를 한 번에 읽어서
+    # task_id별로 미리 나눠둔다.
+    comments_by_task = _group_by_task_id(load_task_comments_for_project(project_id, engine=engine))
+    activities_by_task = _group_by_task_id(load_task_activities_for_project(project_id, engine=engine))
+
     predictions = [
-        predict_for_task_row(row, now=now, milestone_completion=milestone_completion)
+        predict_for_task_row(
+            row,
+            now=now,
+            milestone_completion=milestone_completion,
+            comments=comments_by_task.get(int(row["task_id"])),
+            activities=activities_by_task.get(int(row["task_id"])),
+        )
         for _, row in pending_df.iterrows()
     ]
 
