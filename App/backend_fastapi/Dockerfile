@@ -12,6 +12,7 @@ COPY App/backend_fastapi/core core
 COPY App/backend_fastapi/llm_rag_assistant llm_rag_assistant
 COPY App/backend_fastapi/ml_workload_score ml_workload_score
 COPY App/backend_fastapi/ai_contribution_report ai_contribution_report
+COPY App/backend_fastapi/contribution_score contribution_score
 # FS-3(대시보드) - 지연 위험도 예측
 COPY App/backend_fastapi/ml_delay_risk ml_delay_risk
 # ml_delay_risk/models/*.pkl은 git에 없으므로(.gitignore 참고),
