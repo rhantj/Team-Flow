@@ -599,7 +599,7 @@ export function MeetingsView() {
   const groupedMeetingTodos = meeting?.todos ? groupMeetingTodoLines(meeting.todos) : [];
   const isMeetingTodosRegistered = Boolean(meeting?.todos?.length) && meeting!.todos!.every(line => {
     const parsed = parseMeetingTodoLine(line);
-    const assigneeId = MEMBERS.find(m => m.name === parsed.assigneeName)?.id ?? MEMBERS[0].id;
+    const assigneeId = MEMBERS.find(m => m.name === parsed.assigneeName)?.id ?? "";
     const key = buildTodoRegistrationKey(meetingIdentifier, parsed.title, assigneeId, parsed.dueDate);
     return getStoredTasks().some(task => buildTodoRegistrationKey(task.sourceMeetingTitle ?? "", task.title, task.assignee, task.dueDate) === key);
   });
@@ -897,8 +897,13 @@ export function MeetingsView() {
 
     const now = Date.now();
     const selectedGeneratedTodos = reviewTodos.filter(todo => selTodos.includes(todo.id));
+    if (selectedGeneratedTodos.some(todo => !getAssignee(todo))) {
+      setRegisterMessage("미배정 업무가 있습니다. 담당자를 먼저 선택한 뒤 등록해주세요.");
+      setTimeout(() => setRegisterMessage(null), 2500);
+      return;
+    }
     const newTodos = selectedGeneratedTodos.filter(todo => {
-      const assignee = getAssignee(todo) || MEMBERS[0].id;
+      const assignee = getAssignee(todo);
       const key = buildTodoRegistrationKey(meetingIdentifier, todo.title, assignee, getDueDate(todo));
       return !existingKeys.has(key);
     });
@@ -924,7 +929,7 @@ export function MeetingsView() {
           title: todo.title,
           status: "todo",
           priority: todo.priority,
-          assignee: getAssignee(todo) || MEMBERS[0].id,
+          assignee: getAssignee(todo),
           dueDate: getDueDate(todo),
           category: todo.category,
           position: index,
@@ -957,17 +962,24 @@ export function MeetingsView() {
 
     const parsedTodos = meeting.todos.map(line => {
       const parsed = parseMeetingTodoLine(line);
-      const assigneeId = MEMBERS.find(m => m.name === parsed.assigneeName)?.id ?? MEMBERS[0].id;
+      const assigneeId = MEMBERS.find(m => m.name === parsed.assigneeName)?.id ?? "";
       return { ...parsed, assigneeId };
     });
 
-    const newTodos = parsedTodos.filter(todo => {
+    const assignableTodos = parsedTodos.filter(todo => todo.assigneeId);
+    const unassignedCount = parsedTodos.length - assignableTodos.length;
+
+    const newTodos = assignableTodos.filter(todo => {
       const key = buildTodoRegistrationKey(meetingIdentifier, todo.title, todo.assigneeId, todo.dueDate);
       return !existingKeys.has(key);
     });
 
     if (newTodos.length === 0) {
-      setRegisterMessage("이미 등록된 업무입니다.");
+      setRegisterMessage(
+        unassignedCount > 0
+          ? "미배정 업무는 담당자를 먼저 지정해야 등록할 수 있습니다."
+          : "이미 등록된 업무입니다."
+      );
       setTimeout(() => setRegisterMessage(null), 2500);
       return;
     }
@@ -1001,7 +1013,11 @@ export function MeetingsView() {
       }));
       saveStoredTasks([...createdTasks, ...existingTasks]);
       addActivity(`회의록 AI로 '${meetingIdentifier}'의 업무 ${createdTasks.length}건을 업무보드에 등록했습니다.`, "김민준", "meeting-registered");
-      setRegisterMessage("업무 보드에 등록되었습니다.");
+      setRegisterMessage(
+        unassignedCount > 0
+          ? `업무 보드에 등록되었습니다. (미배정 업무 ${unassignedCount}건은 담당자 지정 후 등록해주세요)`
+          : "업무 보드에 등록되었습니다."
+      );
       setTimeout(() => setRegisterMessage(null), 2500);
     } catch {
       setRegisterMessage("서버에 업무 등록을 실패했습니다. 다시 시도해주세요.");

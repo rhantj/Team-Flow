@@ -6,6 +6,8 @@ import com.workflowai.rag.RagIngestService;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
 import java.time.LocalDate;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +20,7 @@ public class MeetingAnalysisPersistence {
     private final MeetingRepository meetingRepository;
     private final MeetingAnalysisRepository meetingAnalysisRepository;
     private final MeetingActionItemRepository meetingActionItemRepository;
+    private final MeetingAttendeeRepository meetingAttendeeRepository;
     private final UserRepository userRepository;
     private final DemoDataService demoDataService;
     private final RagIngestService ragIngestService;
@@ -27,6 +30,7 @@ public class MeetingAnalysisPersistence {
         MeetingRepository meetingRepository,
         MeetingAnalysisRepository meetingAnalysisRepository,
         MeetingActionItemRepository meetingActionItemRepository,
+        MeetingAttendeeRepository meetingAttendeeRepository,
         UserRepository userRepository,
         DemoDataService demoDataService,
         RagIngestService ragIngestService,
@@ -35,6 +39,7 @@ public class MeetingAnalysisPersistence {
         this.meetingRepository = meetingRepository;
         this.meetingAnalysisRepository = meetingAnalysisRepository;
         this.meetingActionItemRepository = meetingActionItemRepository;
+        this.meetingAttendeeRepository = meetingAttendeeRepository;
         this.userRepository = userRepository;
         this.demoDataService = demoDataService;
         this.ragIngestService = ragIngestService;
@@ -51,6 +56,10 @@ public class MeetingAnalysisPersistence {
         ));
         ragIngestService.ingestBestEffort(meeting.getProjectId(), "meeting", analysis.getMeetingId(), buildMeetingIngestContent(result));
 
+        Set<Long> attendeeUserIds = meetingAttendeeRepository.findByMeetingId(meetingId).stream()
+            .map(MeetingAttendee::getUserId)
+            .collect(Collectors.toSet());
+
         for (MeetingTodo todo : result.todos()) {
             MeetingActionItem actionItem = meetingActionItemRepository.save(new MeetingActionItem(
                 meetingId,
@@ -58,7 +67,7 @@ public class MeetingAnalysisPersistence {
                 todo.description(),
                 todo.category(),
                 resolveAssigneeByName(todo.assignee_candidate()),
-                resolveFinalAssignee(todo, meeting.getProjectId()),
+                resolveFinalAssignee(todo, meeting.getProjectId(), attendeeUserIds),
                 parseDateOrNull(todo.due_date()),
                 todo.priority(),
                 null
@@ -130,18 +139,23 @@ public class MeetingAnalysisPersistence {
 
     /**
      * 회의록 본문에 적힌 담당자(assignee_candidate)를 1차 기준으로 최종 담당자를 결정한다.
-     * 참석자 목록 여부와 무관하며, 이름이 프로젝트 멤버로 매칭될 때만 배정하고 그렇지 않으면 미배정(null)으로 남긴다.
+     * 프로젝트 멤버이면서 동시에 이번 회의의 참석자(meeting_attendees)로 저장된 사용자만 자동 배정하고,
+     * 그렇지 않으면(프로젝트 멤버라도 참석자가 아니면) 미배정(null)으로 남긴다.
      */
-    private Long resolveFinalAssignee(MeetingTodo todo, Long projectId) {
+    private Long resolveFinalAssignee(MeetingTodo todo, Long projectId, Set<Long> attendeeUserIds) {
         Long explicitAssigneeId = resolveAssignee(todo.assignee_id());
         if (explicitAssigneeId != null) {
-            return projectMemberRepository.existsByProjectIdAndUserId(projectId, explicitAssigneeId) ? explicitAssigneeId : null;
+            return isAssignableAttendee(projectId, explicitAssigneeId, attendeeUserIds) ? explicitAssigneeId : null;
         }
         Long candidateUserId = resolveAssigneeByName(todo.assignee_candidate());
-        if (candidateUserId != null && projectMemberRepository.existsByProjectIdAndUserId(projectId, candidateUserId)) {
+        if (candidateUserId != null && isAssignableAttendee(projectId, candidateUserId, attendeeUserIds)) {
             return candidateUserId;
         }
         return null;
+    }
+
+    private boolean isAssignableAttendee(Long projectId, Long userId, Set<Long> attendeeUserIds) {
+        return attendeeUserIds.contains(userId) && projectMemberRepository.existsByProjectIdAndUserId(projectId, userId);
     }
 
     private LocalDate parseDateOrNull(String date) {
