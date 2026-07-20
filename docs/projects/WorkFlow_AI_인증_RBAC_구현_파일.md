@@ -97,7 +97,7 @@
 | `auth/screen/SignupScreen.tsx` | 동일 브랜드 패널을 유지한 "Google로 시작하기" 환영 화면으로 재구성 |
 | `auth/screen/GoogleCallbackScreen.tsx` (신규) | `/auth/callback` — URL 프래그먼트의 토큰을 저장하고 `/me` 조회 후 `/dashboard`로 이동 |
 | `auth/screen/OnboardingScreen.tsx` | 프로젝트 이름 입력 추가, "다른 팀원을 팀장으로" 분기 제거, 이메일별 실제 초대(`POST invitations`)로 재설계 |
-| `mypage/screen/sx` | 수동 역할 전환 버튼 제거, 실제 프로젝트 role로 팀원/심사자 화면 분기, 프로필·로그아웃 실연동 |
+| `mypage/screen/MyPage.tsx` | 수동 역할 전환 버튼 제거, 실제 프로젝트 role로 팀원/심사자 화면 분기, 프로필·로그아웃 실연동 |
 | `routes/router.tsx` | `/auth/callback` 공개 라우트 추가, `OnboardingScreen`을 인증 필요 라우트로 이동 |
 
 ## 3. 요청 흐름 요약 (회원가입/로그인)

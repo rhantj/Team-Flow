@@ -5,17 +5,6 @@ export const MEMBER_USER = {
   initials: "이", color: "#7048E8", joinedAt: "2024.09.15",
 };
 
-export const MY_TASKS = [
-  { id: "TF-04", title: "모바일 예약 화면 구현", status: "done" as const, priority: "medium" as const, dueDate: "12.10", cat: "프론트" },
-  { id: "TF-07", title: "관리자 대시보드 통계 모듈", status: "inprogress" as const, priority: "medium" as const, dueDate: "12.19", cat: "프론트" },
-  { id: "TF-10", title: "시스템 부하 테스트", status: "todo" as const, priority: "medium" as const, dueDate: "12.23", cat: "QA" },
-];
-
-export const MY_DELIVERABLES = [
-  { id: "d1", type: "발표자료", title: "최종 발표 PPT 초안", status: "draft", updatedAt: "12.10" },
-  { id: "d2", type: "보고서", title: "중간 진행 보고서", status: "done", updatedAt: "12.05" },
-];
-
 export const MY_ACTIVITIES = [
   { type: "merge", msg: "PR #17 머지: 모바일 예약 화면 UI 완성", time: "어제" },
   { type: "commit", msg: "feat: 관리자 통계 차트 컴포넌트 추가", time: "5시간 전" },

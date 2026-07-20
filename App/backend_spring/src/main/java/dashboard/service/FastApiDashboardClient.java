@@ -30,7 +30,7 @@ public class FastApiDashboardClient {
      * 굳이 camelCase Java 객체로 옮겨 담을 필요 없이) 상태 코드만 확인하고 버린다.
      */
     public void refreshDelayRisk(Long projectId) {
-        String uri = UriComponentsBuilder.fromPath("/ai/delay-risk/tasks/predict")
+        String uri = UriComponentsBuilder.fromPath("/ai/predict/delay/tasks/predict")
             .queryParam("project_id", projectId)
             .toUriString();
         restClient.post()

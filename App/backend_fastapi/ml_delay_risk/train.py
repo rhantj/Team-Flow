@@ -8,11 +8,19 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 
 from ml_delay_risk.models import _notebook_runtime
 
 
 def main() -> None:
+    # 노트북 셀의 print()가 '—' 같은 유니코드 문자를 그대로 쓰는데, Windows 콘솔의 기본
+    # 인코딩(cp949)은 이를 인코딩하지 못해 UnicodeEncodeError로 학습이 죽는다. VS Code
+    # Jupyter에서 노트북을 직접 실행할 때는 커널이 항상 UTF-8이라 드러나지 않았던 문제.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
     parser = argparse.ArgumentParser(description="ML 업무 지연 위험도(정상/주의/위험) 분류 모델 학습")
     parser.add_argument("--test-size", type=float, default=0.2, help="시간 기준 검증셋 비율 (기본 0.2)")
     parser.add_argument(

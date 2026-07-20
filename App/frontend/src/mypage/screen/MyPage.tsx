@@ -13,11 +13,14 @@ import { StatusBadge } from "../../global/component/StatusBadge";
 import { DelivBadge } from "../../deliverables/components/DelivBadge";
 import { SectionTitle } from "../../global/component/SectionTitle";
 import {
-  MEMBER_USER, MY_TASKS, MY_FEEDBACKS, PUBLIC_SCORE,
+  MEMBER_USER, MY_FEEDBACKS, PUBLIC_SCORE,
 } from "../libs/mock/mypage";
 import {
   REVIEWER_USER, REVIEWER_TEAMS, CONTRIB_REPORTS, REVIEWER_ACTIVITIES,
 } from "../../global/lib/mock/reviewer";
+import { useMyTasks } from "../libs/hooks/useMyTasks";
+import { getDueToday, getDueThisWeek } from "../libs/utils/taskWidgets";
+import { getDoneCount, getInProgressCount, getBlockedCount, getTasksByStatus, formatDueDate } from "../../board/libs/utils/taskService";
 
 // ─── local types ──────────────────────────────────────────────────────────────
 export type MyPageRole = "member" | "reviewer";
@@ -31,12 +34,24 @@ const EVAL_STATUS_META: Record<EvalStatus, { label: string; cls: string }> = {
 };
 
 // ─── Member My Page ───────────────────────────────────────────────────────────
-function MemberMyPage({ name, email, onLogout }: { name: string; email: string; onLogout: () => void }) {
+function MemberMyPage({ name, email, onLogout, projectId, userId }: { name: string; email: string; onLogout: () => void; projectId: number | null; userId: number | null }) {
   const [taskView, setTaskView] = useState<"all"|"today"|"week">("all");
   const [showScore, setShowScore] = useState(false);
   const initials = name ? name[0] : MEMBER_USER.initials;
 
-  const taskCounts = { done: MY_TASKS.filter(t=>t.status==="done").length, inprogress: MY_TASKS.filter(t=>t.status==="inprogress").length, blocked: 0, todo: MY_TASKS.filter(t=>t.status==="todo").length };
+  const { tasks: myTasks, loadState, reload } = useMyTasks(projectId, userId);
+  const dueToday = getDueToday(myTasks);
+  const dueThisWeek = getDueThisWeek(myTasks);
+  const visibleTasks = taskView === "today" ? dueToday : taskView === "week" ? dueThisWeek : myTasks;
+  const todayNotDone = dueToday.filter(t => t.status !== "done");
+  const thisWeekNotDone = dueThisWeek.filter(t => t.status !== "done");
+
+  const taskCounts = {
+    done: getDoneCount(myTasks),
+    inprogress: getInProgressCount(myTasks),
+    blocked: getBlockedCount(myTasks),
+    todo: getTasksByStatus("todo", myTasks).length,
+  };
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-5" style={{ fontFamily:"'Inter','Noto Sans KR',sans-serif" }}>
@@ -98,113 +113,141 @@ function MemberMyPage({ name, email, onLogout }: { name: string; email: string; 
 
       {/* ── Main grid ── */}
       <div className="grid grid-cols-3 gap-4">
-
-        {/* Left: task status (2/3) */}
-        <div className="col-span-2 space-y-4">
-          {/* Stat cards */}
-          <div className="grid grid-cols-4 gap-3">
-            {[
-              { label:"완료", value: taskCounts.done,      color:"#10B981", Icon: CheckCircle2 },
-              { label:"진행 중", value: taskCounts.inprogress, color:"#3B5BDB", Icon: Clock },
-              { label:"블로커", value: taskCounts.blocked,    color:"#EF4444", Icon: AlertTriangle },
-              { label:"대기",   value: taskCounts.todo,       color:"#8892A4", Icon: Layers },
-            ].map(s => (
-              <div key={s.label} className="bg-card rounded-xl p-4 border border-border shadow-sm text-center">
-                <div className="w-8 h-8 rounded-lg flex items-center justify-center mx-auto mb-2" style={{ background:`${s.color}15` }}>
-                  <s.Icon className="w-4 h-4" style={{ color: s.color }} />
-                </div>
-                <div className="text-xl font-bold text-foreground">{s.value}</div>
-                <div className="text-[10px] text-muted-foreground">{s.label}</div>
-              </div>
-            ))}
+        {loadState === "loading" && (
+          <div className="col-span-3 h-40 flex items-center justify-center text-sm text-muted-foreground">업무 정보를 불러오는 중...</div>
+        )}
+        {loadState === "error" && (
+          <div className="col-span-3 h-40 flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+            <span>업무 정보를 불러오지 못했습니다.</span>
+            <button
+              onClick={reload}
+              className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white rounded-xl hover:opacity-90 transition-opacity"
+              style={{ background: "var(--primary)" }}
+            >
+              <RefreshCw className="w-3.5 h-3.5" />다시 시도
+            </button>
           </div>
-
-          {/* Task list */}
-          <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-3.5 border-b border-border">
-              <SectionTitle>내 업무 목록</SectionTitle>
-              <div className="flex gap-1">
-                {(["all","today","week"] as const).map(v => (
-                  <button key={v} onClick={() => setTaskView(v)} className={`text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all ${taskView===v?"bg-blue-600 text-white":"border border-border text-muted-foreground hover:border-slate-300"}`}>
-                    {v==="all"?"전체":v==="today"?"오늘":"이번 주"}
-                  </button>
+        )}
+        {loadState === "ready" && (
+          <>
+            {/* Left: task status (2/3) */}
+            <div className="col-span-2 space-y-4">
+              {/* Stat cards */}
+              <div className="grid grid-cols-4 gap-3">
+                {[
+                  { label:"완료", value: taskCounts.done,      color:"#10B981", Icon: CheckCircle2 },
+                  { label:"진행 중", value: taskCounts.inprogress, color:"#3B5BDB", Icon: Clock },
+                  { label:"블로커", value: taskCounts.blocked,    color:"#EF4444", Icon: AlertTriangle },
+                  { label:"대기",   value: taskCounts.todo,       color:"#8892A4", Icon: Layers },
+                ].map(s => (
+                  <div key={s.label} className="bg-card rounded-xl p-4 border border-border shadow-sm text-center">
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center mx-auto mb-2" style={{ background:`${s.color}15` }}>
+                      <s.Icon className="w-4 h-4" style={{ color: s.color }} />
+                    </div>
+                    <div className="text-xl font-bold text-foreground">{s.value}</div>
+                    <div className="text-[10px] text-muted-foreground">{s.label}</div>
+                  </div>
                 ))}
               </div>
-            </div>
-            <div className="divide-y divide-border">
-              {MY_TASKS.map(task => (
-                <div key={task.id} className="flex items-center gap-3 px-5 py-3 hover:bg-muted/30 transition-colors">
-                  <span className="font-mono text-[10px] text-muted-foreground w-12">{task.id}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-semibold text-foreground truncate">{task.title}</div>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">{task.cat} · 마감 {task.dueDate}</div>
-                  </div>
-                  <StatusBadge status={task.status} />
-                  <button className="text-[10px] font-medium text-blue-600 hover:text-blue-700 shrink-0">상태 변경</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
 
-        {/* Right: today + deadlines (1/3) */}
-        <div className="space-y-4">
-          <div className="bg-card rounded-xl border border-border shadow-sm p-4">
-            <SectionTitle>오늘 할 일</SectionTitle>
-            <div className="space-y-2">
-              {MY_TASKS.filter(t=>t.status!=="done").map(task => (
-                <div key={task.id} className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/50">
-                  <div className="w-4 h-4 rounded border border-border flex items-center justify-center shrink-0">
-                    {task.status==="done" && <Check className="w-2.5 h-2.5 text-emerald-500" />}
+              {/* Task list */}
+              <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-3.5 border-b border-border">
+                  <SectionTitle>내 업무 목록</SectionTitle>
+                  <div className="flex gap-1">
+                    {(["all","today","week"] as const).map(v => (
+                      <button key={v} onClick={() => setTaskView(v)} className={`text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all ${taskView===v?"bg-blue-600 text-white":"border border-border text-muted-foreground hover:border-slate-300"}`}>
+                        {v==="all"?"전체":v==="today"?"오늘":"이번 주"}
+                      </button>
+                    ))}
                   </div>
-                  <span className="text-xs text-foreground flex-1 truncate">{task.title}</span>
                 </div>
-              ))}
-              <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 mt-2">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
-                <span className="text-[11px] text-amber-700">TF-07 마감 D-6. PR 준비 시작 필요</span>
+                <div className="divide-y divide-border">
+                  {visibleTasks.length === 0 && (
+                    <div className="px-5 py-6 text-center text-xs text-muted-foreground">담당 중인 업무가 없습니다.</div>
+                  )}
+                  {visibleTasks.map(task => (
+                    <div key={task.id} className="flex items-center gap-3 px-5 py-3 hover:bg-muted/30 transition-colors">
+                      <span className="font-mono text-[10px] text-muted-foreground w-12">{task.id}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-semibold text-foreground truncate">{task.title}</div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5">{task.category} · 마감 {formatDueDate(task.dueDate)}</div>
+                      </div>
+                      <StatusBadge status={task.status} />
+                      <button className="text-[10px] font-medium text-blue-600 hover:text-blue-700 shrink-0">상태 변경</button>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
-          <div className="bg-card rounded-xl border border-border shadow-sm p-4">
-            <SectionTitle>이번 주 마감</SectionTitle>
-            <div className="space-y-2.5">
-              {MY_TASKS.filter(t=>t.status!=="done").map(task => (
-                <div key={task.id} className="flex items-center justify-between text-xs">
-                  <span className="text-foreground truncate flex-1">{task.title}</span>
-                  <span className={`font-bold ml-2 shrink-0 ${task.dueDate<="12.19"?"text-amber-600":"text-muted-foreground"}`}>{task.dueDate}</span>
-                </div>
-              ))}
-            </div>
-          </div>
 
-          {/* Public score (if revealed) */}
-          {PUBLIC_SCORE.revealed && (
-            <div className="bg-card rounded-xl border border-emerald-300 shadow-sm p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Award className="w-4 h-4 text-emerald-500" />
-                <span className="text-sm font-bold text-foreground">공개된 평가 결과</span>
-              </div>
-              {showScore ? (
-                <div>
-                  <div className="text-center mb-3">
-                    <div className="text-4xl font-bold text-emerald-600">{PUBLIC_SCORE.score}</div>
-                    <div className="text-sm text-muted-foreground">{PUBLIC_SCORE.grade} · {PUBLIC_SCORE.from}</div>
-                  </div>
-                  <p className="text-xs text-muted-foreground leading-relaxed bg-muted rounded-lg p-2.5">{PUBLIC_SCORE.comment}</p>
-                  <button onClick={() => setShowScore(false)} className="mt-2 text-[10px] text-muted-foreground hover:text-foreground w-full text-center">숨기기</button>
+            {/* Right: today + deadlines (1/3) */}
+            <div className="space-y-4">
+              <div className="bg-card rounded-xl border border-border shadow-sm p-4">
+                <SectionTitle>오늘 할 일</SectionTitle>
+                <div className="space-y-2">
+                  {todayNotDone.length === 0 ? (
+                    <div className="text-xs text-muted-foreground text-center py-3">오늘 마감인 업무가 없습니다.</div>
+                  ) : (
+                    todayNotDone.map(task => (
+                      <div key={task.id} className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/50">
+                        <div className="w-4 h-4 rounded border border-border flex items-center justify-center shrink-0">
+                          {task.status==="done" && <Check className="w-2.5 h-2.5 text-emerald-500" />}
+                        </div>
+                        <span className="text-xs text-foreground flex-1 truncate">{task.title}</span>
+                      </div>
+                    ))
+                  )}
                 </div>
-              ) : (
-                <div className="text-center py-2">
-                  <div className="text-xs text-muted-foreground mb-2">{PUBLIC_SCORE.from}이 평가를 공개했습니다.</div>
-                  <button onClick={() => setShowScore(true)} className="flex items-center gap-1.5 mx-auto text-xs font-semibold text-emerald-600 hover:text-emerald-700 transition-colors">
-                    <Eye className="w-3.5 h-3.5" />결과 확인하기
-                  </button>
+              </div>
+              <div className="bg-card rounded-xl border border-border shadow-sm p-4">
+                <SectionTitle>이번 주 마감</SectionTitle>
+                <div className="space-y-2.5">
+                  {thisWeekNotDone.length === 0 ? (
+                    <div className="text-xs text-muted-foreground text-center py-3">이번 주 마감인 업무가 없습니다.</div>
+                  ) : (
+                    thisWeekNotDone.map(task => {
+                      const isDueToday = todayNotDone.some(t => t.id === task.id);
+                      return (
+                        <div key={task.id} className="flex items-center justify-between text-xs">
+                          <span className="text-foreground truncate flex-1">{task.title}</span>
+                          <span className={`font-bold ml-2 shrink-0 ${isDueToday?"text-amber-600":"text-muted-foreground"}`}>{formatDueDate(task.dueDate)}</span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Public score (if revealed) */}
+              {PUBLIC_SCORE.revealed && (
+                <div className="bg-card rounded-xl border border-emerald-300 shadow-sm p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Award className="w-4 h-4 text-emerald-500" />
+                    <span className="text-sm font-bold text-foreground">공개된 평가 결과</span>
+                  </div>
+                  {showScore ? (
+                    <div>
+                      <div className="text-center mb-3">
+                        <div className="text-4xl font-bold text-emerald-600">{PUBLIC_SCORE.score}</div>
+                        <div className="text-sm text-muted-foreground">{PUBLIC_SCORE.grade} · {PUBLIC_SCORE.from}</div>
+                      </div>
+                      <p className="text-xs text-muted-foreground leading-relaxed bg-muted rounded-lg p-2.5">{PUBLIC_SCORE.comment}</p>
+                      <button onClick={() => setShowScore(false)} className="mt-2 text-[10px] text-muted-foreground hover:text-foreground w-full text-center">숨기기</button>
+                    </div>
+                  ) : (
+                    <div className="text-center py-2">
+                      <div className="text-xs text-muted-foreground mb-2">{PUBLIC_SCORE.from}이 평가를 공개했습니다.</div>
+                      <button onClick={() => setShowScore(true)} className="flex items-center gap-1.5 mx-auto text-xs font-semibold text-emerald-600 hover:text-emerald-700 transition-colors">
+                        <Eye className="w-3.5 h-3.5" />결과 확인하기
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-          )}
-        </div>
+          </>
+        )}
       </div>
 
       {/* ── Bottom: feedback ── */}
@@ -537,7 +580,7 @@ function ReviewerMyPage({ name, email, onLogout }: { name: string; email: string
 // ─── Main MyPage export ───────────────────────────────────────────────────────
 export function MyPage() {
   const navigate = useNavigate();
-  const { user, projectRoles, logout } = useAuth();
+  const { user, projectRoles, currentProjectId, logout } = useAuth();
 
   const role: MyPageRole = projectRoles[0]?.role === "심사자" ? "reviewer" : "member";
   const name = user?.name ?? "";
@@ -548,6 +591,6 @@ export function MyPage() {
   };
 
   return role === "member"
-    ? <MemberMyPage name={name} email={email} onLogout={handleLogout} />
+    ? <MemberMyPage name={name} email={email} onLogout={handleLogout} projectId={currentProjectId} userId={user?.id ?? null} />
     : <ReviewerMyPage name={name} email={email} onLogout={handleLogout} />;
 }

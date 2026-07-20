@@ -84,6 +84,48 @@ def load_tasks_for_project(project_id: int, engine: Engine | None = None) -> pd.
     return df
 
 
+# task_delay_service.py의 num_comments_before_cutoff/num_unique_commenters/
+# hours_since_last_comment 계산용 — 업무별 실제 댓글 이력.
+_TASK_COMMENTS_QUERY = text(
+    """
+    SELECT c.task_id, c.author_id, c.created_at
+    FROM public.task_comments c
+    JOIN public.tasks t ON t.id = c.task_id
+    WHERE t.project_id = :project_id
+    """
+)
+
+
+def load_task_comments_for_project(project_id: int, engine: Engine | None = None) -> pd.DataFrame:
+    """프로젝트 내 모든 업무의 댓글(task_comments)을 읽어온다."""
+    engine = engine or get_engine()
+    with engine.connect() as conn:
+        df = pd.read_sql(_TASK_COMMENTS_QUERY, conn, params={"project_id": project_id})
+    df["created_at"] = pd.to_datetime(df["created_at"])
+    return df
+
+
+# task_delay_service.py의 num_events_before_cutoff/activity_count_recent_window 계산용 —
+# activities.target_id는 폴리모픽(FK 제약 없음)이라 type='업무 변경'으로 반드시 필터링해서
+# 업무가 아닌 다른 대상(회의록/GitHub 등)의 활동이 같은 id로 섞여 들어오지 않게 한다.
+_TASK_ACTIVITIES_QUERY = text(
+    """
+    SELECT target_id AS task_id, created_at
+    FROM public.activities
+    WHERE project_id = :project_id AND type = '업무 변경'
+    """
+)
+
+
+def load_task_activities_for_project(project_id: int, engine: Engine | None = None) -> pd.DataFrame:
+    """프로젝트 내 업무 변경 활동 로그(activities)를 읽어온다."""
+    engine = engine or get_engine()
+    with engine.connect() as conn:
+        df = pd.read_sql(_TASK_ACTIVITIES_QUERY, conn, params={"project_id": project_id})
+    df["created_at"] = pd.to_datetime(df["created_at"])
+    return df
+
+
 def insert_predictions(
     project_id: int,
     predictions: list[dict],

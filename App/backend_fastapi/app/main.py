@@ -12,7 +12,6 @@ from llm_rag_assistant.app.routers.chat_router import router as rag_router
 from ml_workload_score.app.routers.workload_router import router as workload_router
 from ai_contribution_report.app.routers.contribution_router import router as contribution_router
 from ml_delay_risk.routers.delay_router import router as delay_risk_router
-from ml_delay_risk.routers.task_delay_router import router as task_delay_risk_router
 
 app = FastAPI(title="WorkFlow AI FastAPI", version="0.1.0")
 
@@ -28,7 +27,6 @@ app.include_router(rag_router)
 app.include_router(workload_router)
 app.include_router(contribution_router)
 app.include_router(delay_risk_router)
-app.include_router(task_delay_risk_router)
 
 
 @app.get("/")
