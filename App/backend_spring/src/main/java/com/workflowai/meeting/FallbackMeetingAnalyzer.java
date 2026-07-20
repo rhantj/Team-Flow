@@ -15,6 +15,12 @@ public class FallbackMeetingAnalyzer {
         Pattern.compile("^([가-힣]{2,4})(?:은|는|이|가)\\s"),
         Pattern.compile("담당[:\\s]+([가-힣]{2,4})")
     );
+    /** "이름: 발언" 형식의 화자 줄(회의록 전사 포맷)을 인식한다. */
+    private static final Pattern SPEAKER_LINE_PATTERN = Pattern.compile("^([가-힣]{2,4})\\s*[:：]\\s*(.+)$");
+    private static final List<String> TASK_KEYWORDS =
+        List.of("담당", "작성", "구현", "정리", "검토", "준비", "연결", "테스트", "맡", "잡", "만들", "보여주", "설계", "추출");
+    private static final int SPEAKER_TASK_LIMIT = 12;
+
     public MeetingAnalysisResult analyze(AiAnalyzeRequest request) {
         List<String> participants = safeParticipants(request.participants());
         String title = blankToDefault(request.title(), "회의록 AI 분석 회의");
@@ -49,19 +55,23 @@ public class FallbackMeetingAnalyzer {
     }
 
     private List<MeetingTodo> buildTodos(String text, String date) {
-        List<String> taskSentences = extractSentences(text, List.of("담당", "작성", "구현", "정리", "검토", "준비", "연결", "테스트"), 6);
-        if (taskSentences.isEmpty()) {
-            taskSentences = List.of(
-                "회의록 AI 분석 API 구현",
-                "분석 결과 화면과 업무 보드 등록 흐름 연결",
-                "팀장 검토용 To-Do 승인 화면 점검"
-            );
+        List<String[]> candidates = extractSpeakerTaskCandidates(text);
+        if (candidates.isEmpty()) {
+            List<String> taskSentences = extractSentences(text, List.of("담당", "작성", "구현", "정리", "검토", "준비", "연결", "테스트"), 6);
+            if (taskSentences.isEmpty()) {
+                taskSentences = List.of(
+                    "회의록 AI 분석 API 구현",
+                    "분석 결과 화면과 업무 보드 등록 흐름 연결",
+                    "팀장 검토용 To-Do 승인 화면 점검"
+                );
+            }
+            candidates = taskSentences.stream().map(sentence -> new String[] { extractAssigneeCandidate(sentence), sentence }).toList();
         }
 
         List<MeetingTodo> todos = new ArrayList<>();
-        for (int i = 0; i < taskSentences.size(); i++) {
-            String sentence = taskSentences.get(i);
-            String assignee = extractAssigneeCandidate(sentence);
+        for (int i = 0; i < candidates.size(); i++) {
+            String assignee = candidates.get(i)[0];
+            String sentence = candidates.get(i)[1];
             todos.add(new MeetingTodo(
                 shorten(sentence, 42),
                 sentence,
@@ -74,6 +84,32 @@ public class FallbackMeetingAnalyzer {
             ));
         }
         return todos;
+    }
+
+    /**
+     * "이름: 발언" 형식의 회의록 전사에서, 화자가 직접 담당을 언급한 문장만 (화자 이름, 문장) 쌍으로 추출한다.
+     * 화자 줄이 전혀 없는 텍스트(전사 포맷이 아닌 경우)에는 빈 리스트를 반환해 기존 키워드 추출로 대체한다.
+     */
+    private List<String[]> extractSpeakerTaskCandidates(String text) {
+        List<String[]> found = new ArrayList<>();
+        for (String line : text.split("\\n")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
+            Matcher speakerMatcher = SPEAKER_LINE_PATTERN.matcher(trimmed);
+            if (!speakerMatcher.matches()) continue;
+            String speaker = speakerMatcher.group(1);
+            String utterance = speakerMatcher.group(2);
+            for (String sentence : utterance.split("[.!?。！？]")) {
+                String s = sentence.trim();
+                if (s.length() < 4) continue;
+                boolean isCommitment = s.contains("겠습니다") || TASK_KEYWORDS.stream().anyMatch(s::contains);
+                if (isCommitment) {
+                    found.add(new String[] { speaker, shorten(s, 120) });
+                }
+                if (found.size() >= SPEAKER_TASK_LIMIT) return found;
+            }
+        }
+        return found;
     }
 
     /** 문장에서 "OO가/은/는 ~한다" 또는 "담당: OO" 형태로 적힌 담당자 이름을 추출한다. 없으면 빈 문자열(미배정 후보). */

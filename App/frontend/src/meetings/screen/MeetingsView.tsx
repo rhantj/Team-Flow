@@ -153,15 +153,11 @@ const formatAiDueDate = (dueDate: string | null) => {
   return month && day ? `${month}.${day}` : dueDate;
 };
 
-const resolveAiAssignee = (candidate: string) => {
-  const normalized = candidate.trim();
-  const member = MEMBERS.find(m => normalized.includes(m.name) || m.name.includes(normalized));
-  return member?.id ?? "";
-};
-
-const buildGeneratedTodos = (result: MeetingAiResult): GenTodo[] =>
+// 담당자는 서버(MeetingAnalysisPersistence)가 참석자/프로젝트 멤버 검증을 마친 assignee_id를 그대로 신뢰한다.
+// 후보 이름(assignee_candidate)만 보고 프론트에서 임의로 매칭하지 않는다 — null이면 반드시 미배정으로 남는다.
+export const buildGeneratedTodos = (result: MeetingAiResult): GenTodo[] =>
   result.todos.map((todo, index) => {
-    const assignee = resolveAiAssignee(todo.assignee_candidate);
+    const assignee = todo.assignee_id ?? "";
     return {
       id: `GT-${String(index + 1).padStart(2, "0")}`,
       title: todo.title,

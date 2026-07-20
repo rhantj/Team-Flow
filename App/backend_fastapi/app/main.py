@@ -117,7 +117,8 @@ async def analyze_upload(
 
 
 def analyze_meeting(request: AnalyzeRequest) -> MeetingAnalysisResult:
-    text = normalize_text(request.text or request.title)
+    raw_text = request.text or request.title
+    text = normalize_text(raw_text)
     participants = [p for p in request.participants if p and p.strip()]
     if not participants:
         participants = ["팀장", "팀원"]
@@ -133,7 +134,9 @@ def analyze_meeting(request: AnalyzeRequest) -> MeetingAnalysisResult:
     if not risks:
         risks = ["담당자와 마감일이 명확하지 않은 업무는 일정 지연으로 이어질 수 있다."]
 
-    todos = build_todos(text, request.meeting_date)
+    # 원본 텍스트(줄바꿈 보존)에서 "이름: 발언" 화자 형식을 먼저 시도하고, 없으면 공백-정규화 텍스트의
+    # 키워드 문장 추출로 대체한다. normalize_text()는 줄바꿈을 공백으로 뭉개므로 화자 구분에 쓸 수 없다.
+    todos = build_todos(raw_text, text, request.meeting_date)
     summary = (
         f"{request.title} 내용을 분석해 핵심 결정사항 {len(decisions)}건, "
         f"업무 후보 {len(todos)}건, 위험요소 {len(risks)}건을 추출했습니다."
@@ -153,18 +156,21 @@ def analyze_meeting(request: AnalyzeRequest) -> MeetingAnalysisResult:
     )
 
 
-def build_todos(text: str, meeting_date: str) -> List[MeetingTodo]:
-    sentences = extract_sentences(
-        text,
-        ["담당", "작성", "구현", "정리", "검토", "준비", "연결", "테스트", "제출", "설계"],
-        6,
-    )
-    if not sentences:
-        sentences = [
-            "회의록 AI 분석 API 구현",
-            "분석 결과 화면과 업무 보드 등록 흐름 연결",
-            "팀장 검토용 To-Do 승인 화면 점검",
-        ]
+def build_todos(raw_text: str, normalized_text: str, meeting_date: str) -> List[MeetingTodo]:
+    candidates = extract_speaker_task_candidates(raw_text)
+    if not candidates:
+        sentences = extract_sentences(
+            normalized_text,
+            ["담당", "작성", "구현", "정리", "검토", "준비", "연결", "테스트", "제출", "설계"],
+            6,
+        )
+        if not sentences:
+            sentences = [
+                "회의록 AI 분석 API 구현",
+                "분석 결과 화면과 업무 보드 등록 흐름 연결",
+                "팀장 검토용 To-Do 승인 화면 점검",
+            ]
+        candidates = [(extract_assignee_candidate(sentence), sentence) for sentence in sentences]
 
     try:
         base_date = date.fromisoformat(meeting_date)
@@ -172,8 +178,7 @@ def build_todos(text: str, meeting_date: str) -> List[MeetingTodo]:
         base_date = date.today()
 
     todos: List[MeetingTodo] = []
-    for index, sentence in enumerate(sentences):
-        assignee = extract_assignee_candidate(sentence)
+    for index, (assignee, sentence) in enumerate(candidates):
         todos.append(
             MeetingTodo(
                 title=shorten(sentence, 44),
@@ -192,6 +197,11 @@ _ASSIGNEE_PATTERNS = [
     re.compile(r"담당[:\s]+([가-힣]{2,4})"),
 ]
 
+# "이름: 발언" 형식의 화자 줄(회의록 전사 포맷)을 인식한다.
+_SPEAKER_LINE_PATTERN = re.compile(r"^([가-힣]{2,4})\s*[:：]\s*(.+)$")
+_TASK_KEYWORDS = ["담당", "작성", "구현", "정리", "검토", "준비", "연결", "테스트", "제출", "설계", "맡", "잡", "만들", "보여주", "추출"]
+_SPEAKER_TASK_LIMIT = 12
+
 
 def extract_assignee_candidate(sentence: str) -> str:
     """문장에서 "OO가/은/는 ~한다" 또는 "담당: OO" 형태로 적힌 담당자 이름을 추출한다. 없으면 빈 문자열(미배정 후보)."""
@@ -201,6 +211,30 @@ def extract_assignee_candidate(sentence: str) -> str:
         if match:
             return match.group(1)
     return ""
+
+
+def extract_speaker_task_candidates(text: str) -> List[tuple[str, str]]:
+    """"이름: 발언" 형식의 회의록 전사에서, 화자가 직접 담당을 언급한 문장만 (화자, 문장) 쌍으로 추출한다.
+    화자 줄이 전혀 없는 텍스트(전사 포맷이 아닌 경우)에는 빈 리스트를 반환해 기존 키워드 추출로 대체한다."""
+    found: List[tuple[str, str]] = []
+    for line in text.splitlines():
+        trimmed = line.strip()
+        if not trimmed:
+            continue
+        match = _SPEAKER_LINE_PATTERN.match(trimmed)
+        if not match:
+            continue
+        speaker, utterance = match.group(1), match.group(2)
+        for sentence in re.split(r"[.!?。！？]", utterance):
+            s = sentence.strip()
+            if len(s) < 4:
+                continue
+            is_commitment = "겠습니다" in s or any(keyword in s for keyword in _TASK_KEYWORDS)
+            if is_commitment:
+                found.append((speaker, shorten(s, 120)))
+            if len(found) >= _SPEAKER_TASK_LIMIT:
+                return found
+    return found
 
 
 def extract_sentences(text: str, keywords: List[str], limit: int) -> List[str]:
