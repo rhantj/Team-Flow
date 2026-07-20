@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchDashboardSummary } from "../utils/dashboardApi";
-import type { DashboardSummaryResponse } from "../types/dashboard";
+import { fetchDashboardTasks } from "../utils/dashboardApi";
+import type { DashboardTaskDto } from "../types/dashboard";
 
-export function useDashboardSummary(projectId: string | number | null | undefined) {
-  const [data, setData] = useState<DashboardSummaryResponse | null>(null);
+export function useDashboardTasks(projectId: string | number | null | undefined) {
+  const [data, setData] = useState<DashboardTaskDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     let cancelled = false;
     if (projectId == null) {
-      setData(null);
+      setData([]);
       setLoading(false);
       setError(null);
       return () => {
@@ -19,7 +19,7 @@ export function useDashboardSummary(projectId: string | number | null | undefine
     }
     setLoading(true);
     setError(null);
-    fetchDashboardSummary(projectId)
+    fetchDashboardTasks(projectId)
       .then(result => {
         if (!cancelled) setData(result);
       })

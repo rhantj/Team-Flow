@@ -1,22 +1,25 @@
 package dashboard.service;
 
 import com.workflowai.common.DemoDataService;
+import com.workflowai.activity.Activity;
+import com.workflowai.activity.ActivityRepository;
+import com.workflowai.project.ProjectMember;
+import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.task.Task;
 import com.workflowai.task.TaskRepository;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
 import dashboard.DTO.ActivityItemDto;
 import dashboard.DTO.CategoryProgressDto;
+import dashboard.DTO.DashboardTaskDto;
 import dashboard.DTO.DashboardSummaryResponse;
 import dashboard.DTO.MilestoneProgressDto;
 import dashboard.DTO.ProgressDetailResponse;
 import dashboard.DTO.TaskDelayRiskDto;
 import dashboard.DTO.UpcomingTaskDto;
 import dashboard.DTO.WorkloadEntryDto;
-import dashboard.entity.Activity;
 import dashboard.entity.Milestone;
 import dashboard.entity.MlPrediction;
-import dashboard.repository.DashboardActivityRepository;
 import dashboard.repository.MilestoneRepository;
 import dashboard.repository.MlPredictionRepository;
 import java.time.format.DateTimeFormatter;
@@ -43,18 +46,20 @@ public class DashboardService {
 
     private final TaskRepository taskRepository;
     private final MilestoneRepository milestoneRepository;
-    private final DashboardActivityRepository activityRepository;
+    private final ActivityRepository activityRepository;
     private final MlPredictionRepository mlPredictionRepository;
     private final UserRepository userRepository;
+    private final ProjectMemberRepository projectMemberRepository;
     private final DemoDataService demoDataService;
     private final FastApiDashboardClient fastApiDashboardClient;
 
     public DashboardService(
         TaskRepository taskRepository,
         MilestoneRepository milestoneRepository,
-        DashboardActivityRepository activityRepository,
+        ActivityRepository activityRepository,
         MlPredictionRepository mlPredictionRepository,
         UserRepository userRepository,
+        ProjectMemberRepository projectMemberRepository,
         DemoDataService demoDataService,
         FastApiDashboardClient fastApiDashboardClient
     ) {
@@ -63,6 +68,7 @@ public class DashboardService {
         this.activityRepository = activityRepository;
         this.mlPredictionRepository = mlPredictionRepository;
         this.userRepository = userRepository;
+        this.projectMemberRepository = projectMemberRepository;
         this.demoDataService = demoDataService;
         this.fastApiDashboardClient = fastApiDashboardClient;
     }
@@ -90,7 +96,7 @@ public class DashboardService {
             ))
             .toList();
 
-        List<WorkloadEntryDto> workload = buildWorkload(tasks);
+        List<WorkloadEntryDto> workload = buildWorkload(projectId, tasks);
 
         List<ActivityItemDto> recentActivity = activityRepository
             .findTop10ByProjectIdOrderByCreatedAtDesc(projectId)
@@ -99,6 +105,20 @@ public class DashboardService {
             .toList();
 
         return new DashboardSummaryResponse(total, done, progressPercent, blocked, inProgress, upcoming, workload, recentActivity);
+    }
+
+    public List<DashboardTaskDto> getTasks(String projectIdParam) {
+        Long projectId = demoDataService.resolveProjectId(projectIdParam);
+        return taskRepository.findByProjectIdOrderByStatusAscPositionAsc(projectId).stream()
+            .map(this::toDashboardTaskDto)
+            .toList();
+    }
+
+    public List<ActivityItemDto> getActivities(String projectIdParam) {
+        Long projectId = demoDataService.resolveProjectId(projectIdParam);
+        return activityRepository.findTop50ByProjectIdOrderByCreatedAtDesc(projectId).stream()
+            .map(this::toActivityItemDto)
+            .toList();
     }
 
     public ProgressDetailResponse getProgressDetail(String projectIdParam) {
@@ -140,7 +160,7 @@ public class DashboardService {
         return getProgressDetail(projectIdParam);
     }
 
-    private List<WorkloadEntryDto> buildWorkload(List<Task> tasks) {
+    private List<WorkloadEntryDto> buildWorkload(Long projectId, List<Task> tasks) {
         Map<Long, List<Task>> byAssignee = new LinkedHashMap<>();
         for (Task task : tasks) {
             if (task.getAssigneeId() == null) {
@@ -150,17 +170,32 @@ public class DashboardService {
         }
 
         List<WorkloadEntryDto> result = new ArrayList<>();
+        List<ProjectMember> members = projectMemberRepository.findAllByProjectId(projectId);
+        for (ProjectMember member : members) {
+            Long userId = member.getUserId();
+            result.add(toWorkloadEntry(userId, byAssignee.remove(userId)));
+        }
         for (Map.Entry<Long, List<Task>> entry : byAssignee.entrySet()) {
-            List<Task> assigneeTasks = entry.getValue();
-            long doneCount = assigneeTasks.stream().filter(t -> STATUS_DONE.equals(t.getStatus())).count();
-            result.add(new WorkloadEntryDto(
-                String.valueOf(entry.getKey()),
-                resolveUserName(entry.getKey()),
-                assigneeTasks.size(),
-                doneCount
-            ));
+            result.add(toWorkloadEntry(entry.getKey(), entry.getValue()));
         }
         return result;
+    }
+
+    private WorkloadEntryDto toWorkloadEntry(Long assigneeId, List<Task> assigneeTasks) {
+        List<Task> tasks = assigneeTasks == null ? List.of() : assigneeTasks;
+        long doneCount = tasks.stream().filter(t -> STATUS_DONE.equals(t.getStatus())).count();
+        long todoCount = tasks.stream().filter(t -> "todo".equals(t.getStatus())).count();
+        long inProgressCount = tasks.stream().filter(t -> STATUS_INPROGRESS.equals(t.getStatus())).count();
+        long blockedCount = tasks.stream().filter(t -> STATUS_BLOCKED.equals(t.getStatus())).count();
+        return new WorkloadEntryDto(
+            String.valueOf(assigneeId),
+            resolveUserName(assigneeId),
+            tasks.size(),
+            doneCount,
+            todoCount,
+            inProgressCount,
+            blockedCount
+        );
     }
 
     private List<MilestoneProgressDto> buildMilestoneProgress(Long projectId, List<Task> tasks) {
@@ -253,8 +288,25 @@ public class DashboardService {
             String.valueOf(activity.getId()),
             activity.getType(),
             resolveUserName(activity.getActorId()),
+            activity.getMessage(),
             activity.getTargetId() == null ? null : String.valueOf(activity.getTargetId()),
             activity.getCreatedAt() == null ? null : activity.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        );
+    }
+
+    private DashboardTaskDto toDashboardTaskDto(Task task) {
+        return new DashboardTaskDto(
+            String.valueOf(task.getId()),
+            task.getTitle(),
+            task.getCategory(),
+            task.getStatus(),
+            task.getAssigneeId() == null ? null : String.valueOf(task.getAssigneeId()),
+            resolveUserName(task.getAssigneeId()),
+            task.getDueDate() == null ? null : task.getDueDate().toString(),
+            task.getPriority(),
+            task.getDescription(),
+            task.getSourceType(),
+            task.getPosition()
         );
     }
 

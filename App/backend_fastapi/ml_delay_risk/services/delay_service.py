@@ -27,7 +27,7 @@ Jira 필드 결측 시 쓰는 것과 동일한 방어적 기본값 패턴이다.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import pandas as pd
 
@@ -63,7 +63,7 @@ def _hours_between(start: Optional[pd.Timestamp], end: pd.Timestamp) -> float:
 
 
 def _milestone_completion_map(tasks_df: pd.DataFrame) -> dict[int, float]:
-    """마일스톤별 완료율 - parent_unresolved(상위 마일스톤 미해결 여부) 근사에 사용."""
+    """마일스톤별 완료율 - milestone_unresolved(연결된 마일스톤 미해결 여부) 근사에 사용."""
     completion: dict[int, float] = {}
     for milestone_id, group in tasks_df.groupby("milestone_id"):
         if pd.isna(milestone_id):
@@ -98,13 +98,21 @@ def build_feature_row(
     milestone_completion: dict[int, float],
     comments: Optional[pd.DataFrame] = None,
     activities: Optional[pd.DataFrame] = None,
+    proxy_deadline_lookup: Optional[Callable[[str, str], float]] = None,
 ) -> dict[str, Any]:
     """tasks/milestones/task_checklists 조인 결과 한 행을 delay_model 피처 딕셔너리로 변환.
 
     comments/activities는 이 업무(task_id) 하나에 대한 task_comments/activities 원본 행들이다
     (없으면 None — 단위 테스트 등 호출부가 굳이 안 만들어도 되도록). cutoff(now) 이후 데이터는
     Jira 학습 파이프라인과 동일하게 여기서 걸러내 데이터 누수를 막는다.
+
+    proxy_deadline_lookup: 마감일이 없을 때 쓸 (category, priority) -> proxy_deadline_hours 조회
+    함수. 기본값(None)이면 실시간 추론과 동일하게 학습된 모델 아티팩트의 proxy_deadline_map을 쓰는
+    delay_model.proxy_deadline_for를 쓴다. 학습용 가짜 데이터셋(mock_issue_dataset.py)처럼
+    아직 학습된 모델이 없는 시점에 이 함수를 호출해야 하는 경우에만 별도 조회 함수를 주입한다.
     """
+    proxy_deadline_lookup = proxy_deadline_lookup or delay_model.proxy_deadline_for
+
     title = task_row.get("title") or ""
     category = task_row.get("category") or "Unknown"
     priority = task_row.get("priority") or "Unknown"
@@ -113,8 +121,8 @@ def build_feature_row(
     updated_at = task_row.get("updated_at")
 
     milestone_id = task_row.get("milestone_id")
-    has_parent = pd.notna(milestone_id)
-    parent_unresolved = bool(has_parent) and milestone_completion.get(int(milestone_id), 0.0) < 1.0
+    has_milestone = pd.notna(milestone_id)
+    milestone_unresolved = bool(has_milestone) and milestone_completion.get(int(milestone_id), 0.0) < 1.0
 
     checklist_total = int(task_row.get("checklist_total") or 0)
     checklist_done = int(task_row.get("checklist_done") or 0)
@@ -132,9 +140,9 @@ def build_feature_row(
     if deadline is not None and pd.notna(created_at):
         proxy_deadline_hours = _hours_between(created_at, deadline)
         if proxy_deadline_hours <= 0:
-            proxy_deadline_hours = delay_model.proxy_deadline_for(category, priority)
+            proxy_deadline_hours = proxy_deadline_lookup(category, priority)
     else:
-        proxy_deadline_hours = delay_model.proxy_deadline_for(category, priority)
+        proxy_deadline_hours = proxy_deadline_lookup(category, priority)
 
     progress_ratio = checklist_done / checklist_total if checklist_total > 0 else None
     elapsed_ratio = elapsed_hours / proxy_deadline_hours if proxy_deadline_hours > 0 else 0.0
@@ -167,12 +175,21 @@ def build_feature_row(
     return {
         "issue_key": f"TASK-{int(task_row['task_id'])}",
         "project_key": f"P{int(task_row['project_id'])}",
+        # title/due_date/updated_at/milestone_due_date는 예측 피처가 아니라 db.py의
+        # _TASKS_QUERY가 실제로 읽어오는 원본 Supabase 컬럼을 그대로 보존하는 참고용
+        # 부기(bookkeeping) 필드다 (model.predict_class_probabilities는 artifact.
+        # feature_names에 없는 키를 그냥 무시하므로 추론에는 영향 없음).
+        "title": title,
+        "due_date": due_date if pd.notna(due_date) else None,
+        "updated_at": updated_at if pd.notna(updated_at) else None,
+        "milestone_due_date": milestone_due_date if pd.notna(milestone_due_date) else None,
         "issuetype_name": category,
         "priority_name": priority,
         "reporter": "unknown",
         "is_subtask": False,
-        "has_parent": bool(has_parent),
-        "parent_unresolved": parent_unresolved,
+        "milestone_id": int(milestone_id) if has_milestone else None,
+        "has_milestone": bool(has_milestone),
+        "milestone_unresolved": milestone_unresolved,
         "num_subtasks": checklist_total,
         "num_unresolved_subtasks": max(checklist_total - checklist_done, 0),
         "num_components": 0,

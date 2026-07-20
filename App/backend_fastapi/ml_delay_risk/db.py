@@ -3,7 +3,7 @@
 delay_model.py 자체는 학습 시 사용한 MongoDB(Jira 데이터셋) 구조와 완전히 분리돼 있고
 피처 딕셔너리만 입력으로 받으므로, 이 모듈은 실제 서비스 스키마(Supabase Postgres)에서
 지연 위험도 예측에 필요한 원본 데이터를 읽어오는 역할만 담당한다.
-(services/task_delay_service.py가 이 데이터를 delay_model이 기대하는 피처 딕셔너리로 변환한다.)
+(services/delay_service.py가 이 데이터를 delay_model이 기대하는 피처 딕셔너리로 변환한다.)
 
 ml_workload_score/app/services/workload_db.py와 동일한 접속 방식(DATABASE_URL)을 쓰지만,
 서로 다른 기능 슬라이스(FS-3 vs FS-5)라 모듈을 공유하지 않고 독립적으로 둔다.
@@ -36,7 +36,7 @@ def get_engine() -> Engine:
 
 
 # tasks 1건당 milestone 마감일과 체크리스트 완료 현황을 함께 실어온다 -
-# task_delay_service.py가 이 두 값으로 proxy_deadline_hours와 progress_ratio를 계산한다
+# delay_service.py가 이 두 값으로 proxy_deadline_hours와 progress_ratio를 계산한다
 # (Jira 데이터셋에는 없던 "실제 마감일"이 이 스키마에는 있어 프록시 추정 없이 바로 쓸 수 있다).
 _TASKS_QUERY = text(
     """
@@ -84,7 +84,7 @@ def load_tasks_for_project(project_id: int, engine: Engine | None = None) -> pd.
     return df
 
 
-# task_delay_service.py의 num_comments_before_cutoff/num_unique_commenters/
+# delay_service.py의 num_comments_before_cutoff/num_unique_commenters/
 # hours_since_last_comment 계산용 — 업무별 실제 댓글 이력.
 _TASK_COMMENTS_QUERY = text(
     """
@@ -105,7 +105,7 @@ def load_task_comments_for_project(project_id: int, engine: Engine | None = None
     return df
 
 
-# task_delay_service.py의 num_events_before_cutoff/activity_count_recent_window 계산용 —
+# delay_service.py의 num_events_before_cutoff/activity_count_recent_window 계산용 —
 # activities.target_id는 폴리모픽(FK 제약 없음)이라 type='업무 변경'으로 반드시 필터링해서
 # 업무가 아닌 다른 대상(회의록/GitHub 등)의 활동이 같은 id로 섞여 들어오지 않게 한다.
 _TASK_ACTIVITIES_QUERY = text(

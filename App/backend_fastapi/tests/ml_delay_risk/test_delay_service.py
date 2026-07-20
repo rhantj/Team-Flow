@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 from ml_delay_risk.models import delay_model
-from ml_delay_risk.services.task_delay_service import build_feature_row, predict_for_task_row
+from ml_delay_risk.services.delay_service import build_feature_row, predict_for_task_row
 
 
 def _make_task_row(**overrides) -> pd.Series:
@@ -91,17 +91,18 @@ def test_build_feature_row_defaults_jira_only_fields_safely() -> None:
     assert features["is_self_assigned"] is False
 
 
-def test_build_feature_row_flags_parent_unresolved_when_milestone_incomplete() -> None:
+def test_build_feature_row_flags_milestone_unresolved_when_milestone_incomplete() -> None:
     now = datetime(2026, 7, 12, 9, 0, 0)
     row = _make_task_row(milestone_id=7.0, due_date=pd.Timestamp(2026, 7, 20, 0, 0, 0))
 
     features = build_feature_row(row, now=now, milestone_completion={7: 0.5})
 
-    assert features["has_parent"] is True
-    assert features["parent_unresolved"] is True
+    assert features["milestone_id"] == 7
+    assert features["has_milestone"] is True
+    assert features["milestone_unresolved"] is True
 
     features_done = build_feature_row(row, now=now, milestone_completion={7: 1.0})
-    assert features_done["parent_unresolved"] is False
+    assert features_done["milestone_unresolved"] is False
 
 
 def test_build_feature_row_computes_comment_stats_from_real_task_comments() -> None:

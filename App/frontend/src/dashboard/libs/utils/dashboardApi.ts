@@ -1,33 +1,24 @@
-import type { DashboardSummaryResponse, ProgressDetailResponse } from "../types/dashboard";
+import type { ActivityItemDto, DashboardSummaryResponse, DashboardTaskDto, ProgressDetailResponse } from "../types/dashboard";
+import { apiFetch } from "../../../global/api/apiClient";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080/api/v1";
-
-interface ApiEnvelope<T> {
-  success: boolean;
-  data: T;
-  error?: { code: string; message: string } | null;
+export async function fetchDashboardSummary(projectId: string | number): Promise<DashboardSummaryResponse> {
+  return apiFetch<DashboardSummaryResponse>(`/projects/${projectId}/dashboard/summary`);
 }
 
-async function unwrap<T>(response: Response, action: string): Promise<T> {
-  if (!response.ok) throw new Error(`${action} failed: ${response.status}`);
-  const body = (await response.json()) as ApiEnvelope<T>;
-  if (!body.success) throw new Error(body.error?.message ?? `${action} failed`);
-  return body.data;
+export async function fetchDashboardProgress(projectId: string | number): Promise<ProgressDetailResponse> {
+  return apiFetch<ProgressDetailResponse>(`/projects/${projectId}/dashboard/progress`);
 }
 
-export async function fetchDashboardSummary(projectId: string): Promise<DashboardSummaryResponse> {
-  const response = await fetch(`${API_BASE_URL}/projects/${projectId}/dashboard/summary`);
-  return unwrap<DashboardSummaryResponse>(response, "Dashboard summary fetch");
+export async function fetchDashboardTasks(projectId: string | number): Promise<DashboardTaskDto[]> {
+  return apiFetch<DashboardTaskDto[]>(`/projects/${projectId}/dashboard/tasks`);
 }
 
-export async function fetchDashboardProgress(projectId: string): Promise<ProgressDetailResponse> {
-  const response = await fetch(`${API_BASE_URL}/projects/${projectId}/dashboard/progress`);
-  return unwrap<ProgressDetailResponse>(response, "Dashboard progress fetch");
+export async function fetchDashboardActivities(projectId: string | number): Promise<ActivityItemDto[]> {
+  return apiFetch<ActivityItemDto[]>(`/projects/${projectId}/dashboard/activities`);
 }
 
-export async function refreshDelayRisk(projectId: string): Promise<ProgressDetailResponse> {
-  const response = await fetch(`${API_BASE_URL}/projects/${projectId}/dashboard/delay-risk/refresh`, {
+export async function refreshDelayRisk(projectId: string | number): Promise<ProgressDetailResponse> {
+  return apiFetch<ProgressDetailResponse>(`/projects/${projectId}/dashboard/delay-risk/refresh`, {
     method: "POST",
   });
-  return unwrap<ProgressDetailResponse>(response, "Delay risk refresh");
 }

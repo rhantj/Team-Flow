@@ -80,4 +80,3 @@ function useStoredArray<T>(getter: () => T[], eventName: string): T[] {
 }
 
 export const useStoredNotifications = () => useStoredArray(getStoredNotifications, NOTIFICATIONS_UPDATED_EVENT);
-export const useStoredActivity = () => useStoredArray(getStoredActivity, ACTIVITY_UPDATED_EVENT);

@@ -1,62 +1,67 @@
 import { useNavigate } from "react-router";
+import { AlertCircle, AlertTriangle, Calendar, CheckCheck, Clock, Layers, MessageSquare, Plus, Sparkles } from "lucide-react";
+import { AIBox } from "../../../ai/components/AIBox";
 import { BackBtn } from "../../../global/component/BackBtn";
-import { SeverityBadge } from "../../../github/components/SeverityBadge";
-import { useStoredTasks } from "../../../global/hooks/useStoredTasks";
-import { MEMBERS } from "../../../global/lib/mock/members";
-import { BLOCKER_DETAILS } from "../../libs/mock/blockers";
+import { DetailStatCard } from "../../../global/component/DetailStatCard";
+import { PriorityBadge } from "../../../board/components/PriorityBadge";
+import { useAuth } from "../../../global/hooks/useAuth";
+import { useDashboardProgress } from "../../libs/hooks/useDashboardProgress";
+import { useDashboardTasks } from "../../libs/hooks/useDashboardTasks";
 import {
-  Sparkles,
-  Plus,
-  AlertTriangle,
-  Clock,
-  Calendar,
-  CheckCheck,
-  Layers,
-  AlertCircle,
-  MessageSquare,
-} from "lucide-react";
+  daysUntilDue,
+  formatDashboardDueDate,
+  normalizePriority,
+  normalizeTaskStatus,
+  sourceLabel,
+  taskAssignee,
+} from "../../libs/utils/dashboardTaskUtils";
 
 export function BlockersPage() {
-  const TASKS = useStoredTasks();
+  const { currentProjectId } = useAuth();
+  const { data: tasks, loading, error } = useDashboardTasks(currentProjectId);
+  const { data: progress } = useDashboardProgress(currentProjectId);
   const navigate = useNavigate();
   const onBack = () => navigate("/dashboard");
+  const blockedTasks = tasks.filter(task => normalizeTaskStatus(task.status) === "blocked");
+  const highPriorityCount = blockedTasks.filter(task => normalizePriority(task.priority) === "high").length;
+  const dueSoonCount = blockedTasks.filter(task => {
+    const days = daysUntilDue(task.dueDate);
+    return days != null && days <= 7;
+  }).length;
+  const riskTaskIds = new Set(progress?.delayRisks.map(risk => risk.taskId) ?? []);
+
   return (
     <div className="h-full overflow-y-auto p-6 space-y-4" style={{ fontFamily: "'Inter','Noto Sans KR',sans-serif" }}>
-      {/* header */}
       <div className="flex items-start justify-between">
         <div>
           <BackBtn onBack={onBack} />
           <h1 className="text-xl font-bold text-foreground">블로커 관리</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">막힌 업무를 파악하고 해결 담당자와 기한을 지정해 위험을 제거합니다.</p>
+          <p className="text-sm text-muted-foreground mt-0.5">업무 상태가 블로커인 항목을 확인합니다.</p>
         </div>
-        <button className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
-          <Plus className="w-3.5 h-3.5" /> 블로커 추가
+        <button onClick={() => navigate("/board?openAdd=1")} className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
+          <Plus className="w-3.5 h-3.5" /> 업무 추가
         </button>
       </div>
 
-      {/* stat cards */}
+      {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{error}</div>}
+
       <div className="grid grid-cols-4 gap-3">
-        <DetailStatCard label="현재 블로커" value={BLOCKER_DETAILS.length} sub="해결 대기" color="#EF4444" icon={AlertTriangle} />
-        <DetailStatCard label="심각도 높음" value="2" sub="즉각 조치 필요" color="#EF4444" icon={AlertCircle} />
-        <DetailStatCard label="평균 지연" value="3.5일" sub="발생일 기준" color="#F59E0B" icon={Clock} />
-        <DetailStatCard label="영향받는 업무" value="3개" sub="연쇄 지연 위험" color="#7048E8" icon={Layers} />
+        <DetailStatCard label="현재 블로커" value={loading ? "..." : blockedTasks.length} sub="해결 대기" color="#EF4444" icon={AlertTriangle} />
+        <DetailStatCard label="높은 우선순위" value={loading ? "..." : highPriorityCount} sub="즉시 조치 필요" color="#EF4444" icon={AlertCircle} />
+        <DetailStatCard label="7일 내 마감" value={loading ? "..." : dueSoonCount} sub="일정 영향 가능" color="#F59E0B" icon={Clock} />
+        <DetailStatCard label="AI 위험 감지" value="미구현" sub="예측 결과" color="#7048E8" icon={Layers} />
       </div>
 
-      {/* AI box */}
-      <AIBox
-        text="BL-01(DB 인덱싱)이 4일째 팀 내 결정 부재로 지속 중입니다. 오늘 30분 긴급 결정 미팅을 강력 추천합니다. BL-02는 axios 인터셉터 전환으로 해결 가능성이 높습니다."
-        onAsk={() => {}}
-      />
+      <AIBox text="미구현된 기능입니다." />
 
-      {/* blocker cards */}
       <div className="space-y-4">
-        {BLOCKER_DETAILS.map(b => {
-          const assignee = MEMBERS.find(m => m.id === b.assignee)!;
-          const resolver = b.resolver ? MEMBERS.find(m => m.id === b.resolver) : null;
-          const affected = TASKS.filter(t => b.affectedTaskIds.includes(t.id));
+        {blockedTasks.map((task, index) => {
+          const assignee = taskAssignee(task, index);
+          const priority = normalizePriority(task.priority);
+          const days = daysUntilDue(task.dueDate);
+          const isRisk = riskTaskIds.has(task.id);
           return (
-            <div key={b.id} className="bg-card rounded-xl border-2 border-red-200 shadow-sm overflow-hidden">
-              {/* card header */}
+            <div key={task.id} className="bg-card rounded-xl border-2 border-red-200 shadow-sm overflow-hidden">
               <div className="flex items-start justify-between px-5 py-3.5 border-b border-red-100 bg-red-50/50">
                 <div className="flex items-start gap-3">
                   <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center shrink-0 mt-0.5">
@@ -64,25 +69,25 @@ export function BlockersPage() {
                   </div>
                   <div>
                     <div className="flex items-center flex-wrap gap-1.5 mb-1">
-                      <SeverityBadge severity={b.severity} />
-                      <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{b.type}</span>
-                      <span className="text-[10px] font-mono text-muted-foreground">{b.id} · {b.taskId}</span>
+                      <PriorityBadge priority={priority} />
+                      <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{task.category ?? "미분류"}</span>
+                      <span className="text-[10px] font-mono text-muted-foreground">{task.id}</span>
+                      {isRisk && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200">AI 지연 위험</span>}
                     </div>
-                    <div className="text-sm font-semibold text-foreground">{b.title}</div>
+                    <div className="text-sm font-semibold text-foreground">{task.title}</div>
                   </div>
                 </div>
-                <span className="text-xs font-medium px-2.5 py-1 rounded-lg bg-red-100 text-red-700 shrink-0 whitespace-nowrap">{b.daysSince}일째 지속</span>
+                <span className="text-xs font-medium px-2.5 py-1 rounded-lg bg-red-100 text-red-700 shrink-0 whitespace-nowrap">
+                  {days == null ? "마감 미정" : days < 0 ? `D+${Math.abs(days)}` : `D-${days}`}
+                </span>
               </div>
 
-              {/* card body */}
               <div className="px-5 py-4 space-y-4">
-                {/* reason */}
                 <div>
-                  <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">막힌 이유</div>
-                  <p className="text-sm text-foreground leading-relaxed">{b.reason}</p>
+                  <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">블로커 내용</div>
+                  <p className="text-sm text-foreground leading-relaxed">{task.description || "등록된 설명이 없습니다. 업무 보드에서 상세 내용을 추가하세요."}</p>
                 </div>
 
-                {/* meta */}
                 <div className="grid grid-cols-4 gap-4">
                   <div>
                     <div className="text-[10px] text-muted-foreground mb-1.5">담당자</div>
@@ -92,74 +97,50 @@ export function BlockersPage() {
                     </div>
                   </div>
                   <div>
-                    <div className="text-[10px] text-muted-foreground mb-1.5">해결 담당자</div>
-                    {resolver ? (
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold" style={{ background: resolver.color }}>{resolver.initials}</div>
-                        <span className="text-xs font-medium text-foreground">{resolver.name}</span>
-                      </div>
-                    ) : (
-                      <button className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700">
-                        <Plus className="w-3 h-3" /> 지정하기
-                      </button>
-                    )}
+                    <div className="text-[10px] text-muted-foreground mb-1.5">마감일</div>
+                    <span className="text-xs text-foreground">{formatDashboardDueDate(task.dueDate)}</span>
                   </div>
                   <div>
-                    <div className="text-[10px] text-muted-foreground mb-1.5">발생일</div>
-                    <span className="text-xs text-foreground">{b.createdAt}</span>
+                    <div className="text-[10px] text-muted-foreground mb-1.5">출처</div>
+                    <span className="text-xs text-foreground">{sourceLabel(task.sourceType)}</span>
                   </div>
                   <div>
-                    <div className="text-[10px] text-muted-foreground mb-1.5">연결 참고</div>
-                    <button className="text-xs text-blue-600 hover:text-blue-700 underline">{b.link}</button>
+                    <div className="text-[10px] text-muted-foreground mb-1.5">우선순위</div>
+                    <PriorityBadge priority={priority} />
                   </div>
                 </div>
 
-                {/* affected tasks */}
-                <div>
-                  <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">영향받는 업무</div>
-                  <div className="flex flex-wrap gap-2">
-                    {affected.map(t => (
-                      <div key={t.id} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-muted border border-border text-xs">
-                        <span className="font-mono text-muted-foreground">{t.id}</span>
-                        <span className="text-foreground truncate max-w-[150px]">{t.title}</span>
-                        <TaskStatusPill status={t.status} />
-                      </div>
-                    ))}
+                {isRisk && (
+                  <div className="rounded-lg p-3 flex items-start gap-2.5 border" style={{ background: "rgba(112,72,232,0.05)", borderColor: "rgba(112,72,232,0.2)" }}>
+                    <Sparkles className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: "#7048E8" }} />
+                    <p className="text-xs leading-relaxed" style={{ color: "#5B3DC8" }}>AI 지연 위험 분석에 포함된 업무입니다. 진행률 상세에서 최신 예측 결과를 확인하세요.</p>
                   </div>
-                </div>
+                )}
 
-                {/* AI suggestion */}
-                <div className="rounded-lg p-3 flex items-start gap-2.5 border" style={{ background: "rgba(112,72,232,0.05)", borderColor: "rgba(112,72,232,0.2)" }}>
-                  <Sparkles className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: "#7048E8" }} />
-                  <p className="text-xs leading-relaxed" style={{ color: "#5B3DC8" }}>{b.aiSuggestion}</p>
-                </div>
-
-                {/* actions */}
                 <div className="flex items-center flex-wrap gap-2 pt-1 border-t border-border">
-                  <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg bg-red-500 hover:bg-red-600 transition-colors">
-                    <CheckCheck className="w-3.5 h-3.5" /> 해결 완료
+                  <button onClick={() => navigate("/board")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg bg-red-500 hover:bg-red-600 transition-colors">
+                    <CheckCheck className="w-3.5 h-3.5" /> 보드에서 해결 처리
                   </button>
-                  <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
-                    <Calendar className="w-3.5 h-3.5" /> 회의 안건 추가
+                  <button onClick={() => navigate("/board")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
+                    <Calendar className="w-3.5 h-3.5" /> 마감 조정
                   </button>
-                  <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
-                    <Plus className="w-3.5 h-3.5" /> 관련 업무 생성
+                  <button onClick={() => navigate("/board")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
+                    <MessageSquare className="w-3.5 h-3.5" /> 댓글
                   </button>
-                  <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
-                    <MessageSquare className="w-3.5 h-3.5" /> 팀 코멘트
-                  </button>
-                  <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg ml-auto transition-opacity hover:opacity-80"
-                    style={{ background: "rgba(112,72,232,0.12)", color: "#7048E8" }}>
-                    <Sparkles className="w-3.5 h-3.5" /> AI 해결 방법 추천
+                  <button onClick={() => navigate("/dashboard/dash-progress")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg ml-auto transition-opacity hover:opacity-80" style={{ background: "rgba(112,72,232,0.12)", color: "#7048E8" }}>
+                    <Sparkles className="w-3.5 h-3.5" /> AI 분석 보기
                   </button>
                 </div>
               </div>
             </div>
           );
         })}
+        {(loading || blockedTasks.length === 0) && (
+          <div className="h-40 flex items-center justify-center rounded-xl border border-border bg-card text-sm text-muted-foreground">
+            {loading ? "데이터를 불러오는 중입니다" : "현재 블로커 업무가 없습니다."}
+          </div>
+        )}
       </div>
     </div>
   );
 }
-
-// ─── page 4: in-progress tasks ────────────────────────────────────────────────
