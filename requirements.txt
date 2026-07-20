@@ -5,14 +5,16 @@ pydantic==2.13.4
 pydantic-settings==2.14.2
 
 # ML / DL (docs/WorkFlow_AI_기술_스택_버전.md 6.5, PyTorch는 용량 문제로 제외)
-numpy==2.5.1
+numpy==2.2.6
 scikit-learn==1.6.1
 xgboost==3.2.0
 lightgbm==4.6.0
+mlflow-skinny==3.14.0
 transformers==4.48.0
 tokenizers>=0.21,<0.22
 faster-whisper==1.2.1
 matplotlib==3.10.9
+
 
 # LLM (6.6, LangChain은 미사용으로 보류)
 openai==1.59.7

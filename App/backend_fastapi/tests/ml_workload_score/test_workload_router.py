@@ -39,6 +39,7 @@ def test_score_workload_returns_success_when_service_succeeds() -> None:
     body = response.json()
     assert body["success"] is True
     assert body["data"]["members"][0]["assignee_id"] == "3"
+    assert body["data"]["schema_version"] == "1.0"
     mock_get_score.assert_awaited_once_with(1, use_synthetic_fallback=False)
 
 
@@ -65,4 +66,5 @@ def test_score_workload_synthetic_fallback_smoke() -> None:
     body = response.json()
     assert body["success"] is True
     assert body["data"]["source"] in ("db", "synthetic_fallback")
+    assert body["data"]["schema_version"] == "1.0"
     assert len(body["data"]["members"]) > 0

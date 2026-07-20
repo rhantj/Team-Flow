@@ -20,6 +20,9 @@ public class Task {
     @Column(name = "project_id", nullable = false)
     private Long projectId;
 
+    @Column(name = "milestone_id")
+    private Long milestoneId;
+
     @Column(nullable = false)
     private String title;
 
@@ -97,6 +100,10 @@ public class Task {
 
     public Long getProjectId() {
         return projectId;
+    }
+
+    public Long getMilestoneId() {
+        return milestoneId;
     }
 
     public String getTitle() {
