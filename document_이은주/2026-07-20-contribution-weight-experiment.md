@@ -23,4 +23,4 @@
 소수 4자리 반올림: 0.2016 / 0.4911 / 0.3073, 합계 1.0)으로 갱신.
 
 ## 그래프
-`App/output/contribution_score/weight_comparison.png`
+`document_이은주/output/contribution_score_weight_comparison.png`
