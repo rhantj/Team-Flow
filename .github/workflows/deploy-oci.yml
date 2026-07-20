@@ -1,0 +1,45 @@
+name: Deploy to OCI
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-oci
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.OCI_SSH_KEY }}" > ~/.ssh/oci_deploy_key
+          chmod 600 ~/.ssh/oci_deploy_key
+          ssh-keyscan -H "${{ secrets.OCI_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy (git pull + docker compose up -d --build)
+        run: |
+          ssh -i ~/.ssh/oci_deploy_key "${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }}" '
+            set -e
+            cd /home/ubuntu/work-flow
+            git fetch origin main
+            git reset --hard origin/main
+            cd App
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+          '
+
+      - name: Health check
+        run: |
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://${{ secrets.OCI_DOMAIN }}/api/v1/health" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "healthy (attempt $i)"
+              exit 0
+            fi
+            echo "not healthy yet (attempt $i, code=$code) — retrying in 10s"
+            sleep 10
+          done
+          echo "health check failed after retries"
+          exit 1
