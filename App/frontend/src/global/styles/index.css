@@ -46,3 +46,30 @@ html.capture-canvas #root > * {
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
   background: rgba(28, 35, 51, 0.38);
 }
+
+/* Same behavior as .scrollbar-thin but with a light thumb for dark
+   surfaces (e.g. the sidebar), where the default dark thumb is invisible. */
+.scrollbar-thin-dark {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.scrollbar-thin-dark:hover {
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+.scrollbar-thin-dark::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-thin-dark::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin-dark::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+}
+.scrollbar-thin-dark:hover::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+}
+.scrollbar-thin-dark::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}

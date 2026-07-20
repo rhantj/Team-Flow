@@ -20,6 +20,7 @@ import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -37,17 +38,20 @@ public class AuthController {
     private final AuthService authService;
     private final String frontendBaseUrl;
     private final boolean forceSecureCookies;
+    private final boolean devLoginEnabled;
 
     public AuthController(
         GoogleOAuthService googleOAuthService,
         AuthService authService,
         @Value("${workflow.frontend.base-url}") String frontendBaseUrl,
-        @Value("${workflow.security.force-secure-cookies:false}") boolean forceSecureCookies
+        @Value("${workflow.security.force-secure-cookies:false}") boolean forceSecureCookies,
+        @Value("${workflow.demo.dev-login-enabled:true}") boolean devLoginEnabled
     ) {
         this.googleOAuthService = googleOAuthService;
         this.authService = authService;
         this.frontendBaseUrl = frontendBaseUrl;
         this.forceSecureCookies = forceSecureCookies;
+        this.devLoginEnabled = devLoginEnabled;
 
         // 배포 시 Secure 쿠키 설정을 잘못 맞추면 로그인이 조용히 깨지므로, 기동 로그에서 바로 눈에 띄게 남긴다.
         if (frontendBaseUrl.startsWith("https://") && !forceSecureCookies) {
@@ -108,6 +112,48 @@ public class AuthController {
         }
     }
 
+    @Operation(
+        summary = "[개발용] 데모 계정으로 즉시 로그인",
+        description = "Google OAuth 없이 시딩된 데모 계정(demoUserId: 1~4)으로 바로 로그인한다. "
+            + "workflow.demo.dev-login-enabled=false(프로덕션 기본값)이면 404를 반환한다."
+    )
+    @GetMapping("/dev-login/{demoUserId}")
+    public ResponseEntity<Void> devLogin(@PathVariable String demoUserId) {
+        if (!devLoginEnabled) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+        try {
+            AuthTokenResponse tokens = authService.devLogin(demoUserId);
+            String fragment = "accessToken=" + encode(tokens.accessToken())
+                + "&refreshToken=" + encode(tokens.refreshToken())
+                + "&expiresIn=" + tokens.expiresIn();
+            return redirectToFrontend("/auth/callback#" + fragment, stateCookie("", Duration.ZERO));
+        } catch (Exception e) {
+            log.warn("데모 로그인 실패: {}", demoUserId, e);
+            return redirectToFrontend("/login?error=oauth_failed", stateCookie("", Duration.ZERO));
+        }
+    }
+
+    @Operation(
+        summary = "[개발용] 데모 계정 JWT 발급",
+        description = "프론트 개발 화면에서 리다이렉트 없이 데모 계정 JWT를 받아 저장할 때 사용한다. "
+            + "workflow.demo.dev-login-enabled=false(프로덕션 기본값)이면 404를 반환한다."
+    )
+    @GetMapping("/dev-login-token/{demoUserId}")
+    public ResponseEntity<ApiResponse<AuthTokenResponse>> devLoginToken(@PathVariable String demoUserId) {
+        if (!devLoginEnabled) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.fail("DEV_LOGIN_DISABLED", "개발용 로그인이 비활성화되어 있습니다."));
+        }
+        try {
+            return ResponseEntity.ok(ApiResponse.ok(authService.devLogin(demoUserId)));
+        } catch (Exception e) {
+            log.warn("데모 토큰 로그인 실패: {}", demoUserId, e);
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.fail("DEMO_USER_NOT_FOUND", "테스트 계정을 찾을 수 없습니다."));
+        }
+    }
+
     @Operation(summary = "Refresh Token으로 Access Token 재발급")
     @PostMapping("/refresh")
     public ApiResponse<AuthTokenResponse> refresh(@Valid @RequestBody RefreshRequest request) {
@@ -135,6 +181,17 @@ public class AuthController {
         return ResponseCookie.from(STATE_COOKIE, value)
             .httpOnly(true)
             .secure(forceSecureCookies || request.isSecure())
+            .sameSite("Lax")
+            .path("/api/v1/auth")
+            .maxAge(maxAge)
+            .build();
+    }
+
+    /** 개발용 로그인 경로에서 state 쿠키를 지울 때 사용 — 요청의 isSecure() 판단이 필요 없다. */
+    private ResponseCookie stateCookie(String value, Duration maxAge) {
+        return ResponseCookie.from(STATE_COOKIE, value)
+            .httpOnly(true)
+            .secure(forceSecureCookies)
             .sameSite("Lax")
             .path("/api/v1/auth")
             .maxAge(maxAge)

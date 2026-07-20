@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { Sparkles, X, Send } from "lucide-react";
 import { CHAT_INIT, QUICK_QUESTIONS } from "../libs/mock/chat";
 import { useRagQuery } from "../libs/hooks/useRagQuery";
+import { useAuth } from "../../global/hooks/useAuth";
 import type { ChatMsg } from "../libs/types/chat";
 
-const DEMO_PROJECT_ID = 1; // TODO(FS-1 인증 연동 후): 실제 로그인 세션의 프로젝트 ID로 교체
+const NO_PROJECT_MESSAGE = "아직 연결된 프로젝트가 없습니다. 프로젝트를 만들고 회의록을 업로드한 뒤 다시 질문해주세요.";
 
 export function AIAssistant({ onClose }: { onClose: () => void }) {
+  const { currentProjectId } = useAuth();
   const [messages, setMessages] = useState<ChatMsg[]>(CHAT_INIT.map(m => ({ role: m.role as "assistant", content: m.content })));
   const [input, setInput] = useState("");
   const { status, answer, error, ask } = useRagQuery();
@@ -20,15 +22,22 @@ export function AIAssistant({ onClose }: { onClose: () => void }) {
       setMessages(prev => [...prev, { role: "assistant", content: answer.content, sources: answer.sources }]);
     }
     if (status === "error" && error) {
-      setMessages(prev => [...prev, { role: "assistant", content: "일시적으로 답변을 생성할 수 없습니다." }]);
+      setMessages(prev => [...prev, { role: "assistant", content: error }]);
     }
   }, [status, answer, error]);
 
   const send = (text: string) => {
     if (!text.trim() || loading) return;
     setMessages(prev => [...prev, { role: "user", content: text }]);
-    setInput("");
-    ask(DEMO_PROJECT_ID, text);
+    if (currentProjectId == null) {
+      setMessages(prev => [...prev, { role: "assistant", content: NO_PROJECT_MESSAGE }]);
+      setTimeout(() => setInput(""), 0);
+      return;
+    }
+    ask(currentProjectId, text);
+    // 한글 등 IME 조합 완료 이벤트가 keydown 이후 뒤늦게 들어와 입력창을 다시 채우는 것을 피하기 위해
+    // 조합 이벤트가 먼저 처리되도록 한 틱 미뤄서 비운다.
+    setTimeout(() => setInput(""), 0);
   };
 
   return (

@@ -14,12 +14,12 @@ export function RequireAuth() {
 }
 
 export function RequireRole({ allow }: { allow: ProjectRoleKo[] }) {
-  const { projectRoles } = useAuth();
+  const { currentProject, projectRoles } = useAuth();
   const { projectId } = useParams();
 
   const currentRole = projectId
     ? projectRoles.find(pr => String(pr.projectId) === projectId)?.role
-    : projectRoles[0]?.role;
+    : currentProject?.role ?? projectRoles[0]?.role;
 
   if (!currentRole || !allow.includes(currentRole)) {
     return <Navigate to="/dashboard" replace />;

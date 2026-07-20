@@ -1,45 +1,78 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import { DndProvider } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { RefreshCw } from "lucide-react";
 import { BoardToolbar } from "../components/BoardToolbar";
+import { BoardFilterBar } from "../components/BoardFilterBar";
 import { KanbanBoard } from "../components/KanbanBoard";
 import { TaskDetailPanel } from "../components/TaskDetailPanel";
 import { AddTaskModal } from "../components/AddTaskModal";
-import { fetchTasks, updateTaskPosition, deleteTask } from "../libs/utils/taskApi";
-import { useStoredComments, addActivity } from "../libs/utils/activityStore";
-import { STATUS_LABELS, NEXT_STATUS } from "../libs/utils/taskActions";
-import { buildDefaultChecklist, reorderTasks } from "../libs/utils/taskService";
-import { MEMBERS } from "../../global/lib/mock/members";
+import { EditTaskModal } from "../components/EditTaskModal";
+import { fetchTasks, updateTaskPosition, deleteTask, DEMO_PROJECT_ID } from "../libs/utils/taskApi";
+import { NEXT_STATUS } from "../libs/utils/taskActions";
+import { reorderTasks } from "../libs/utils/taskService";
+import { useAuth } from "../../global/hooks/useAuth";
 import type { Task, TaskStatus } from "../libs/types/task";
 
-const CURRENT_USER = MEMBERS[0];
+const FILTER_PARAMS = ["assignee", "priority", "category"] as const;
+
+function parseFilterParam(searchParams: URLSearchParams, key: string): string[] {
+  return searchParams.get(key)?.split(",").filter(Boolean) ?? [];
+}
 
 export function BoardView() {
+  const { currentProjectId } = useAuth();
+  const projectId = currentProjectId ?? DEMO_PROJECT_ID;
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
-  const comments = useStoredComments();
   const [searchParams, setSearchParams] = useSearchParams();
   const [selId, setSelId] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [modalStatus, setModalStatus] = useState<TaskStatus>("todo");
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const selTask = selId ? tasks.find((t) => t.id === selId) ?? null : null;
 
+  const assigneeFilter = useMemo(() => parseFilterParam(searchParams, "assignee"), [searchParams]);
+  const priorityFilter = useMemo(() => parseFilterParam(searchParams, "priority"), [searchParams]);
+  const categoryFilter = useMemo(() => parseFilterParam(searchParams, "category"), [searchParams]);
+
+  const filteredTasks = useMemo(() => tasks.filter((t) =>
+    (assigneeFilter.length === 0 || assigneeFilter.includes(t.assignee)) &&
+    (priorityFilter.length === 0 || priorityFilter.includes(t.priority)) &&
+    (categoryFilter.length === 0 || categoryFilter.includes(t.category))
+  ), [tasks, assigneeFilter, priorityFilter, categoryFilter]);
+
+  const toggleFilterValue = (key: (typeof FILTER_PARAMS)[number], value: string) => {
+    const current = parseFilterParam(searchParams, key);
+    const next = current.includes(value) ? current.filter((v) => v !== value) : [...current, value];
+    const nextParams = new URLSearchParams(searchParams);
+    if (next.length > 0) nextParams.set(key, next.join(","));
+    else nextParams.delete(key);
+    setSearchParams(nextParams, { replace: true });
+  };
+
+  const resetFilters = () => {
+    const nextParams = new URLSearchParams(searchParams);
+    FILTER_PARAMS.forEach((key) => nextParams.delete(key));
+    setSearchParams(nextParams, { replace: true });
+  };
+
   const loadTasks = useCallback(() => {
     setLoadState("loading");
-    fetchTasks()
+    fetchTasks(projectId)
       .then((result) => {
         setTasks(result);
         setLoadState("ready");
       })
       .catch(() => setLoadState("error"));
-  }, []);
+  }, [projectId]);
 
   // 다른 팀원의 변경사항은 실시간으로 반영되지 않고, 이 화면에 새로 들어오거나 새로고침할 때만 반영된다.
+  // projectId가 바뀌면(사이드바에서 프로젝트 전환) 그 프로젝트의 업무로 다시 불러온다.
   useEffect(() => {
     loadTasks();
   }, [loadTasks]);
@@ -66,12 +99,11 @@ export function BoardView() {
 
   const handleTaskCreated = (task: Task) => {
     setTasks((prev) => [task, ...prev]);
-    addActivity(`'${task.title}' 업무를 새로 추가했습니다.`, CURRENT_USER.name, "task-created");
   };
 
-  // 체크리스트/코멘트/활동은 아직 백엔드에 연동되지 않아 이 브라우저에서만 유지된다(후속 작업).
-  const patchTaskLocal = (taskId: string, patch: Partial<Task>) => {
-    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, ...patch } : t)));
+  const handleTaskUpdated = (updated: Task) => {
+    setTasks((prev) => prev.map((t) => (t.id === updated.id ? { ...t, ...updated } : t)));
+    setEditingTask(null);
   };
 
   // 업무를 targetStatus 컬럼의 insertAtIndex 위치로 옮긴다(같은 컬럼 안 재정렬 + 다른 컬럼으로 이동 모두 이 함수 하나로 처리).
@@ -83,12 +115,8 @@ export function BoardView() {
     const prevTasks = tasks;
     setTasks(result.next);
 
-    const statusChanged = dragged.status !== targetStatus;
     try {
-      await updateTaskPosition(taskId, targetStatus, result.newPosition);
-      if (statusChanged) {
-        addActivity(`'${dragged.title}' 상태를 '${STATUS_LABELS[targetStatus]}'(으)로 변경`, CURRENT_USER.name, "status");
-      }
+      await updateTaskPosition(taskId, targetStatus, result.newPosition, projectId);
     } catch {
       setTasks(prevTasks);
       showToast("이동에 실패했습니다. 다시 시도해주세요.");
@@ -97,13 +125,6 @@ export function BoardView() {
 
   const handleSelectTask = (id: string) => {
     setSelId((prev) => (prev === id ? null : id));
-  };
-
-  const handleToggleChecklistItem = (itemId: string) => {
-    if (!selTask) return;
-    const checklist = selTask.checklist ?? buildDefaultChecklist(selTask.id, selTask.status);
-    const updated = checklist.map((item) => (item.id === itemId ? { ...item, done: !item.done } : item));
-    patchTaskLocal(selTask.id, { checklist: updated });
   };
 
   const handleQuickAction = (label: string, isPrimary: boolean) => {
@@ -133,8 +154,7 @@ export function BoardView() {
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
     setSelId((prev) => (prev === taskId ? null : prev));
     try {
-      await deleteTask(taskId);
-      addActivity(`'${task.title}' 업무를 삭제했습니다.`, CURRENT_USER.name, "task-deleted");
+      await deleteTask(taskId, projectId);
     } catch {
       setTasks(prevTasks);
       showToast("업무 삭제에 실패했습니다. 다시 시도해주세요.");
@@ -165,6 +185,17 @@ export function BoardView() {
         )}
 
         <BoardToolbar tasks={tasks} compact={workspaceMode} onAddTask={openModal} />
+        <BoardFilterBar
+          assigneeFilter={assigneeFilter}
+          priorityFilter={priorityFilter}
+          categoryFilter={categoryFilter}
+          onToggleAssignee={(id) => toggleFilterValue("assignee", id)}
+          onTogglePriority={(level) => toggleFilterValue("priority", level)}
+          onToggleCategory={(id) => toggleFilterValue("category", id)}
+          onReset={resetFilters}
+          totalCount={tasks.length}
+          filteredCount={filteredTasks.length}
+        />
 
         <div className="flex-1 overflow-hidden min-h-0">
           {loadState === "loading" && (
@@ -187,7 +218,7 @@ export function BoardView() {
               <PanelGroup direction="horizontal">
                 <Panel defaultSize={68} minSize={40} className="min-w-0">
                   <KanbanBoard
-                    tasks={tasks}
+                    tasks={filteredTasks}
                     compact
                     selectedId={selId}
                     onSelectTask={handleSelectTask}
@@ -202,18 +233,17 @@ export function BoardView() {
                 <Panel defaultSize={32} minSize={24} maxSize={50} className="min-w-0">
                   <TaskDetailPanel
                     task={selTask}
-                    comments={comments}
                     onClose={() => setSelId(null)}
                     onQuickAction={handleQuickAction}
-                    onToggleChecklistItem={handleToggleChecklistItem}
                     onShowToast={showToast}
                     onDeleteTask={handleDeleteTask}
+                    onEditTask={() => setEditingTask(selTask)}
                   />
                 </Panel>
               </PanelGroup>
             ) : (
               <KanbanBoard
-                tasks={tasks}
+                tasks={filteredTasks}
                 compact={false}
                 selectedId={selId}
                 onSelectTask={handleSelectTask}
@@ -226,6 +256,7 @@ export function BoardView() {
         </div>
 
         <AddTaskModal open={showModal} initialStatus={modalStatus} onClose={() => setShowModal(false)} onCreated={handleTaskCreated} />
+        <EditTaskModal task={editingTask} onClose={() => setEditingTask(null)} onUpdated={handleTaskUpdated} />
       </div>
     </DndProvider>
   );

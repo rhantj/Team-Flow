@@ -5,13 +5,13 @@ server:
   # HttpServletRequest.isSecure()/getScheme()이 프록시 뒤의 백엔드 자체 프로토콜(대개 http)이 아니라
   # 실제 클라이언트-프록시 간 프로토콜을 반영하도록 한다 (OAuth state 쿠키의 Secure 속성 판단에 사용).
   #
-  # forward-headers-strategy는 반드시 native로 둘 것 — framework는 X-Forwarded-* 헤더를 무조건 신뢰해
-  # 외부 클라이언트가 직접 이 헤더를 위조해 isSecure() 판단을 속일 수 있다. native는 내장 톰캣의
-  # RemoteIpValve를 사용해, 실제 TCP 연결이 내부망 대역(10/8, 172.16/12, 192.168/16, 127.0.0.1 등
-  # tomcat.remoteip.internal-proxies 기본값)에서 온 경우에만 해당 헤더를 신뢰하고 그 외에는 무시한다.
-  # 프록시가 이 대역 밖의 IP(예: 퍼블릭 IP를 쓰는 클라우드 로드밸런서)라면 배포 시
-  # SERVER_TOMCAT_REMOTEIP_INTERNAL_PROXIES 환경변수로 그 대역을 명시적으로 지정해야 한다.
-  forward-headers-strategy: native
+  # 기본값 native는 내장 톰캣의 RemoteIpValve를 사용해, 실제 TCP 연결이 내부망 대역(10/8, 172.16/12,
+  # 192.168/16, 127.0.0.1 등 tomcat.remoteip.internal-proxies 기본값)에서 온 경우에만 X-Forwarded-*
+  # 헤더를 신뢰하고 그 외에는 무시한다 (외부 클라이언트의 헤더 위조 방지).
+  # docker-compose.prod.yml의 nginx처럼 프록시가 그 대역 밖에 있거나 native로도 OAuth 리다이렉트가
+  # http://로 깨지는 배포라면 SERVER_FORWARD_HEADERS_STRATEGY=framework로 override한다 — framework는
+  # X-Forwarded-*를 무조건 신뢰하므로, 그 경우엔 반드시 신뢰 가능한 리버스 프록시 뒤에서만 노출할 것.
+  forward-headers-strategy: ${SERVER_FORWARD_HEADERS_STRATEGY:native}
 
 spring:
   application:
@@ -24,6 +24,12 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/workflow}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
     password: ${SPRING_DATASOURCE_PASSWORD:root}
+    hikari:
+      data-source-properties:
+        # Supabase Supavisor(pgbouncer) 트랜잭션 풀러(6543)는 커넥션마다 다른
+        # 물리 세션을 재사용하므로, PgJDBC 서버사이드 prepared statement 캐시를
+        # 켜두면 이름이 충돌해 "prepared statement already exists" 에러가 난다.
+        prepareThreshold: 0
   jpa:
     open-in-view: false
     database-platform: org.hibernate.dialect.PostgreSQLDialect
@@ -56,5 +62,6 @@ workflow:
     force-secure-cookies: ${WORKFLOW_FORCE_SECURE_COOKIES:false}
   demo:
     seed-enabled: ${WORKFLOW_DEMO_SEED_ENABLED:true}
+    dev-login-enabled: ${WORKFLOW_DEMO_DEV_LOGIN_ENABLED:true}
   uploads:
     dir: ${WORKFLOW_UPLOADS_DIR:uploads}

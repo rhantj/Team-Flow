@@ -38,7 +38,7 @@ class RagControllerTest {
 
         String body = objectMapper.writeValueAsString(new RagQueryRequest(1L, "질문"));
 
-        mockMvc.perform(post("/api/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
+        mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.answer").value("답변입니다"))
             .andExpect(jsonPath("$.data.sources[0].source_type").value("meeting"));
@@ -52,7 +52,7 @@ class RagControllerTest {
 
         String body = objectMapper.writeValueAsString(new RagQueryRequest(1L, "질문"));
 
-        mockMvc.perform(post("/api/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
+        mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(status().isTooManyRequests())
             .andExpect(jsonPath("$.error.code").value("RATE_LIMITED"));
     }

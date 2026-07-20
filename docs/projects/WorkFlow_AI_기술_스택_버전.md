@@ -115,9 +115,13 @@ DB/Redis docker compose up -d
 | Docker Compose | v5.2.0 |
 | Redis | 7.4.9 (`redis:7-alpine` 이미지, 실측) |
 | GitHub Actions | 미설정 — 도입 시 `ubuntu-24.04` 러너 권장 |
+| 배포 서버 | **현재 AWS 임시 사용** — 정식 인프라 확정 전까지 배포용으로 운용 |
+| Nginx | 리버스 프록시로 배포 트래픽 라우팅 (프론트/백엔드/AI 서버 앞단) |
 | OCI (Oracle Cloud Infrastructure) | 현재 미도입 — PostgreSQL을 Supabase에서 OCI 자체 호스팅으로 이전 예정 (다른 서비스와 인프라 통합 목적) |
 
 **호환성 근거**: Redis 7.4는 Spring Data Redis(Spring Boot 3.5.16 BOM 포함) 및 Lettuce 클라이언트와 공식 호환. OCI 이전 시에는 순정 PostgreSQL + pgvector 구성을 유지해야 덤프/복원만으로 전환 가능(Supabase 전용 기능인 Auth/Storage/realtime 등은 핵심 로직에서 미사용 원칙 유지).
+
+**배포 구성 메모**: 배포 서버는 현재 AWS를 임시로 사용 중이며, Nginx를 리버스 프록시로 두어 배포하고 있음. 정식 인프라(OCI 등)로의 이전은 미확정 상태로, 그 전까지 AWS + Nginx 조합을 유지한다.
 
 ---
 

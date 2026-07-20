@@ -3,14 +3,18 @@ import { useNavigate, useSearchParams } from "react-router";
 import { CatTag } from "../../board/components/CatTag";
 import { PriorityBadge } from "../../board/components/PriorityBadge";
 import { getCat } from "../../board/libs/utils/taskService";
-import { getStoredMeetings, getSavedMeetings, saveSavedMeetings, getStoredTasks, saveStoredTasks, saveStoredMeetings } from "../../board/libs/utils/localStore";
+import { getStoredMeetings, getSavedMeetings, saveSavedMeetings, getStoredTasks, saveStoredTasks, saveStoredMeetings, getDeletedMeetingIds, markDeletedMeeting } from "../../board/libs/utils/localStore";
 import { addActivity } from "../../board/libs/utils/activityStore";
 import { MEMBERS } from "../../global/lib/mock/members";
 import { CATEGORIES } from "../../board/libs/mock/tasks";
 import type { Meeting, UploadFlow, UploadType, GenTodo, SavedMeetingRecord } from "../libs/types/meeting";
 import type { CatId, Priority, Task } from "../../board/libs/types/task";
-import { analyzeMeeting, fetchMeetings, registerMeetingTasks } from "../libs/utils/meetingAiApi";
+import { analyzeMeeting, deleteMeeting, fetchMeeting, fetchMeetings, registerMeetingTasks, retryMeetingAnalysis } from "../libs/utils/meetingAiApi";
 import type { MeetingAiResult } from "../libs/types/meetingAiTypes";
+import { deleteTask, DEMO_PROJECT_ID } from "../../board/libs/utils/taskApi";
+import { useAuth } from "../../global/hooks/useAuth";
+import { ApiRequestError } from "../../global/api/apiClient";
+import { getProjectMembers, type MemberResponse } from "../../global/api/projectsApi";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import {
@@ -35,12 +39,17 @@ import {
   ArrowLeft,
   Check,
   Users,
-  Film,
   ListChecks,
   Radio,
+  Trash2,
+  Loader2,
 } from "lucide-react";
 
 const CURRENT_USER_ROLE: "leader" | "member" = "leader";
+const PARTICIPANT_COLORS = ["#3B5BDB", "#7048E8", "#10B981", "#F59E0B", "#EC4899", "#0EA5E9"];
+const MEETING_STATUS_POLL_INTERVAL_MS = 2000;
+const MEETING_STATUS_MAX_POLL_ATTEMPTS = 60;
+const MEETING_STATUS_MAX_NETWORK_FAILURES = 5;
 
 const groupTodosByAssignee = (list: GenTodo[], resolveAssignee: (todo: GenTodo) => string): GenTodo[] => {
   const UNASSIGNED_KEY = "__unassigned__";
@@ -58,6 +67,8 @@ const groupTodosByAssignee = (list: GenTodo[], resolveAssignee: (todo: GenTodo) 
 
 const buildTodoRegistrationKey = (meetingIdentifier: string, title: string, assignee: string, dueDate: string): string =>
   `${meetingIdentifier.trim()}::${title.trim()}::${assignee}::${dueDate.trim()}`;
+
+const isServerMeetingId = (meetingId: string): boolean => /^\d+$/.test(meetingId);
 
 // 회의 상세 화면(meeting.todos)의 "이름: 업무내용 (마감일)" 문자열 포맷을 파싱한다.
 const parseMeetingTodoLine = (line: string): { assigneeName: string; title: string; dueDate: string } => {
@@ -97,15 +108,8 @@ const AUDIO_ANALYZE_STAGES = [
   "업무 자동 생성 중", "역할 분배 생성 중",
 ];
 
-const VIDEO_ANALYZE_STAGES = [
-  "파일 업로드 완료", "영상 음성 트랙 추출 중", "음성 변환 중",
-  "회의 내용 분석 중", "핵심 결정사항 추출 중",
-  "업무 자동 생성 중", "역할 분배 생성 중",
-];
-
 const getAnalyzeStages = (type: UploadType): string[] => {
   if (type === "audio") return AUDIO_ANALYZE_STAGES;
-  if (type === "video") return VIDEO_ANALYZE_STAGES;
   return DOCUMENT_ANALYZE_STAGES;
 };
 
@@ -269,11 +273,52 @@ const formatDateTime = (iso?: string) => {
   return `${datePart} ${timePart}`;
 };
 
+const buildMeetingFromAnalysisResponse = (
+  response: Awaited<ReturnType<typeof fetchMeeting>>,
+  fallback: Partial<Meeting> = {}
+): Meeting => {
+  const analysis = response.analysis;
+  if (!analysis) {
+    return {
+      id: response.meetingId,
+      title: fallback.title ?? response.fileName ?? "회의록",
+      date: fallback.date ?? "",
+      duration: response.status === "FAILED" ? "분석 실패" : "분석 중",
+      status: response.status === "COMPLETED" ? "processed" : response.status === "FAILED" ? "failed" : "processing",
+      fileName: response.fileName ?? fallback.fileName,
+      uploadedAt: fallback.uploadedAt,
+      analyzedAt: fallback.analyzedAt,
+    };
+  }
+  const source = response.analysisSource === "FASTAPI" ? "fastapi" : "spring-fallback";
+  return {
+    id: response.meetingId,
+    title: analysis.meeting_meta.title || fallback.title || response.fileName || "회의록",
+    date: formatDisplayDate(analysis.meeting_meta.meeting_date || fallback.date || getTodayIsoDate()),
+    duration: "분석 완료",
+    status: "processed",
+    summary: analysis.summary,
+    decisions: analysis.decisions,
+    todos: analysis.todos.map(todo => {
+      const assignee = todo.assignee_candidate || "미배정";
+      const due = todo.due_date ? ` (${todo.due_date.slice(5).replace("-", ".")})` : "";
+      return `${assignee}: ${todo.title}${due}`;
+    }),
+    risks: analysis.risks,
+    analysisSource: source,
+    fileName: response.fileName ?? fallback.fileName,
+    uploadedAt: fallback.uploadedAt,
+    analyzedAt: fallback.analyzedAt ?? new Date().toISOString(),
+  };
+};
+
 export function MeetingsView() {
+  const { currentProjectId, user } = useAuth();
+  const projectId = String(currentProjectId ?? DEMO_PROJECT_ID);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [meetings, setMeetings] = useState<Meeting[]>(getStoredMeetings);
-  const [selected, setSelected] = useState<string|null>("m1");
+  const [meetings, setMeetings] = useState<Meeting[]>(() => getStoredMeetings(projectId));
+  const [selected, setSelected] = useState<string|null>(() => getStoredMeetings(projectId)[0]?.id ?? null);
   const [uploadFlow, setUploadFlow] = useState<UploadFlow>(null);
   const [uploadType, setUploadType] = useState<UploadType>(null);
   const [modalStep, setModalStep] = useState(0);
@@ -282,7 +327,8 @@ export function MeetingsView() {
   const [meetTitle, setMeetTitle] = useState("");
   const [meetDate, setMeetDate] = useState(getTodayIsoDate());
   const [meetKind, setMeetKind] = useState("정기회의");
-  const [partIds, setPartIds] = useState<string[]>(["1","2","3","4"]);
+  const [partIds, setPartIds] = useState<string[]>([]);
+  const [projectMembers, setProjectMembers] = useState<MemberResponse[]>([]);
   const [analysisResult, setAnalysisResult] = useState<MeetingAiResult | null>(null);
   const [selTodos, setSelTodos] = useState<string[]>([]);
   const [todoAssignees, setTodoAssignees] = useState<Record<string,string>>({});
@@ -291,6 +337,7 @@ export function MeetingsView() {
   const [uploadFileName, setUploadFileName] = useState("");
   const [uploadFileSize, setUploadFileSize] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [activeMeetingId, setActiveMeetingId] = useState<string | null>(null);
   const [analysisSource, setAnalysisSource] = useState<"fastapi"|"spring-fallback"|null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [panelTab, setPanelTab] = useState<"summary"|"todos"|"risks">("summary");
@@ -309,24 +356,113 @@ export function MeetingsView() {
   const [pdfExportMessage, setPdfExportMessage] = useState<string | null>(null);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [registerMessage, setRegisterMessage] = useState<string | null>(null);
+  const [isRegisteringTasks, setIsRegisteringTasks] = useState(false);
   const [meetingListError, setMeetingListError] = useState<string | null>(null);
+  const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
+  const [deletingMeetingId, setDeletingMeetingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Meeting | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pdfCaptureRef = useRef<HTMLDivElement | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollSessionRef = useRef(0);
   const analyzeStages = getAnalyzeStages(uploadType);
   const canAddManualTodo = CURRENT_USER_ROLE === "leader";
 
-  // Simulate analysis progress
+  // 가짜 진행률 애니메이션: 실제 서버 상태를 모르므로 90%에서 멈추고 대기한다.
+  // 실제 완료/실패 전환은 아래 polling(stopPolling/pollMeetingStatus)이 담당한다.
   useEffect(() => {
     if (uploadFlow !== "analyzing") return;
     let prog = 0; let stg = 0;
     const iv = setInterval(() => {
-      prog = Math.min(prog + 1.5, 100);
+      prog = Math.min(prog + 1.5, 90);
       stg = Math.min(Math.floor(prog / (100 / analyzeStages.length)), analyzeStages.length - 1);
       setAnalyzeStage(stg); setAnalyzeProgress(Math.round(prog));
-      if (prog >= 100) { clearInterval(iv); setTimeout(() => { setUploadFlow("results"); setPanelTab("summary"); }, 600); }
     }, 70);
     return () => clearInterval(iv);
   }, [uploadFlow, analyzeStages.length]);
+
+  const stopPolling = () => {
+    pollSessionRef.current += 1;
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
+
+  // "analyzing" 화면을 벗어나면(완료/실패/사용자 이탈) polling을 중단한다.
+  useEffect(() => {
+    if (uploadFlow !== "analyzing") stopPolling();
+  }, [uploadFlow]);
+
+  // unmount 시 polling 정리
+  useEffect(() => () => stopPolling(), []);
+
+  // meetingId를 대상으로 서버 분석 상태를 2초 간격으로 조회해 completed/failed를 반영한다.
+  const pollMeetingStatus = (meetingId: string, title: string, uploadedAt: string) => {
+    stopPolling();
+    const pollSessionId = pollSessionRef.current + 1;
+    pollSessionRef.current = pollSessionId;
+    let attempts = 0;
+    let consecutiveNetworkFailures = 0;
+    pollIntervalRef.current = setInterval(() => {
+      if (pollSessionRef.current !== pollSessionId) return;
+      attempts += 1;
+      if (attempts > MEETING_STATUS_MAX_POLL_ATTEMPTS) {
+        stopPolling();
+        setAnalysisResult(null);
+        setSelTodos([]);
+        setAnalysisSource(null);
+        setAnalysisError("분석 시간이 초과되었습니다. 잠시 후 재시도해주세요.");
+        setUploadFlow("results");
+        return;
+      }
+
+      fetchMeeting(projectId, meetingId).then(response => {
+        if (pollSessionRef.current !== pollSessionId) return;
+        consecutiveNetworkFailures = 0;
+        if (response.status === "PROCESSING") return;
+        stopPolling();
+        if (response.status === "COMPLETED" && response.analysis) {
+          const apiTodos = buildGeneratedTodos(response.analysis);
+          const source = response.analysisSource === "FASTAPI" ? "fastapi" : "spring-fallback";
+          const analyzedMeeting = buildMeetingFromAnalysisResponse(response, {
+            title,
+            date: meetDate,
+            fileName: selectedFile?.name,
+            uploadedAt,
+          });
+          setAnalysisResult(response.analysis);
+          setSelTodos(apiTodos.map(t => t.id));
+          setAnalysisSource(source);
+          setMeetings(prev => {
+            const next = [analyzedMeeting, ...prev.filter(item => item.id !== analyzedMeeting.id)];
+            saveStoredMeetings(next, projectId);
+            return next;
+          });
+          setSelected(analyzedMeeting.id);
+          setUploadFlow("results");
+          setPanelTab("summary");
+        } else {
+          setAnalysisResult(null);
+          setSelTodos([]);
+          setAnalysisSource(null);
+          setAnalysisError(response.errorMessage ?? "분석 중 오류가 발생했습니다. 다시 시도해주세요.");
+          setUploadFlow("results");
+        }
+      }).catch(() => {
+        if (pollSessionRef.current !== pollSessionId) return;
+        consecutiveNetworkFailures += 1;
+        if (consecutiveNetworkFailures >= MEETING_STATUS_MAX_NETWORK_FAILURES) {
+          stopPolling();
+          setAnalysisResult(null);
+          setSelTodos([]);
+          setAnalysisSource(null);
+          setAnalysisError("분석 상태 확인에 실패했습니다. 네트워크 상태를 확인한 뒤 다시 시도해주세요.");
+          setUploadFlow("results");
+        }
+      });
+    }, MEETING_STATUS_POLL_INTERVAL_MS);
+  };
 
   useEffect(() => {
     if (searchParams.get("upload") === "1") {
@@ -341,28 +477,83 @@ export function MeetingsView() {
   // 서버에 저장된 회의록 목록을 가져와 로컬에 없는 항목만 보충한다.
   // 실패해도 화면은 로컬 저장 목록으로 그대로 동작한다.
   useEffect(() => {
-    fetchMeetings("demo-project")
+    const cached = getStoredMeetings(projectId);
+    setMeetings(cached);
+    setSelected(cached[0]?.id ?? null);
+    fetchMeetings(projectId)
       .then(list => {
-        setMeetings(prev => {
-          const existingIds = new Set(prev.map(m => m.id));
-          const additions: Meeting[] = list
-            .filter(dto => !existingIds.has(dto.meetingId))
-            .map(dto => ({
-              id: dto.meetingId,
-              title: dto.title,
-              date: dto.meetingDate ?? "",
-              duration: dto.analysisStatus === "completed" ? "분석 완료" : dto.analysisStatus,
-              status: dto.analysisStatus === "completed" ? "processed" : dto.analysisStatus === "pending" ? "pending" : "processing",
-            }));
-          return additions.length === 0 ? prev : [...additions, ...prev];
-        });
+        const deletedMeetingIds = getDeletedMeetingIds(projectId);
+        const serverMeetings: Meeting[] = list.map(dto => ({
+          id: dto.meetingId,
+          title: dto.title,
+          date: dto.meetingDate ?? "",
+          duration: dto.analysisStatus === "completed" ? "분석 완료" : dto.analysisStatus,
+          status: dto.analysisStatus === "completed" ? "processed" : dto.analysisStatus === "failed" ? "failed" : dto.analysisStatus === "pending" ? "pending" : "processing",
+        }));
+        const serverIds = new Set(serverMeetings.map(meeting => meeting.id));
+        const merged = [...serverMeetings, ...cached.filter(meeting => !serverIds.has(meeting.id) && !deletedMeetingIds.has(meeting.id))];
+        setMeetings(merged);
+        setSelected(current => (current && merged.some(meeting => meeting.id === current)) ? current : merged[0]?.id ?? null);
+        saveStoredMeetings(merged, projectId);
       })
       .catch(() => {
         setMeetingListError("서버에서 회의록 목록을 불러오지 못했습니다. 로컬 저장 목록만 표시됩니다.");
         setTimeout(() => setMeetingListError(null), 4000);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [projectId]);
+
+  // 참석자 체크 목록은 현재 프로젝트의 실제 멤버만 보여준다.
+  useEffect(() => {
+    if (currentProjectId == null) {
+      setProjectMembers([]);
+      return;
+    }
+    getProjectMembers(currentProjectId)
+      .then(setProjectMembers)
+      .catch(() => setProjectMembers([]));
+  }, [currentProjectId]);
+
+  // 목록 API는 요약만 내려주므로, 완료된 회의록을 클릭하면 상세 분석 결과를 별도로 불러와 화면에 채운다.
+  useEffect(() => {
+    const selectedMeeting = meetings.find(item => item.id === selected);
+    if (!selectedMeeting || selectedMeeting.summary || !isServerMeetingId(selectedMeeting.id)) return;
+    if (selectedMeeting.status === "pending" || selectedMeeting.status === "failed") return;
+
+    let cancelled = false;
+    fetchMeeting(projectId, selectedMeeting.id)
+      .then(response => {
+        if (cancelled) return;
+        if (response.status === "COMPLETED" && response.analysis) {
+          const detailedMeeting = buildMeetingFromAnalysisResponse(response, selectedMeeting);
+          setMeetings(prev => {
+            const next = prev.map(item => item.id === detailedMeeting.id ? detailedMeeting : item);
+            saveStoredMeetings(next, projectId);
+            return next;
+          });
+          return;
+        }
+        if (response.status === "FAILED") {
+          setMeetings(prev => {
+            const next = prev.map(item => item.id === selectedMeeting.id ? { ...item, duration: "분석 실패", status: "failed" as const } : item);
+            saveStoredMeetings(next, projectId);
+            return next;
+          });
+          setMeetingListError(response.errorMessage ?? "분석에 실패했습니다. 다시 분석을 시도해주세요.");
+          setTimeout(() => setMeetingListError(null), 4000);
+        }
+      })
+      .catch(error => {
+        if (cancelled) return;
+        const status = error instanceof ApiRequestError ? ` (${error.status})` : "";
+        setMeetingListError(`분석 결과를 불러오지 못했습니다${status}. 잠시 후 다시 시도해주세요.`);
+        setTimeout(() => setMeetingListError(null), 4000);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, meetings, projectId]);
 
   const meeting = meetings.find(m => m.id === selected);
   // meetingId가 있으면 우선 사용, 없으면(review 화면에서 아직 meetings에 반영 전 등) meetTitle로 대체.
@@ -372,7 +563,6 @@ export function MeetingsView() {
   const UPLOAD_TYPES = [
     { id:"document", label:"문서 업로드", desc:"PDF, Word, TXT, HWP 등 회의록 문서", icon:FileText, accept:".pdf,.doc,.docx,.txt,.hwp", color:"#3B5BDB", bg:"rgba(59,91,219,0.1)", note:"텍스트를 추출해 AI가 분석합니다." },
     { id:"audio",    label:"음성파일 업로드", desc:"mp3, wav, m4a 등 녹음파일", icon:Radio,    accept:".mp3,.wav,.m4a,.ogg", color:"#7048E8", bg:"rgba(112,72,232,0.1)", note:"음성을 텍스트로 변환한 뒤 분석합니다." },
-    { id:"video",    label:"영상파일 업로드", desc:"mp4, mov, Zoom/Discord 녹화본", icon:Film,  accept:".mp4,.mov,.avi,.webm", color:"#10B981", bg:"rgba(16,185,129,0.1)", note:"음성 트랙을 추출해 분석합니다." },
   ] as const;
 
   const MEET_KINDS = ["정기회의","중간점검","발표준비","개발회의","기타"];
@@ -447,7 +637,7 @@ export function MeetingsView() {
       title: meetTitle,
       meetingDate: meetDate,
       meetingKind: meetKind,
-      participants: partIds.map(id => MEMBERS.find(m => m.id === id)?.name ?? id),
+      participants: partIds.map(id => projectMembers.find(member => String(member.userId) === id)?.name ?? id),
       originalFileName: selectedFile?.name ?? uploadFileName ?? "",
       fileType: uploadType,
       summary: analysisResult.summary,
@@ -457,8 +647,8 @@ export function MeetingsView() {
       createdAt: new Date().toISOString(),
       source: "MEETING_AI",
     };
-    const next = [record, ...getSavedMeetings().filter(item => item.meetingId !== meetingId)];
-    saveSavedMeetings(next);
+    const next = [record, ...getSavedMeetings(projectId).filter(item => item.meetingId !== meetingId)];
+    saveSavedMeetings(next, projectId);
     setSaveMeetingMessage("회의록이 저장되었습니다.");
     setTimeout(() => setSaveMeetingMessage(null), 2500);
   };
@@ -543,6 +733,19 @@ export function MeetingsView() {
       setAnalysisError("분석할 회의록 파일을 먼저 업로드해주세요.");
       return;
     }
+    const fallbackCurrentUserId = user ? String(user.id) : null;
+    const selectedAttendeeIds = partIds.length > 0
+      ? partIds
+      : fallbackCurrentUserId
+        ? [fallbackCurrentUserId]
+        : [];
+    if (selectedAttendeeIds.length === 0) {
+      setAnalysisError("프로젝트 멤버 정보를 불러온 뒤 참석자를 1명 이상 선택해주세요.");
+      return;
+    }
+    if (partIds.length === 0) {
+      setPartIds(selectedAttendeeIds);
+    }
     const uploadedAt = new Date().toISOString();
     const title = meetTitle.trim() || stripFileExtension(selectedFile.name);
     setMeetTitle(title);
@@ -558,53 +761,135 @@ export function MeetingsView() {
     setUploadFlow("analyzing");
 
     void analyzeMeeting({
-      projectId: "demo-project",
+      projectId,
       file: selectedFile,
       title,
       meetingDate: meetDate,
       meetingKind: meetKind,
       sourceType: uploadType,
-      participants: partIds.map(id => MEMBERS.find(member => member.id === id)?.name ?? id),
+      participants: selectedAttendeeIds.map(id => projectMembers.find(member => String(member.userId) === id)?.name ?? id),
+      attendeeIds: selectedAttendeeIds.map(Number),
     }).then(response => {
-      const apiTodos = buildGeneratedTodos(response.analysis);
-      const source = response.analysisSource === "FASTAPI" ? "fastapi" : "spring-fallback";
-      const analyzedMeeting: Meeting = {
-        id: response.meetingId,
-        title: response.analysis.meeting_meta.title || title,
-        date: formatDisplayDate(response.analysis.meeting_meta.meeting_date || meetDate),
-        duration: "분석 완료",
-        status: "processed",
-        summary: response.analysis.summary,
-        decisions: response.analysis.decisions,
-        todos: response.analysis.todos.map(todo => {
-          const assignee = todo.assignee_candidate || "미배정";
-          const due = todo.due_date ? ` (${todo.due_date.slice(5).replace("-", ".")})` : "";
-          return `${assignee}: ${todo.title}${due}`;
-        }),
-        risks: response.analysis.risks,
-        analysisSource: source,
-        fileName: selectedFile?.name,
-        uploadedAt,
-        analyzedAt: new Date().toISOString(),
-      };
-      setAnalysisResult(response.analysis);
-      setSelTodos(apiTodos.map(t => t.id));
-      setAnalysisSource(source);
-      setMeetings(prev => {
-        const next = [analyzedMeeting, ...prev.filter(item => item.id !== analyzedMeeting.id)];
-        saveStoredMeetings(next);
-        return next;
-      });
-      setSelected(analyzedMeeting.id);
+      setActiveMeetingId(response.meetingId);
+      pollMeetingStatus(response.meetingId, title, uploadedAt);
     }).catch(() => {
       setAnalysisResult(null);
       setSelTodos([]);
       setAnalysisSource(null);
       setAnalysisError("분석 서버 연결에 실패했습니다. Spring Boot와 FastAPI 서버가 실행 중인지 확인한 뒤 다시 시도해주세요.");
+      setUploadFlow("results");
     });
   };
 
+  const handleRetryAnalysis = () => {
+    if (!activeMeetingId) return;
+    const uploadedAt = new Date().toISOString();
+    setAnalysisResult(null);
+    setSelTodos([]);
+    setAnalysisSource(null);
+    setAnalysisError(null);
+    setAnalyzeStage(0);
+    setAnalyzeProgress(0);
+    setUploadFlow("analyzing");
+
+    void retryMeetingAnalysis(projectId, activeMeetingId).then(response => {
+      setActiveMeetingId(response.meetingId);
+      pollMeetingStatus(response.meetingId, meetTitle, uploadedAt);
+    }).catch(() => {
+      setAnalysisError("재분석 요청에 실패했습니다. 다시 시도해주세요.");
+      setUploadFlow("results");
+    });
+  };
+
+  const removeMeetingFromLocalState = (meetingId: string) => {
+    markDeletedMeeting(meetingId, projectId);
+    setMeetings(prev => {
+      const next = prev.filter(item => item.id !== meetingId);
+      saveStoredMeetings(next, projectId);
+      setSelected(current => current === meetingId ? next[0]?.id ?? null : current);
+      return next;
+    });
+    saveSavedMeetings(
+      getSavedMeetings(projectId).filter(item => item.meetingId !== meetingId),
+      projectId
+    );
+    if (activeMeetingId === meetingId) {
+      setActiveMeetingId(null);
+      stopPolling();
+    }
+  };
+
+  const removeLinkedLocalTasks = async (target: Meeting) => {
+    const matchesMeeting = (task: Task) =>
+      task.sourceMeetingTitle === target.id || task.sourceMeetingTitle === target.title;
+
+    const localTasks = getStoredTasks();
+    const linkedLocalTasks = localTasks.filter(matchesMeeting);
+    if (linkedLocalTasks.length > 0) {
+      saveStoredTasks(localTasks.filter(task => !matchesMeeting(task)));
+    }
+
+    for (const task of linkedLocalTasks) {
+      if (/^\d+$/.test(task.id)) {
+        try {
+          await deleteTask(task.id, Number(projectId));
+        } catch {
+          // 로컬에는 이미 제거했으므로 서버 업무 삭제 실패는 회의록 삭제를 막지 않는다.
+        }
+      }
+    }
+  };
+
+  const handleDeleteMeeting = async (target: Meeting, deleteLinkedTasks: boolean) => {
+    if (deletingMeetingId) return;
+
+    setDeleteTarget(null);
+    setDeletingMeetingId(target.id);
+    setMeetingListError(null);
+    setDeleteMessage(null);
+    try {
+      if (isServerMeetingId(target.id)) {
+        await deleteMeeting(projectId, target.id, deleteLinkedTasks);
+      }
+      if (deleteLinkedTasks) {
+        await removeLinkedLocalTasks(target);
+      }
+      removeMeetingFromLocalState(target.id);
+      setDeleteMessage(deleteLinkedTasks ? "회의록과 연동 업무가 삭제되었습니다." : "회의록이 삭제되었습니다.");
+      setTimeout(() => setDeleteMessage(null), 2500);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const isMissingMeeting =
+        error instanceof ApiRequestError
+          ? error.status === 404 || error.code === "MEETING_NOT_FOUND"
+          : message.includes("회의록을 찾을 수 없습니다");
+      if (isMissingMeeting) {
+        if (deleteLinkedTasks) {
+          await removeLinkedLocalTasks(target);
+        }
+        removeMeetingFromLocalState(target.id);
+        setDeleteMessage("서버에 없는 회의록이라 목록에서 제거했습니다.");
+        setTimeout(() => setDeleteMessage(null), 2500);
+      } else {
+        const statusCode = error instanceof ApiRequestError ? error.status : null;
+        const isAuthError = statusCode === 401 || message.includes("인증이 만료") || message.includes("다시 로그인");
+        const isPermissionError = statusCode === 403;
+        const status = statusCode ? ` (${statusCode})` : "";
+        const errorMessage = isAuthError
+          ? "로그인이 만료되어 DB 삭제가 되지 않았습니다. 다시 로그인 후 삭제해주세요."
+          : isPermissionError
+            ? "프로젝트 권한이 없어 DB 삭제가 되지 않았습니다. 권한을 확인해주세요."
+            : `서버 삭제에 실패했습니다${status}. DB에는 삭제되지 않았습니다. 잠시 후 다시 시도해주세요.`;
+        setMeetingListError(errorMessage);
+        setTimeout(() => setMeetingListError(null), 6000);
+      }
+    } finally {
+      setDeletingMeetingId(null);
+    }
+  };
+
   const registerSelectedTodos = async () => {
+    if (isRegisteringTasks) return;
     const existingTasks = getStoredTasks();
     const existingKeys = new Set(
       existingTasks.map(task => buildTodoRegistrationKey(task.sourceMeetingTitle ?? "", task.title, task.assignee, task.dueDate))
@@ -624,42 +909,46 @@ export function MeetingsView() {
       return;
     }
 
-    if (newTodos.length > 0) {
-      try {
-        await registerMeetingTasks("demo-project", meetingIdentifier, newTodos.map(todo => toApiTodo(todo)));
-      } catch {
-        setRegisterMessage("서버에 업무 등록을 실패했습니다. 다시 시도해주세요.");
-        setTimeout(() => setRegisterMessage(null), 2500);
-        return;
+    setIsRegisteringTasks(true);
+    setRegisterMessage("업무보드에 등록 중입니다...");
+    try {
+      if (newTodos.length > 0) {
+        await registerMeetingTasks(projectId, meetingIdentifier, newTodos.map(todo => toApiTodo(todo)));
       }
-    }
 
-    const createdTasks: Task[] = newTodos.map((todo, index) => {
-      const cat = getCat(todo.category);
-      const sourceLabel = todo.source === "MEETING_AI" ? "회의록 AI" : "직접 추가";
-      return {
-        id: `AI-${now}-${String(index + 1).padStart(2, "0")}`,
-        title: todo.title,
-        status: "todo",
-        priority: todo.priority,
-        assignee: getAssignee(todo) || MEMBERS[0].id,
-        dueDate: getDueDate(todo),
-        category: todo.category,
-        position: index,
-        labels: [sourceLabel, cat.label],
-        sourceMeetingTitle: meetingIdentifier,
-      };
-    });
+      const createdTasks: Task[] = newTodos.map((todo, index) => {
+        const cat = getCat(todo.category);
+        const sourceLabel = todo.source === "MEETING_AI" ? "회의록 AI" : "직접 추가";
+        return {
+          id: `AI-${now}-${String(index + 1).padStart(2, "0")}`,
+          title: todo.title,
+          status: "todo",
+          priority: todo.priority,
+          assignee: getAssignee(todo) || MEMBERS[0].id,
+          dueDate: getDueDate(todo),
+          category: todo.category,
+          position: index,
+          labels: [sourceLabel, cat.label],
+          sourceMeetingTitle: meetingIdentifier,
+        };
+      });
 
-    if (createdTasks.length > 0) {
-      saveStoredTasks([...createdTasks, ...existingTasks]);
-      addActivity(`회의록 AI로 '${meetingIdentifier}'의 업무 ${createdTasks.length}건을 업무보드에 등록했습니다.`, "김민준", "meeting-registered");
+      if (createdTasks.length > 0) {
+        saveStoredTasks([...createdTasks, ...existingTasks]);
+        addActivity(`회의록 AI로 '${meetingIdentifier}'의 업무 ${createdTasks.length}건을 업무보드에 등록했습니다.`, "김민준", "meeting-registered");
+      }
+      setUploadFlow("done");
+    } catch {
+      setRegisterMessage("서버에 업무 등록을 실패했습니다. 다시 시도해주세요.");
+      setTimeout(() => setRegisterMessage(null), 2500);
+    } finally {
+      setIsRegisteringTasks(false);
     }
-    setUploadFlow("done");
   };
 
   // 회의 상세 화면(meeting.todos, 문자열 배열)에서 "업무로 등록" 클릭 시 실행.
   const handleRegisterMeetingTodos = async () => {
+    if (isRegisteringTasks) return;
     if (!meeting || !meeting.todos || meeting.todos.length === 0) return;
     const existingTasks = getStoredTasks();
     const existingKeys = new Set(
@@ -683,8 +972,10 @@ export function MeetingsView() {
       return;
     }
 
+    setIsRegisteringTasks(true);
+    setRegisterMessage("업무보드에 등록 중입니다...");
     try {
-      await registerMeetingTasks("demo-project", meetingIdentifier, newTodos.map(todo => ({
+      await registerMeetingTasks(projectId, meetingIdentifier, newTodos.map(todo => ({
         title: todo.title,
         description: "",
         assignee_candidate: todo.assigneeName,
@@ -694,30 +985,101 @@ export function MeetingsView() {
         category: "ETC",
         needs_leader_review: false,
       })));
+
+      const now = Date.now();
+      const createdTasks: Task[] = newTodos.map((todo, index) => ({
+        id: `AI-${now}-${String(index + 1).padStart(2, "0")}`,
+        title: todo.title,
+        status: "todo",
+        priority: "medium",
+        assignee: todo.assigneeId,
+        dueDate: todo.dueDate,
+        category: "other",
+        position: index,
+        labels: ["회의록 AI"],
+        sourceMeetingTitle: meetingIdentifier,
+      }));
+      saveStoredTasks([...createdTasks, ...existingTasks]);
+      addActivity(`회의록 AI로 '${meetingIdentifier}'의 업무 ${createdTasks.length}건을 업무보드에 등록했습니다.`, "김민준", "meeting-registered");
+      setRegisterMessage("업무 보드에 등록되었습니다.");
+      setTimeout(() => setRegisterMessage(null), 2500);
     } catch {
       setRegisterMessage("서버에 업무 등록을 실패했습니다. 다시 시도해주세요.");
       setTimeout(() => setRegisterMessage(null), 2500);
-      return;
+    } finally {
+      setIsRegisteringTasks(false);
     }
-
-    const now = Date.now();
-    const createdTasks: Task[] = newTodos.map((todo, index) => ({
-      id: `AI-${now}-${String(index + 1).padStart(2, "0")}`,
-      title: todo.title,
-      status: "todo",
-      priority: "medium",
-      assignee: todo.assigneeId,
-      dueDate: todo.dueDate,
-      category: "other",
-      position: index,
-      labels: ["회의록 AI"],
-      sourceMeetingTitle: meetingIdentifier,
-    }));
-    saveStoredTasks([...createdTasks, ...existingTasks]);
-    addActivity(`회의록 AI로 '${meetingIdentifier}'의 업무 ${createdTasks.length}건을 업무보드에 등록했습니다.`, "김민준", "meeting-registered");
-    setRegisterMessage("업무 보드에 등록되었습니다.");
-    setTimeout(() => setRegisterMessage(null), 2500);
   };
+
+  const renderRegisteringOverlay = () => isRegisteringTasks ? (
+    <div className="fixed inset-0 z-[70] bg-white/65 backdrop-blur-sm flex items-center justify-center px-4">
+      <div className="w-full max-w-sm rounded-2xl border border-blue-100 bg-white shadow-2xl px-6 py-7 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center mx-auto mb-4">
+          <Loader2 className="w-7 h-7 text-blue-600 animate-spin" />
+        </div>
+        <div className="text-base font-bold text-foreground">업무보드에 등록 중입니다</div>
+        <div className="text-xs text-muted-foreground mt-2 leading-relaxed">
+          선택한 To-Do를 업무보드에 저장하고 담당자 정보를 반영하는 중입니다.
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  const renderDeletingOverlay = () => deletingMeetingId ? (
+    <div className="fixed inset-0 z-[70] bg-white/65 backdrop-blur-sm flex items-center justify-center px-4">
+      <div className="w-full max-w-sm rounded-2xl border border-red-100 bg-white shadow-2xl px-6 py-7 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-red-50 border border-red-100 flex items-center justify-center mx-auto mb-4">
+          <Loader2 className="w-7 h-7 text-red-600 animate-spin" />
+        </div>
+        <div className="text-base font-bold text-foreground">회의록을 삭제하는 중입니다</div>
+        <div className="text-xs text-muted-foreground mt-2 leading-relaxed">
+          회의록 데이터와 선택한 연동 정보를 정리하고 있습니다.
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  const renderDeleteConfirmModal = () => deleteTarget ? (
+    <div className="fixed inset-0 z-[65] flex items-center justify-center px-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setDeleteTarget(null)} />
+      <div className="relative w-full max-w-md rounded-2xl bg-white shadow-2xl border border-border p-6">
+        <div className="w-12 h-12 rounded-2xl bg-red-50 border border-red-100 flex items-center justify-center mb-4">
+          <Trash2 className="w-6 h-6 text-red-600" />
+        </div>
+        <h2 className="text-lg font-bold text-foreground">회의록 삭제</h2>
+        <p className="text-sm text-muted-foreground leading-relaxed mt-2">
+          '{deleteTarget.title}' 회의록을 삭제합니다. 업무보드에 등록된 To-Do는 선택에 따라 유지하거나 함께 삭제할 수 있습니다.
+        </p>
+        <div className="mt-5 rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-xs text-slate-600 leading-relaxed">
+          <strong className="text-slate-900">회의록만 삭제</strong>를 선택하면 업무 목록은 그대로 남고, 원본 회의록 연결만 해제됩니다.
+        </div>
+        <div className="mt-6 flex flex-col sm:flex-row gap-2 justify-end">
+          <button
+            type="button"
+            onClick={() => setDeleteTarget(null)}
+            className="px-4 py-2 text-sm font-medium border border-border rounded-xl hover:bg-muted transition-colors"
+          >
+            취소
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleDeleteMeeting(deleteTarget, false)}
+            className="px-4 py-2 text-sm font-semibold border border-blue-200 text-blue-700 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors"
+          >
+            회의록만 삭제
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleDeleteMeeting(deleteTarget, true)}
+            className="px-4 py-2 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity"
+            style={{ background: "linear-gradient(135deg,#EF4444,#DC2626)" }}
+          >
+            회의록 + To-Do 삭제
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   // ── Analyzing screen ────────────────────────────────────────────────────────
   const renderAnalyzing = () => (
@@ -778,7 +1140,12 @@ export function MeetingsView() {
               {analysisError ?? "업로드한 회의록의 요약, 결정사항, To-Do, 위험요소를 정리하고 있습니다."}
             </p>
             <div className="flex gap-3 justify-center">
-              <button onClick={() => setUploadFlow("modal")} className="px-5 py-2.5 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity" style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
+              {analysisError && activeMeetingId && (
+                <button onClick={handleRetryAnalysis} className="px-5 py-2.5 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity" style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
+                  다시 분석
+                </button>
+              )}
+              <button onClick={() => setUploadFlow("modal")} className="px-5 py-2.5 text-sm font-medium border border-border rounded-xl hover:bg-muted transition-colors">
                 다시 업로드
               </button>
               <button onClick={() => setUploadFlow(null)} className="px-5 py-2.5 text-sm font-medium border border-border rounded-xl hover:bg-muted transition-colors">
@@ -1044,6 +1411,7 @@ export function MeetingsView() {
     const approvedCount = selTodos.length;
     return (
       <div className="h-full flex flex-col overflow-hidden" style={{ fontFamily:"'Inter','Noto Sans KR',sans-serif" }}>
+        {renderRegisteringOverlay()}
         {/* Header */}
         <div className="shrink-0 px-6 pt-5 pb-4 border-b border-border">
           <div className="flex items-start justify-between mb-3">
@@ -1068,10 +1436,11 @@ export function MeetingsView() {
                   </button>
                 ) : (
                   <button onClick={registerSelectedTodos}
-                    disabled={approvedCount === 0}
+                    disabled={approvedCount === 0 || isRegisteringTasks}
                     className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50"
                     style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
-                    <CheckCircle2 className="w-4 h-4" />{approvedCount}개 업무 보드에 등록
+                    {isRegisteringTasks ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                    {isRegisteringTasks ? "업무보드 등록 중" : `${approvedCount}개 업무 보드에 등록`}
                   </button>
                 )}
               </div>
@@ -1272,6 +1641,9 @@ export function MeetingsView() {
 
   return (
     <div className="flex h-full overflow-hidden relative" style={{ fontFamily:"'Inter','Noto Sans KR',sans-serif" }}>
+      {renderRegisteringOverlay()}
+      {renderDeletingOverlay()}
+      {renderDeleteConfirmModal()}
       {/* ── Upload modal ── */}
       {uploadFlow === "modal" && (
         <>
@@ -1292,7 +1664,7 @@ export function MeetingsView() {
                 {modalStep === 0 && (
                   <div>
                     <div className="text-sm font-semibold text-foreground mb-3">업로드 유형 선택</div>
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       {UPLOAD_TYPES.map(t => {
                         const Icon = t.icon; const sel = uploadType === t.id;
                         return (
@@ -1304,7 +1676,7 @@ export function MeetingsView() {
                             setUploadFileSize("");
                             setAnalysisError(null);
                           }}
-                            className={`flex flex-col items-center gap-2.5 p-5 rounded-xl border-2 transition-all hover:shadow-sm ${sel ? "shadow-sm" : "border-border hover:border-slate-300"}`}
+                            className={`min-h-[180px] flex flex-col items-center justify-center gap-3 p-6 rounded-xl border-2 transition-all hover:shadow-sm ${sel ? "shadow-sm" : "border-border hover:border-slate-300"}`}
                             style={sel ? { borderColor:t.color, background:t.bg } : {}}>
                             <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ background:sel ? t.bg : "#F4F6FA" }}>
                               <Icon className="w-6 h-6" style={{ color:t.color }} />
@@ -1393,19 +1765,31 @@ export function MeetingsView() {
                       {/* Participants */}
                       <div>
                         <label className="text-xs font-semibold text-foreground block mb-2">참석자</label>
-                        <div className="flex flex-wrap gap-2">
-                          {MEMBERS.map(m => {
-                            const sel = partIds.includes(m.id);
-                            return (
-                              <button key={m.id} onClick={() => setPartIds(p => sel ? p.filter(x=>x!==m.id) : [...p,m.id])}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${sel ? "border-blue-400 bg-blue-50 text-blue-700" : "border-border bg-card text-muted-foreground hover:border-slate-300"}`}>
-                                <div className="w-4 h-4 rounded-full flex items-center justify-center text-white text-[8px] font-bold" style={{ background:m.color }}>{m.initials}</div>
-                                {m.name}
-                                {sel && <Check className="w-3 h-3" />}
-                              </button>
-                            );
-                          })}
-                        </div>
+                        {projectMembers.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">프로젝트 멤버 정보를 불러오는 중입니다.</p>
+                        ) : (
+                          <div className="flex flex-wrap gap-2">
+                            {projectMembers.map(m => {
+                              const id = String(m.userId);
+                              const sel = partIds.includes(id);
+                              const color = PARTICIPANT_COLORS[m.userId % PARTICIPANT_COLORS.length];
+                              return (
+                                <button key={id} onClick={() => setPartIds(p => sel ? p.filter(x=>x!==id) : [...p,id])}
+                                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${sel ? "border-blue-400 bg-blue-50 text-blue-700" : "border-border bg-card text-muted-foreground hover:border-slate-300"}`}>
+                                  <div className="w-4 h-4 rounded-full flex items-center justify-center text-white text-[8px] font-bold" style={{ background:color }}>{m.name.slice(0,1)}</div>
+                                  {m.name}
+                                  {sel && <Check className="w-3 h-3" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {analysisError && (
+                          <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                            <span>{analysisError}</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Auto analyze toggle */}
@@ -1463,13 +1847,14 @@ export function MeetingsView() {
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {meetingListError && <div className="text-[11px] text-amber-600 px-1">{meetingListError}</div>}
+          {deleteMessage && <div className="text-[11px] text-emerald-600 px-1">{deleteMessage}</div>}
           {meetings.length === 0 ? (
             <div className="h-full min-h-[360px] flex flex-col items-center justify-center text-center px-4 text-muted-foreground">
               <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-4">
                 <FileAudio className="w-7 h-7 text-slate-400" />
               </div>
               <div className="text-sm font-semibold text-foreground mb-1">아직 업로드한 회의록이 없습니다</div>
-              <div className="text-xs leading-relaxed mb-4">문서, 음성, 영상 파일을 업로드하면 AI 분석 결과가 이곳에 자동으로 쌓입니다.</div>
+              <div className="text-xs leading-relaxed mb-4">문서 또는 음성 파일을 업로드하면 AI 분석 결과가 이곳에 자동으로 쌓입니다.</div>
               <button onClick={() => { setUploadFlow("modal"); setModalStep(0); setUploadType(null); setUploadFileName(""); setUploadFileSize(""); setSelectedFile(null); setAnalysisError(null); }}
                 className="px-4 py-2 rounded-xl text-xs font-semibold text-white hover:opacity-90 transition-opacity"
                 style={{ background:"linear-gradient(135deg,#7048E8,#4F6EF7)" }}>
@@ -1477,17 +1862,40 @@ export function MeetingsView() {
               </button>
             </div>
           ) : meetings.map(m => (
-            <button key={m.id} onClick={() => setSelected(m.id)}
-              className={`w-full text-left p-3 rounded-lg border transition-all ${selected === m.id ? "border-blue-300 bg-blue-50" : "border-border bg-card hover:bg-muted"}`}>
+            <div key={m.id} onClick={() => setSelected(m.id)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={event => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  setSelected(m.id);
+                }
+              }}
+              className={`w-full text-left p-3 rounded-lg border transition-all cursor-pointer ${selected === m.id ? "border-blue-300 bg-blue-50" : "border-border bg-card hover:bg-muted"}`}>
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[10px] font-mono text-muted-foreground">{m.date}</span>
-                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${m.status === "processed" ? "bg-emerald-100 text-emerald-600" : m.status === "processing" ? "bg-blue-100 text-blue-600" : "bg-slate-100 text-slate-500"}`}>
-                  {m.status === "processed" ? "AI 분석 완료" : m.status === "processing" ? "분석 중" : "예정"}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${m.status === "processed" ? "bg-emerald-100 text-emerald-600" : m.status === "processing" ? "bg-blue-100 text-blue-600" : m.status === "failed" ? "bg-red-100 text-red-600" : "bg-slate-100 text-slate-500"}`}>
+                    {m.status === "processed" ? "AI 분석 완료" : m.status === "processing" ? "분석 중" : m.status === "failed" ? "분석 실패" : "예정"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={event => {
+                      event.stopPropagation();
+                      setDeleteTarget(m);
+                    }}
+                    disabled={Boolean(deletingMeetingId)}
+                    className="p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    title="회의록 삭제"
+                    aria-label={`${m.title} 회의록 삭제`}
+                  >
+                    {deletingMeetingId === m.id ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-600" /> : <Trash2 className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
               </div>
               <div className="text-sm font-medium text-foreground leading-snug">{m.title}</div>
               {m.duration !== "—" && <div className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1"><Clock className="w-3 h-3" />{m.duration}</div>}
-            </button>
+            </div>
           ))}
         </div>
       </div>
@@ -1548,9 +1956,10 @@ export function MeetingsView() {
                   ) : (
                     <button
                       onClick={handleRegisterMeetingTodos}
-                      disabled={meeting.todos.length === 0}
-                      className="text-xs font-medium text-blue-600 hover:text-blue-700 disabled:text-slate-400 disabled:cursor-not-allowed">
-                      업무로 등록
+                      disabled={meeting.todos.length === 0 || isRegisteringTasks}
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700 disabled:text-slate-400 disabled:cursor-not-allowed">
+                      {isRegisteringTasks && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      {isRegisteringTasks ? "등록 중" : "업무로 등록"}
                     </button>
                   )}
                 </div>
@@ -1584,7 +1993,7 @@ export function MeetingsView() {
           <div className="flex flex-col items-center justify-center h-full text-center gap-3 text-muted-foreground">
             <Clock className="w-12 h-12 text-muted" />
             <div className="text-sm font-medium">
-              {meeting.status === "pending" ? "예정된 회의입니다" : "AI 분석이 준비되지 않았습니다"}
+              {meeting.status === "pending" ? "예정된 회의입니다" : meeting.status === "processing" ? "AI 분석 중입니다. 잠시 후 다시 확인해주세요" : meeting.status === "failed" ? "AI 분석에 실패했습니다. 다시 업로드하거나 재분석을 시도해주세요" : "AI 분석 결과를 불러오는 중입니다"}
             </div>
           </div>
         ) : (

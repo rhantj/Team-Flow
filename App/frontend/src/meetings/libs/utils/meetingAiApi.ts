@@ -7,18 +7,29 @@ interface AnalyzeMeetingParams {
   title: string;
   meetingDate: string;
   meetingKind: string;
-  sourceType: "document" | "audio" | "video";
+  sourceType: "document" | "audio";
   participants: string[];
+  attendeeIds?: number[];
 }
 
-interface MeetingAnalysisResponse {
+export type MeetingAnalysisStatus = "PROCESSING" | "COMPLETED" | "FAILED";
+
+export interface AttendeeSummary {
+  id: number;
+  name: string | null;
+  role: string | null;
+}
+
+export interface MeetingAnalysisResponse {
   meetingId: string;
   projectId: string;
-  status: string;
+  status: MeetingAnalysisStatus;
   sourceType: string;
   fileName: string | null;
-  analysisSource: "FASTAPI" | "SPRING_FALLBACK";
-  analysis: MeetingAiResult;
+  analysisSource: "FASTAPI" | "SPRING_FALLBACK" | null;
+  analysis: MeetingAiResult | null;
+  errorMessage: string | null;
+  attendees: AttendeeSummary[];
 }
 
 export async function analyzeMeeting(params: AnalyzeMeetingParams): Promise<MeetingAnalysisResponse> {
@@ -29,10 +40,45 @@ export async function analyzeMeeting(params: AnalyzeMeetingParams): Promise<Meet
   formData.append("meetingKind", params.meetingKind);
   formData.append("sourceType", params.sourceType);
   params.participants.forEach(participant => formData.append("participants", participant));
+  (params.attendeeIds ?? []).forEach(attendeeId => formData.append("attendeeIds", String(attendeeId)));
 
   return apiFetch<MeetingAnalysisResponse>(`/projects/${params.projectId}/meetings/analyze`, {
     method: "POST",
     body: formData,
+  });
+}
+
+export interface MeetingAttendanceSummaryDto {
+  userId: number;
+  name: string | null;
+  meetingsAttended: number;
+  totalMeetings: number;
+  attendanceRate: number;
+}
+
+export async function fetchAttendanceSummary(projectId: string): Promise<MeetingAttendanceSummaryDto[]> {
+  return apiFetch<MeetingAttendanceSummaryDto[]>(`/projects/${projectId}/meetings/attendance-summary`);
+}
+
+export async function fetchMeeting(projectId: string, meetingId: string): Promise<MeetingAnalysisResponse> {
+  return apiFetch<MeetingAnalysisResponse>(`/projects/${projectId}/meetings/${meetingId}`);
+}
+
+export interface MeetingDeleteResponse {
+  meetingId: string;
+  status: "DELETED";
+}
+
+export async function deleteMeeting(projectId: string, meetingId: string, deleteLinkedTasks = false): Promise<MeetingDeleteResponse> {
+  const query = new URLSearchParams({ deleteLinkedTasks: String(deleteLinkedTasks) });
+  return apiFetch<MeetingDeleteResponse>(`/projects/${projectId}/meetings/${meetingId}?${query.toString()}`, {
+    method: "DELETE",
+  });
+}
+
+export async function retryMeetingAnalysis(projectId: string, meetingId: string): Promise<MeetingAnalysisResponse> {
+  return apiFetch<MeetingAnalysisResponse>(`/projects/${projectId}/meetings/${meetingId}/retry`, {
+    method: "POST",
   });
 }
 

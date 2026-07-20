@@ -1,11 +1,15 @@
 import { useNavigate } from "react-router";
 import { BackBtn } from "../../../global/component/BackBtn";
+import { DetailStatCard } from "../../../global/component/DetailStatCard";
 import { CircleProgress } from "../../../global/component/CircleProgress";
 import { AIBox } from "../../../ai/components/AIBox";
 import { useStoredTasks } from "../../../global/hooks/useStoredTasks";
-import { PROGRESS_HISTORY, PLANNED_VS_ACTUAL, PROGRESS_BY_TYPE } from "../../libs/mock/workload";
+import { PROGRESS_HISTORY, PLANNED_VS_ACTUAL, PROGRESS_BY_TYPE, WORKLOAD_DATA } from "../../libs/mock/workload";
 import { MILESTONES } from "../../libs/mock/milestones";
+import { MEMBERS } from "../../../global/lib/mock/members";
+import { DELIVERABLE_READY } from "../../../deliverables/libs/mock/deliverables";
 import { getDoneCount, getProgressPercent } from "../../../board/libs/utils/taskService";
+import { NAV_ITEMS } from "../../../global/lib/constants/nav";
 import {
   Sparkles,
   CheckCircle2,
@@ -18,6 +22,7 @@ export function ProgressPage() {
   const TASKS = useStoredTasks();
   const navigate = useNavigate();
   const onBack = () => navigate("/dashboard");
+  const deliverablesActive = NAV_ITEMS.find((item) => item.id === "deliverables")?.activate !== false;
   return (
     <div className="h-full overflow-y-auto p-6 space-y-4" style={{ fontFamily: "'Inter','Noto Sans KR',sans-serif" }}>
       {/* header */}
@@ -173,7 +178,9 @@ export function ProgressPage() {
         <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
           <div className="px-5 py-3 border-b border-border flex items-center justify-between">
             <div className="text-sm font-semibold text-foreground">산출물 준비율</div>
-            <button className="text-[11px] font-medium text-blue-600">산출물 생성</button>
+            {deliverablesActive && (
+              <button className="text-[11px] font-medium text-blue-600" onClick={() => navigate("/deliverables")}>산출물 생성</button>
+            )}
           </div>
           <div className="divide-y divide-border">
             {DELIVERABLE_READY.map(d => {

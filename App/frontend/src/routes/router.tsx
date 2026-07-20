@@ -1,5 +1,5 @@
 import { createBrowserRouter, Navigate } from "react-router";
-import { RequireAuth } from "../global/hooks/useAuthGuard";
+import { RequireAuth, RequireRole } from "../global/hooks/useAuthGuard";
 import { AppShell } from "../global/component/layout/AppShell";
 import { LoginScreen } from "../auth/screen/LoginScreen";
 import { SignupScreen } from "../auth/screen/SignupScreen";
@@ -17,7 +17,6 @@ import { ActivityPage } from "../dashboard/screen/detail/ActivityPage";
 import { BoardView } from "../board/screen/BoardView";
 import { MeetingsView } from "../meetings/screen/MeetingsView";
 import { DeliverablesView } from "../deliverables/screen/DeliverablesView";
-import { GithubView } from "../github/screen/GithubView";
 import { ContributorsView } from "../contributors/screen/ContributorsView";
 import { MyPageRoute } from "../mypage/screen/MyPageRoute";
 
@@ -45,8 +44,12 @@ export const router = createBrowserRouter([
           { path: "board", element: <BoardView /> },
           { path: "meetings", element: <MeetingsView /> },
           { path: "deliverables", element: <DeliverablesView /> },
-          { path: "github", element: <GithubView /> },
-          { path: "contributors", element: <ContributorsView /> },
+          {
+            element: <RequireRole allow={["심사자"]} />,
+            children: [
+              { path: "contributors", element: <ContributorsView /> },
+            ],
+          },
           { path: "mypage", element: <MyPageRoute /> },
         ],
       },

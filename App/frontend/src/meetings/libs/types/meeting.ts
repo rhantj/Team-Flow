@@ -1,7 +1,7 @@
 import type { Priority } from "../../../board/libs/types/task";
 
 export interface Meeting {
-  id: string; title: string; date: string; duration: string; status: "processed" | "processing" | "pending";
+  id: string; title: string; date: string; duration: string; status: "processed" | "processing" | "pending" | "failed";
   summary?: string; decisions?: string[]; todos?: string[]; risks?: string[];
   analysisSource?: "fastapi" | "spring-fallback";
   fileName?: string;
@@ -10,7 +10,7 @@ export interface Meeting {
 }
 
 export type UploadFlow = null | "modal" | "analyzing" | "results" | "review" | "done";
-export type UploadType = null | "document" | "audio" | "video";
+export type UploadType = null | "document" | "audio";
 
 export interface GenTodo {
   id: string; title: string; desc: string; category: string;

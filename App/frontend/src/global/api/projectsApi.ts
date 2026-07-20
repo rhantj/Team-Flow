@@ -27,6 +27,17 @@ export function createProject(request: CreateProjectRequest) {
   });
 }
 
+export interface MemberResponse {
+  userId: number;
+  name: string;
+  email: string;
+  role: ProjectRoleKo;
+}
+
+export function getProjectMembers(projectId: number) {
+  return apiFetch<MemberResponse[]>(`/projects/${projectId}/members`);
+}
+
 export interface InvitationResponse {
   projectId: number;
   email: string;

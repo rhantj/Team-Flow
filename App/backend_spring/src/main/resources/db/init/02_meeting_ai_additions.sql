@@ -52,7 +52,7 @@ COMMENT ON COLUMN comments.target_id IS 'target_type에 따른 대상 id (폴리
 -- meeting_action_items: 회의록 AI가 생성한 To-Do 후보 (팀장 승인 전/후 상태 추적)
 CREATE TABLE meeting_action_items (
     id                       BIGSERIAL PRIMARY KEY,
-    meeting_id               BIGINT NOT NULL,
+    meeting_id               BIGINT NULL,
     title                    VARCHAR(200) NOT NULL,
     description              TEXT,
     category                 VARCHAR(50),
@@ -64,7 +64,7 @@ CREATE TABLE meeting_action_items (
     approved                 BOOLEAN NOT NULL DEFAULT FALSE,
     created_task_id          BIGINT NULL,
     created_at               TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_action_items_meeting     FOREIGN KEY (meeting_id)              REFERENCES meetings(id) ON DELETE CASCADE,
+    CONSTRAINT fk_action_items_meeting     FOREIGN KEY (meeting_id)              REFERENCES meetings(id) ON DELETE SET NULL,
     CONSTRAINT fk_action_items_recommended FOREIGN KEY (recommended_assignee_id) REFERENCES users(id)    ON DELETE SET NULL,
     CONSTRAINT fk_action_items_assignee    FOREIGN KEY (final_assignee_id)       REFERENCES users(id)    ON DELETE SET NULL,
     CONSTRAINT fk_action_items_task        FOREIGN KEY (created_task_id)         REFERENCES tasks(id)    ON DELETE SET NULL

@@ -1,3 +1,4 @@
+import { useState, type ChangeEvent } from "react";
 import { useNavigate } from "react-router";
 import { AuthBrandPanel } from "../components/AuthBrandPanel";
 import { useAuth } from "../../global/hooks/useAuth";
@@ -5,13 +6,34 @@ import { useAuth } from "../../global/hooks/useAuth";
 export function SignupScreen() {
   const navigate = useNavigate();
   const { loginWithGoogle } = useAuth();
+  const [judgeSignup, setJudgeSignup] = useState(false);
+  const [affiliation, setAffiliation] = useState("");
+  const [professorCode, setProfessorCode] = useState("");
+  const [certificateFileName, setCertificateFileName] = useState("");
+  const [signupError, setSignupError] = useState<string | null>(null);
+
+  const handleCertificateChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setCertificateFileName(event.target.files?.[0]?.name ?? "");
+  };
+
+  const handleSignup = () => {
+    setSignupError(null);
+
+    if (judgeSignup && (!affiliation.trim() || !professorCode.trim())) {
+      setSignupError("소속 학교/기관과 교수 인증번호를 입력해주세요.");
+      return;
+    }
+
+    // 심사자 인증 심사(소속/교수 인증번호/서류) 백엔드가 아직 없어, 우선 일반 Google 가입/로그인으로 연결한다.
+    loginWithGoogle();
+  };
 
   return (
     <div className="flex min-h-screen flex-col lg:flex-row" style={{ fontFamily: "'Inter', 'Noto Sans KR', sans-serif" }}>
       <AuthBrandPanel />
 
       <div className="flex-1 flex items-center justify-center bg-background px-8">
-        <div className="w-full max-w-sm">
+        <div className="w-full max-w-md">
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-foreground mb-1">TeamFlow AI 시작하기</h1>
             <p className="text-sm text-muted-foreground">
@@ -19,13 +41,72 @@ export function SignupScreen() {
             </p>
           </div>
 
-          <button
-            onClick={loginWithGoogle}
-            className="w-full py-3 rounded-xl border border-border bg-card text-sm font-semibold text-foreground transition-all hover:bg-muted flex items-center justify-center gap-2.5"
-          >
-            <GoogleIcon />
-            Google로 시작하기
-          </button>
+          <div className="space-y-4">
+            <button
+              onClick={handleSignup}
+              className="w-full py-3 rounded-xl border border-border bg-card text-sm font-semibold text-foreground transition-all hover:bg-muted flex items-center justify-center gap-2.5"
+            >
+              <GoogleIcon />
+              {judgeSignup ? "심사자 가입 신청하기" : "Google로 시작하기"}
+            </button>
+
+            <label className={`block rounded-2xl border p-4 transition-all cursor-pointer ${judgeSignup ? "border-blue-400 bg-blue-50" : "border-border bg-card hover:bg-muted/50"}`}>
+              <div className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={judgeSignup}
+                  onChange={event => {
+                    setJudgeSignup(event.target.checked);
+                    setSignupError(null);
+                  }}
+                  className="mt-1 h-4 w-4 rounded border-border accent-blue-600"
+                />
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-foreground">교수/심사자로 가입 신청</div>
+                  <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    입력한 인증 정보는 Google 가입 후 관리자가 별도로 확인합니다. (자동 승인 아님)
+                  </div>
+                </div>
+              </div>
+            </label>
+
+            {judgeSignup && (
+              <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4 space-y-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">소속 학교/기관</label>
+                  <input
+                    value={affiliation}
+                    onChange={event => setAffiliation(event.target.value)}
+                    placeholder="예: 한국대학교 컴퓨터공학과"
+                    className="w-full rounded-xl border border-blue-100 bg-white px-3 py-2 text-sm outline-none transition-colors focus:border-blue-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">교수 인증번호</label>
+                  <input
+                    value={professorCode}
+                    onChange={event => setProfessorCode(event.target.value)}
+                    placeholder="교수 일련번호 또는 인증 코드"
+                    className="w-full rounded-xl border border-blue-100 bg-white px-3 py-2 text-sm outline-none transition-colors focus:border-blue-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">인증서류 첨부</label>
+                  <label className="flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-xl border border-dashed border-blue-200 bg-white px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-blue-400">
+                    <span className="truncate">{certificateFileName || "재직증명서 또는 심사자 인증 서류"}</span>
+                    <span className="shrink-0 text-xs font-semibold text-blue-600">파일 선택</span>
+                    <input type="file" className="hidden" onChange={handleCertificateChange} />
+                  </label>
+                </div>
+              </div>
+            )}
+
+            {signupError && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-600">
+                {signupError}
+              </div>
+            )}
+          </div>
 
           <p className="text-center text-[11px] text-muted-foreground mt-4 leading-relaxed">
             계속 진행하면 이용약관 및 개인정보처리방침에 동의하는 것으로 간주됩니다.

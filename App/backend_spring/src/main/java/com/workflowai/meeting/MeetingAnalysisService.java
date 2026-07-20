@@ -3,7 +3,10 @@ package com.workflowai.meeting;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.Notification;
 import com.workflowai.notification.NotificationRepository;
+import com.workflowai.project.ProjectMember;
+import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.rag.RagIngestService;
+import com.workflowai.security.CurrentUser;
 import com.workflowai.task.Task;
 import com.workflowai.task.TaskRepository;
 import com.workflowai.user.User;
@@ -14,19 +17,25 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class MeetingAnalysisService {
-    private final FastApiMeetingClient fastApiMeetingClient;
-    private final FallbackMeetingAnalyzer fallbackMeetingAnalyzer;
+    private final MeetingAnalysisRunner meetingAnalysisRunner;
     private final DemoDataService demoDataService;
     private final MeetingRepository meetingRepository;
     private final MeetingAttendeeRepository meetingAttendeeRepository;
@@ -35,12 +44,13 @@ public class MeetingAnalysisService {
     private final TaskRepository taskRepository;
     private final NotificationRepository notificationRepository;
     private final UserRepository userRepository;
+    private final ProjectMemberRepository projectMemberRepository;
     private final RagIngestService ragIngestService;
+    private final MeetingAnalysisPersistence meetingAnalysisPersistence;
     private final String uploadsDir;
 
     public MeetingAnalysisService(
-        FastApiMeetingClient fastApiMeetingClient,
-        FallbackMeetingAnalyzer fallbackMeetingAnalyzer,
+        MeetingAnalysisRunner meetingAnalysisRunner,
         DemoDataService demoDataService,
         MeetingRepository meetingRepository,
         MeetingAttendeeRepository meetingAttendeeRepository,
@@ -49,11 +59,12 @@ public class MeetingAnalysisService {
         TaskRepository taskRepository,
         NotificationRepository notificationRepository,
         UserRepository userRepository,
+        ProjectMemberRepository projectMemberRepository,
         RagIngestService ragIngestService,
+        MeetingAnalysisPersistence meetingAnalysisPersistence,
         @Value("${workflow.uploads.dir}") String uploadsDir
     ) {
-        this.fastApiMeetingClient = fastApiMeetingClient;
-        this.fallbackMeetingAnalyzer = fallbackMeetingAnalyzer;
+        this.meetingAnalysisRunner = meetingAnalysisRunner;
         this.demoDataService = demoDataService;
         this.meetingRepository = meetingRepository;
         this.meetingAttendeeRepository = meetingAttendeeRepository;
@@ -62,7 +73,9 @@ public class MeetingAnalysisService {
         this.taskRepository = taskRepository;
         this.notificationRepository = notificationRepository;
         this.userRepository = userRepository;
+        this.projectMemberRepository = projectMemberRepository;
         this.ragIngestService = ragIngestService;
+        this.meetingAnalysisPersistence = meetingAnalysisPersistence;
         this.uploadsDir = uploadsDir;
     }
 
@@ -74,9 +87,17 @@ public class MeetingAnalysisService {
         String meetingDate,
         String meetingKind,
         String sourceType,
-        List<String> participants
+        List<String> participants,
+        List<Long> attendeeIds
     ) {
-        Long projectDbId = demoDataService.resolveProjectId(projectId);
+        Long projectDbId = requireProjectMember(projectId);
+        List<Long> safeAttendeeIds = attendeeIds == null
+            ? List.of()
+            : attendeeIds.stream().filter(id -> id != null).distinct().toList();
+        if (!safeAttendeeIds.isEmpty()) {
+            validateAttendeeIds(projectDbId, safeAttendeeIds);
+        }
+
         String fileName = file == null ? null : file.getOriginalFilename();
         String text = extractText(file);
         String resolvedTitle = defaultString(title, "회의록 AI 분석 회의");
@@ -96,6 +117,19 @@ public class MeetingAnalysisService {
             file == null ? null : file.getSize()
         ));
 
+        meeting.setFilePath(storeUploadedFile(meeting.getId(), file));
+        meetingRepository.save(meeting);
+
+        List<String> resolvedParticipantNames;
+        if (!safeAttendeeIds.isEmpty()) {
+            saveAttendeesByIds(meeting.getId(), safeAttendeeIds);
+            resolvedParticipantNames = userRepository.findAllById(safeAttendeeIds).stream().map(User::getName).toList();
+        } else {
+            List<String> names = safeParticipants(participants);
+            saveAttendees(meeting.getId(), projectDbId, names);
+            resolvedParticipantNames = names;
+        }
+
         AiAnalyzeRequest request = new AiAnalyzeRequest(
             projectId,
             resolvedTitle,
@@ -104,59 +138,40 @@ public class MeetingAnalysisService {
             resolvedSourceType,
             fileName,
             text,
-            participants == null ? List.of() : participants
+            resolvedParticipantNames
         );
-
-        MeetingAnalysisResult result;
-        String analysisSource;
-        try {
-            result = fastApiMeetingClient.analyze(request);
-            if (result == null) {
-                result = fallbackMeetingAnalyzer.analyze(request);
-                analysisSource = "SPRING_FALLBACK";
-            } else {
-                analysisSource = "FASTAPI";
-            }
-        } catch (Exception ignored) {
-            result = fallbackMeetingAnalyzer.analyze(request);
-            analysisSource = "SPRING_FALLBACK";
-        }
-
-        meeting.setFilePath(storeUploadedFile(meeting.getId(), file));
-        meeting.setAnalysisStatus("completed");
-        meetingRepository.save(meeting);
-
-        meetingAnalysisRepository.save(new MeetingAnalysis(
-            meeting.getId(), result.summary(), result.decisions(), result.risks(), result.keywords(), analysisSource
-        ));
-        ragIngestService.ingestBestEffort(projectDbId, "meeting", meeting.getId(), buildMeetingIngestContent(result));
-
-        for (MeetingTodo todo : result.todos()) {
-            MeetingActionItem item = meetingActionItemRepository.save(new MeetingActionItem(
-                meeting.getId(),
-                todo.title(),
-                todo.description(),
-                todo.category(),
-                resolveAssigneeByName(todo.assignee_candidate()),
-                resolveAssignee(todo.assignee_id()),
-                parseDateOrNull(todo.due_date()),
-                todo.priority(),
-                null
-            ));
-            ragIngestService.ingestBestEffort(projectDbId, "action_item", item.getId(), buildActionItemIngestContent(item));
-        }
-
-        saveAttendees(meeting.getId(), safeParticipants(participants));
+        runAnalysisAfterCommit(meeting.getId(), request);
 
         String meetingId = String.valueOf(meeting.getId());
-        return new MeetingAnalysisResponse(meetingId, projectId, "COMPLETED", resolvedSourceType, fileName, analysisSource, result);
+        return new MeetingAnalysisResponse(
+            meetingId, projectId, "PROCESSING", resolvedSourceType, fileName, null, null, null,
+            buildAttendeeSummaries(meeting.getId(), projectDbId)
+        );
     }
 
-    public MeetingAnalysisResponse find(String meetingId) {
-        Long id = parseLongOrNull(meetingId);
-        if (id == null) return null;
-        Meeting meeting = meetingRepository.findById(id).orElse(null);
+    public MeetingAnalysisResponse find(String projectId, String meetingId) {
+        Meeting meeting = requireProjectMeeting(projectId, meetingId);
         if (meeting == null) return null;
+        Long id = parseLongOrNull(meetingId);
+
+        if (!"completed".equals(meeting.getAnalysisStatus())) {
+            String status = "failed".equals(meeting.getAnalysisStatus()) ? "FAILED" : "PROCESSING";
+            String errorMessage = "FAILED".equals(status)
+                ? MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE
+                : null;
+            return new MeetingAnalysisResponse(
+                meetingId,
+                toResponseProjectId(meeting.getProjectId()),
+                status,
+                meeting.getFileType(),
+                meeting.getOriginalFileName(),
+                null,
+                null,
+                errorMessage,
+                buildAttendeeSummaries(id, meeting.getProjectId())
+            );
+        }
+
         MeetingAnalysis analysis = meetingAnalysisRepository.findById(id).orElse(null);
         if (analysis == null) return null;
 
@@ -177,17 +192,106 @@ public class MeetingAnalysisService {
         );
         return new MeetingAnalysisResponse(
             meetingId,
-            String.valueOf(meeting.getProjectId()),
+            toResponseProjectId(meeting.getProjectId()),
             "COMPLETED",
-            meeting.getMeetingType(),
+            meeting.getFileType(),
             meeting.getOriginalFileName(),
             analysis.getAnalysisEngine(),
-            result
+            result,
+            null,
+            buildAttendeeSummaries(id, meeting.getProjectId())
+        );
+    }
+
+    public MeetingStatusResponse findStatus(String projectId, String meetingId) {
+        Meeting meeting = requireProjectMeeting(projectId, meetingId);
+        if (meeting == null) return null;
+        String status = switch (meeting.getAnalysisStatus()) {
+            case "completed" -> "COMPLETED";
+            case "failed" -> "FAILED";
+            default -> "PROCESSING";
+        };
+        String errorMessage = "FAILED".equals(status)
+            ? MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE
+            : null;
+        return new MeetingStatusResponse(meetingId, status, errorMessage);
+    }
+
+    public MeetingAnalysisResponse retry(String projectId, String meetingId) {
+        Meeting meeting = requireProjectMeeting(projectId, meetingId);
+        if (meeting == null) return null;
+        Long id = parseLongOrNull(meetingId);
+        if (!"failed".equals(meeting.getAnalysisStatus())) {
+            throw new IllegalStateException("MEETING_NOT_FAILED");
+        }
+
+        String text = extractTextFromStoredFile(meeting);
+        if (text == null) {
+            String errorMessage = MeetingAnalysisPersistence.REUPLOAD_REQUIRED_ERROR_MESSAGE;
+            meetingAnalysisPersistence.saveAnalysisFailure(id, errorMessage);
+            return new MeetingAnalysisResponse(
+                meetingId,
+                toResponseProjectId(meeting.getProjectId()),
+                "FAILED",
+                meeting.getFileType(),
+                meeting.getOriginalFileName(),
+                null,
+                null,
+                errorMessage,
+                buildAttendeeSummaries(id, meeting.getProjectId())
+            );
+        }
+        if (text.isBlank()) {
+            String errorMessage = MeetingAnalysisPersistence.REUPLOAD_READ_ERROR_MESSAGE;
+            meetingAnalysisPersistence.saveAnalysisFailure(id, errorMessage);
+            return new MeetingAnalysisResponse(
+                meetingId,
+                toResponseProjectId(meeting.getProjectId()),
+                "FAILED",
+                meeting.getFileType(),
+                meeting.getOriginalFileName(),
+                null,
+                null,
+                errorMessage,
+                buildAttendeeSummaries(id, meeting.getProjectId())
+            );
+        }
+        List<String> participantNames = meetingAttendeeRepository.findByMeetingId(id).stream()
+            .map(attendee -> userRepository.findById(attendee.getUserId()).map(User::getName).orElse(null))
+            .filter(name -> name != null)
+            .toList();
+
+        AiAnalyzeRequest request = new AiAnalyzeRequest(
+            toResponseProjectId(meeting.getProjectId()),
+            meeting.getTitle(),
+            meeting.getMeetingDate() == null ? LocalDate.now().toString() : meeting.getMeetingDate().toString(),
+            defaultString(meeting.getMeetingType(), "정기회의"),
+            defaultString(meeting.getFileType(), "document"),
+            meeting.getOriginalFileName(),
+            text,
+            participantNames
+        );
+
+        meeting.setAnalysisStatus("processing");
+        meetingRepository.save(meeting);
+
+        meetingAnalysisRunner.runAnalysis(id, request);
+
+        return new MeetingAnalysisResponse(
+            meetingId,
+            toResponseProjectId(meeting.getProjectId()),
+            "PROCESSING",
+            meeting.getFileType(),
+            meeting.getOriginalFileName(),
+            null,
+            null,
+            null,
+            buildAttendeeSummaries(id, meeting.getProjectId())
         );
     }
 
     public List<MeetingSummary> findByProject(String projectId) {
-        Long projectDbId = demoDataService.resolveProjectId(projectId);
+        Long projectDbId = requireProjectMember(projectId);
         return meetingRepository.findByProjectIdOrderByCreatedAtDesc(projectDbId).stream()
             .map(m -> new MeetingSummary(
                 String.valueOf(m.getId()),
@@ -199,15 +303,76 @@ public class MeetingAnalysisService {
             .toList();
     }
 
+    /** 프로젝트 멤버별 회의 참석 횟수/참석률 요약 — 기여도 화면의 회의 참여 지표로 쓰인다. */
+    public List<MeetingAttendanceSummary> attendanceSummary(String projectId) {
+        Long projectDbId = requireProjectMember(projectId);
+        List<Meeting> meetings = meetingRepository.findByProjectIdOrderByCreatedAtDesc(projectDbId);
+        int totalMeetings = meetings.size();
+
+        List<Long> meetingIds = meetings.stream().map(Meeting::getId).toList();
+        Map<Long, Long> attendedCountByUserId = meetingIds.isEmpty()
+            ? Map.of()
+            : meetingAttendeeRepository.findByMeetingIdIn(meetingIds).stream()
+                .collect(Collectors.groupingBy(MeetingAttendee::getUserId, Collectors.counting()));
+
+        List<ProjectMember> members = projectMemberRepository.findAllByProjectId(projectDbId);
+        Map<Long, User> usersById = userRepository
+            .findAllById(members.stream().map(ProjectMember::getUserId).toList())
+            .stream()
+            .collect(Collectors.toMap(User::getId, user -> user));
+
+        return members.stream()
+            .map(member -> {
+                User user = usersById.get(member.getUserId());
+                int attended = attendedCountByUserId.getOrDefault(member.getUserId(), 0L).intValue();
+                int rate = totalMeetings == 0 ? 0 : Math.round(attended * 100f / totalMeetings);
+                return new MeetingAttendanceSummary(
+                    member.getUserId(),
+                    user != null ? user.getName() : null,
+                    attended,
+                    totalMeetings,
+                    rate
+                );
+            })
+            .toList();
+    }
+
     @Transactional
-    public TaskRegisterResponse registerTasks(String meetingId, TaskRegisterRequest request) {
+    public MeetingDeleteResponse delete(String projectId, String meetingId, boolean deleteLinkedTasks) {
+        Meeting meeting = requireProjectMeeting(projectId, meetingId);
+        if (meeting == null) return null;
+
+        Long meetingDbId = parseLongOrNull(meetingId);
+        if (meetingDbId == null) return null;
+        String filePath = meeting.getFilePath();
+        meetingAttendeeRepository.deleteByMeetingId(meetingDbId);
+        if (meetingAnalysisRepository.existsById(meetingDbId)) {
+            meetingAnalysisRepository.deleteById(meetingDbId);
+        }
+        if (deleteLinkedTasks) {
+            meetingActionItemRepository.deleteByMeetingId(meetingDbId);
+            taskRepository.deleteBySourceMeetingId(meetingDbId);
+        } else {
+            meetingActionItemRepository.clearMeetingId(meetingDbId);
+            taskRepository.clearSourceMeetingId(meetingDbId);
+        }
+        meetingRepository.delete(meeting);
+        deleteUploadedFile(filePath);
+
+        return new MeetingDeleteResponse(meetingId, "DELETED");
+    }
+
+    @Transactional
+    public TaskRegisterResponse registerTasks(String projectId, String meetingId, TaskRegisterRequest request) {
+        Meeting meeting = requireProjectMeeting(projectId, meetingId);
+        if (meeting == null) return null;
         Long meetingDbId = parseLongOrNull(meetingId);
         List<MeetingTodo> todos = request == null || request.todos() == null ? List.of() : request.todos();
         Long currentLeaderId = demoDataService.resolveUserId("1");
 
         int registeredCount = 0;
         for (MeetingTodo todo : todos) {
-            if (meetingDbId != null && registerSingleTask(meetingDbId, todo, currentLeaderId)) {
+            if (registerSingleTask(meetingDbId, todo, currentLeaderId)) {
                 registeredCount++;
             }
         }
@@ -279,6 +444,65 @@ public class MeetingAnalysisService {
         return true;
     }
 
+    /** 요청한 사용자가 projectId 프로젝트의 멤버인지 확인하고, 실제 DB projectId를 반환한다. 멤버가 아니면 403. */
+    private Long requireProjectMember(String projectIdParam) {
+        Long projectDbId = demoDataService.resolveProjectId(projectIdParam);
+        Long userId = CurrentUser.id();
+        if (!projectMemberRepository.existsByProjectIdAndUserId(projectDbId, userId)) {
+            throw new AccessDeniedException("프로젝트 멤버만 접근할 수 있습니다.");
+        }
+        return projectDbId;
+    }
+
+    /**
+     * 요청한 사용자가 projectId 멤버인지 확인(아니면 403)한 뒤, meetingId가 실제로 그 프로젝트
+     * 소속인 회의록인지 조회한다. 다른 프로젝트의 회의록이거나 존재하지 않으면 null(404)을 반환한다.
+     */
+    private Meeting requireProjectMeeting(String projectIdParam, String meetingIdParam) {
+        Long projectDbId = requireProjectMember(projectIdParam);
+        Long meetingDbId = parseLongOrNull(meetingIdParam);
+        if (meetingDbId == null) return null;
+        return meetingRepository.findByIdAndProjectId(meetingDbId, projectDbId).orElse(null);
+    }
+
+    private void validateAttendeeIds(Long projectId, List<Long> attendeeIds) {
+        for (Long attendeeId : attendeeIds) {
+            if (!projectMemberRepository.existsByProjectIdAndUserId(projectId, attendeeId)) {
+                throw new IllegalArgumentException("프로젝트 멤버가 아닌 참석자가 포함되어 있습니다: " + attendeeId);
+            }
+        }
+    }
+
+    private void saveAttendeesByIds(Long meetingId, List<Long> attendeeIds) {
+        for (Long userId : attendeeIds.stream().distinct().toList()) {
+            meetingAttendeeRepository.save(new MeetingAttendee(meetingId, userId));
+        }
+    }
+
+    private List<AttendeeSummary> buildAttendeeSummaries(Long meetingId, Long projectId) {
+        List<MeetingAttendee> attendeeRows = meetingAttendeeRepository.findByMeetingId(meetingId);
+        if (attendeeRows.isEmpty()) return List.of();
+
+        Map<Long, User> usersById = userRepository
+            .findAllById(attendeeRows.stream().map(MeetingAttendee::getUserId).toList())
+            .stream()
+            .collect(Collectors.toMap(User::getId, user -> user));
+        Map<Long, ProjectMember> membersByUserId = projectMemberRepository.findAllByProjectId(projectId).stream()
+            .collect(Collectors.toMap(ProjectMember::getUserId, member -> member));
+
+        return attendeeRows.stream()
+            .map(attendee -> {
+                User user = usersById.get(attendee.getUserId());
+                ProjectMember member = membersByUserId.get(attendee.getUserId());
+                return new AttendeeSummary(
+                    attendee.getUserId(),
+                    user != null ? user.getName() : null,
+                    member != null ? member.getRole().toKorean() : null
+                );
+            })
+            .toList();
+    }
+
     private Long resolveAssigneeByName(String name) {
         if (name == null || name.isBlank()) return null;
         return userRepository.findFirstByName(name).map(User::getId).orElse(null);
@@ -333,11 +557,57 @@ public class MeetingAnalysisService {
         return name;
     }
 
-    private void saveAttendees(Long meetingId, List<String> participantNames) {
+    private void deleteUploadedFile(String filePath) {
+        if (filePath == null || filePath.isBlank()) return;
+        try {
+            Path target = Path.of(filePath).toAbsolutePath().normalize();
+            Files.deleteIfExists(target);
+            Path parent = target.getParent();
+            if (parent != null && Files.isDirectory(parent)) {
+                try (var children = Files.list(parent)) {
+                    if (children.findAny().isEmpty()) {
+                        Files.deleteIfExists(parent);
+                    }
+                }
+            }
+        } catch (IOException ignored) {
+            // 파일 삭제 실패는 회의록 DB 삭제를 막지 않는다.
+        }
+    }
+
+    private void saveAttendees(Long meetingId, Long projectId, List<String> participantNames) {
+        Set<Long> savedUserIds = new HashSet<>();
         for (String name : participantNames) {
             userRepository.findFirstByName(name)
+                .filter(user -> projectMemberRepository.existsByProjectIdAndUserId(projectId, user.getId()))
+                .filter(user -> savedUserIds.add(user.getId()))
                 .ifPresent(user -> meetingAttendeeRepository.save(new MeetingAttendee(meetingId, user.getId())));
         }
+    }
+
+    private void runAnalysisAfterCommit(Long meetingId, AiAnalyzeRequest request) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            meetingAnalysisRunner.runAnalysis(meetingId, request);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                meetingAnalysisRunner.runAnalysis(meetingId, request);
+            }
+        });
+    }
+
+    private String toResponseProjectId(Long projectDbId) {
+        try {
+            Long demoProjectId = demoDataService.resolveProjectId("demo-project");
+            if (demoProjectId != null && demoProjectId.equals(projectDbId)) {
+                return "demo-project";
+            }
+        } catch (Exception ignored) {
+            // 데모 시딩이 꺼진 운영 환경에서는 DB id를 그대로 응답한다.
+        }
+        return String.valueOf(projectDbId);
     }
 
     private Long resolveAssignee(String assigneeIdParam) {
@@ -395,8 +665,35 @@ public class MeetingAnalysisService {
         }
     }
 
+    private String extractTextFromStoredFile(Meeting meeting) {
+        String filePath = meeting.getFilePath();
+        if (filePath == null || filePath.isBlank()) return "";
+        String fileName = meeting.getOriginalFileName() == null ? "" : meeting.getOriginalFileName().toLowerCase();
+        boolean textLike = fileName.endsWith(".txt") || fileName.endsWith(".md") || fileName.endsWith(".csv") || fileName.endsWith(".json");
+        try {
+            byte[] bytes = Files.readAllBytes(Path.of(filePath));
+            if (fileName.endsWith(".docx")) {
+                return extractDocxTextFromBytes(bytes);
+            }
+            if (!textLike) {
+                return null;
+            }
+            return new String(bytes, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
     private String extractDocxText(MultipartFile file) {
-        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(file.getBytes()))) {
+        try {
+            return extractDocxTextFromBytes(file.getBytes());
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    private String extractDocxTextFromBytes(byte[] bytes) {
+        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
             ZipEntry entry;
             while ((entry = zip.getNextEntry()) != null) {
                 if (!"word/document.xml".equals(entry.getName())) continue;
@@ -420,28 +717,6 @@ public class MeetingAnalysisService {
 
     private String defaultString(String value, String defaultValue) {
         return value == null || value.isBlank() ? defaultValue : value;
-    }
-
-    private String buildMeetingIngestContent(MeetingAnalysisResult result) {
-        StringBuilder content = new StringBuilder(defaultString(result.summary(), ""));
-        if (result.decisions() != null && !result.decisions().isEmpty()) {
-            content.append("\n결정사항: ").append(String.join(", ", result.decisions()));
-        }
-        if (result.risks() != null && !result.risks().isEmpty()) {
-            content.append("\n위험요소: ").append(String.join(", ", result.risks()));
-        }
-        return content.toString();
-    }
-
-    private String buildActionItemIngestContent(MeetingActionItem item) {
-        StringBuilder content = new StringBuilder(item.getTitle());
-        if (item.getDescription() != null && !item.getDescription().isBlank()) {
-            content.append(" - ").append(item.getDescription());
-        }
-        if (item.getBasis() != null && !item.getBasis().isBlank()) {
-            content.append("\n근거: ").append(item.getBasis());
-        }
-        return content.toString();
     }
 
     private String buildTaskIngestContent(Task task) {

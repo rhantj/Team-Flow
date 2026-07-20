@@ -10,7 +10,28 @@ export interface ApiEnvelope<T> {
   error?: { code: string; message: string } | null;
 }
 
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly code?: string
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
+
 let refreshPromise: Promise<boolean> | null = null;
+
+async function readJsonEnvelope<T>(response: Response): Promise<ApiEnvelope<T> | null> {
+  const contentType = response.headers.get("Content-Type") ?? "";
+  if (!contentType.toLowerCase().includes("application/json")) return null;
+  try {
+    return (await response.json()) as ApiEnvelope<T>;
+  } catch {
+    return null;
+  }
+}
 
 async function refreshTokens(): Promise<boolean> {
   const refreshToken = tokenStore.getRefreshToken();
@@ -51,14 +72,19 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}, retry
     if (refreshed) {
       return apiFetch<T>(path, options, false);
     }
-    tokenStore.clear();
-    window.dispatchEvent(new CustomEvent(AUTH_LOGOUT_EVENT));
-    throw new Error("인증이 만료되었습니다. 다시 로그인해주세요.");
+    throw new ApiRequestError("인증이 만료되었습니다. 다시 로그인해주세요.", 401, "UNAUTHORIZED");
   }
 
-  const body = (await response.json()) as ApiEnvelope<T>;
+  const body = await readJsonEnvelope<T>(response);
+  if (!response.ok) {
+    const message = body?.error?.message ?? (response.status === 404 ? "요청한 항목을 찾을 수 없습니다." : "요청에 실패했습니다.");
+    throw new ApiRequestError(message, response.status, body?.error?.code);
+  }
+  if (!body) {
+    throw new ApiRequestError("서버 응답을 읽을 수 없습니다.", response.status);
+  }
   if (!body.success) {
-    throw new Error(body.error?.message ?? "요청에 실패했습니다.");
+    throw new ApiRequestError(body.error?.message ?? "요청에 실패했습니다.", response.status, body.error?.code);
   }
   return body.data;
 }

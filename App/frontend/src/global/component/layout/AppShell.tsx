@@ -6,6 +6,8 @@ import { Header } from "./Header";
 import { AIAssistant } from "../../../ai/screen/AIAssistant";
 import type { Tab } from "../../../board/libs/types/task";
 import { useAuth } from "../../hooks/useAuth";
+import { useSidebarCollapsed } from "../../hooks/useSidebarCollapsed";
+import { useIsMobile } from "../ui/use-mobile";
 
 const OPEN_AI_ASSISTANT_EVENT = "workflow-ai:open-ai-assistant";
 
@@ -14,6 +16,13 @@ export function AppShell() {
   const location = useLocation();
   const { projectRoles } = useAuth();
   const [aiOpen, setAIOpen] = useState(false);
+  const { collapsed, toggle: toggleCollapsed } = useSidebarCollapsed();
+  const isMobile = useIsMobile();
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [isMobile]);
 
   useEffect(() => {
     const open = () => setAIOpen(true);
@@ -34,13 +43,38 @@ export function AppShell() {
     }
   };
 
+  const handleSelect = (tab: Tab) => {
+    navigate(`/${tab}`);
+    setMobileOpen(false);
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-background" style={{ fontFamily: "'Inter', 'Noto Sans KR', sans-serif" }}>
-      <Sidebar active={activeTab} onSelect={(tab) => navigate(`/${tab}`)} onAI={() => setAIOpen(true)} />
+      <div
+        data-sidebar-wrapper
+        className={
+          isMobile
+            ? `fixed inset-y-0 left-0 z-50 transition-transform duration-200 ease-in-out ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`
+            : ""
+        }
+        {...(isMobile && !mobileOpen ? { "aria-hidden": true, inert: true } : {})}
+      >
+        <Sidebar
+          active={activeTab}
+          onSelect={handleSelect}
+          onAI={() => setAIOpen(true)}
+          collapsed={isMobile ? false : collapsed}
+          onToggleCollapsed={toggleCollapsed}
+          showCollapseToggle={!isMobile}
+        />
+      </div>
+      {isMobile && mobileOpen && (
+        <div className="fixed inset-0 bg-black/30 z-40" onClick={() => setMobileOpen(false)} />
+      )}
 
       {/* Main */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <Header />
+        <Header onOpenMobileMenu={() => setMobileOpen(true)} />
 
         {/* Content */}
         <main className="flex-1 overflow-hidden flex flex-col">

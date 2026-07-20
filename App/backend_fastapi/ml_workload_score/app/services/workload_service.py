@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from ml_workload_score.app.services import workload_db as db
+from ml_workload_score.app.services.embedding_difficulty import compute_embedding_adjustments
 from ml_workload_score.app.services.workload_model import (
     build_features,
     detect_overload_anomalies_auto,
@@ -16,7 +18,7 @@ from ml_workload_score.app.schema.workload_schema import (
 logger = logging.getLogger(__name__)
 
 
-def get_workload_score(project_id: int, use_synthetic_fallback: bool = False) -> WorkloadScoreData:
+async def get_workload_score(project_id: int, use_synthetic_fallback: bool = False) -> WorkloadScoreData:
     """
     프로젝트의 팀원별 업무 편중(과부하/저활동) 점수를 계산한다.
 
@@ -25,9 +27,14 @@ def get_workload_score(project_id: int, use_synthetic_fallback: bool = False) ->
       합성 데이터로 데모 응답을 줄지 여부. 기본값 False (운영 기본 동작:
       실패 시 에러를 그대로 올림). 데모/개발 환경에서만 명시적으로 True로 호출할 것.
     """
+    embedding_adjustments: dict[int, float] = {}
     try:
-        tasks_df = db.load_tasks_from_db(project_id)
+        tasks_df = await asyncio.to_thread(db.load_tasks_from_db, project_id)
         source = "db"
+        if not tasks_df.empty:
+            embedding_adjustments = await compute_embedding_adjustments(
+                tasks_df["task_id"].tolist(), project_id
+            )
     except Exception:
         if not use_synthetic_fallback:
             raise
@@ -46,7 +53,7 @@ def get_workload_score(project_id: int, use_synthetic_fallback: bool = False) ->
             note="배정된 업무가 없어 편중 점수를 계산할 수 없습니다.",
         )
 
-    features = build_features(tasks_df)
+    features = build_features(tasks_df, embedding_adjustments=embedding_adjustments)
     result = detect_overload_anomalies_auto(features)
 
     members = [

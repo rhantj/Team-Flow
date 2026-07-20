@@ -140,6 +140,19 @@ CREATE TABLE task_checklists (
 );
 COMMENT ON TABLE task_checklists IS '업무 체크리스트';
 
+-- 업무 코멘트 전용 테이블. §6.6의 comments(개인/팀 코멘트)와는 목적이 달라 분리했다(task_id 없음, target_type 기반).
+CREATE TABLE task_comments (
+    id         BIGSERIAL PRIMARY KEY,
+    task_id    BIGINT NOT NULL,
+    author_id  BIGINT NOT NULL,
+    content    TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_task_comments_task   FOREIGN KEY (task_id)   REFERENCES tasks(id) ON DELETE CASCADE,
+    CONSTRAINT fk_task_comments_author FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE
+);
+COMMENT ON TABLE task_comments IS '업무 코멘트';
+CREATE INDEX idx_task_comments_task ON task_comments (task_id);
+
 -- ----------------------------------------------------------------------------
 -- 3. 회의록 AI
 -- ----------------------------------------------------------------------------
@@ -156,7 +169,7 @@ CREATE TABLE meetings (
     CONSTRAINT fk_meetings_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 COMMENT ON TABLE meetings IS '회의록/녹음 업로드';
-COMMENT ON COLUMN meetings.file_type IS 'document/audio/video';
+COMMENT ON COLUMN meetings.file_type IS 'document/audio';
 COMMENT ON COLUMN meetings.analysis_status IS '비동기 분석 상태';
 
 CREATE TABLE meeting_attendees (
@@ -194,13 +207,16 @@ CREATE TABLE activities (
     actor_id   BIGINT NOT NULL,
     type       VARCHAR(50) NOT NULL,
     target_id  BIGINT,
+    message    TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_activities_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
     CONSTRAINT fk_activities_actor   FOREIGN KEY (actor_id)   REFERENCES users(id)    ON DELETE CASCADE
 );
 COMMENT ON TABLE activities IS '프로젝트 활동 로그';
 COMMENT ON COLUMN activities.type IS '업무 변경/GitHub/회의록/산출물 등';
-COMMENT ON COLUMN activities.target_id IS '폴리모픽 대상 id (FK 제약 없음)';
+COMMENT ON COLUMN activities.target_id IS '폴리모픽 대상 id (FK 제약 없음). 현재는 업무(task) id만 씀';
+COMMENT ON COLUMN activities.message IS '화면에 그대로 보여줄 사람이 읽는 메시지';
+CREATE INDEX idx_activities_target ON activities (target_id);
 
 CREATE TABLE ml_predictions (
     id          BIGSERIAL PRIMARY KEY,

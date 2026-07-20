@@ -1,12 +1,47 @@
+import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { AuthBrandPanel } from "../components/AuthBrandPanel";
 import { useAuth } from "../../global/hooks/useAuth";
+import { API_BASE_URL, type ApiEnvelope } from "../../global/api/apiClient";
+import type { AuthTokenResponse } from "../../global/api/authTypes";
+import { tokenStore } from "../../global/api/tokenStore";
+
+const DEV_TEST_ACCOUNTS = [
+  { id: "1", name: "김민준", role: "팀장" },
+  { id: "2", name: "이서연", role: "팀원" },
+  { id: "3", name: "박지수", role: "팀원" },
+  { id: "4", name: "최동혁", role: "심사자" },
+];
+const demoAuthEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_AUTH === "true";
 
 export function LoginScreen() {
   const navigate = useNavigate();
-  const { loginWithGoogle } = useAuth();
+  const { loginWithGoogle, refreshMe } = useAuth();
   const [searchParams] = useSearchParams();
+  const [devLoginError, setDevLoginError] = useState<string | null>(null);
+  const [devLoggingInId, setDevLoggingInId] = useState<string | null>(null);
   const oauthFailed = searchParams.get("error") === "oauth_failed";
+
+  const handleDevLogin = async (demoUserId: string) => {
+    if (devLoggingInId) return;
+    setDevLoginError(null);
+    setDevLoggingInId(demoUserId);
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/dev-login-token/${demoUserId}`);
+      const body = await response.json() as ApiEnvelope<AuthTokenResponse>;
+      if (!response.ok || !body.success || !body.data?.accessToken || !body.data?.refreshToken) {
+        throw new Error(body.error?.message ?? "개발용 로그인에 실패했습니다.");
+      }
+      tokenStore.clear();
+      tokenStore.setTokens(body.data.accessToken, body.data.refreshToken);
+      await refreshMe();
+      navigate("/dashboard", { replace: true });
+    } catch (error) {
+      setDevLoginError(error instanceof Error ? error.message : "개발용 로그인에 실패했습니다.");
+    } finally {
+      setDevLoggingInId(null);
+    }
+  };
 
   return (
     <div className="flex min-h-screen flex-col lg:flex-row" style={{ fontFamily: "'Inter', 'Noto Sans KR', sans-serif" }}>
@@ -39,6 +74,32 @@ export function LoginScreen() {
               회원가입
             </button>
           </p>
+
+          {demoAuthEnabled && (
+            <div className="mt-8 pt-6 border-t border-border">
+              <p className="text-center text-[11px] font-semibold text-muted-foreground mb-3">개발용 테스트 계정으로 입장</p>
+              {devLoginError && (
+                <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-600">
+                  {devLoginError}
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-2">
+                {DEV_TEST_ACCOUNTS.map((account) => (
+                  <button
+                    key={account.id}
+                    onClick={() => void handleDevLogin(account.id)}
+                    disabled={Boolean(devLoggingInId)}
+                    className="flex flex-col items-center gap-0.5 py-2.5 rounded-xl border border-dashed border-border bg-muted/40 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <span>{account.name}</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {devLoggingInId === account.id ? "로그인 중..." : account.role}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

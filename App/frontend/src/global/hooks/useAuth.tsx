@@ -3,11 +3,16 @@ import { API_BASE_URL, apiFetch, AUTH_LOGOUT_EVENT } from "../api/apiClient";
 import { tokenStore } from "../api/tokenStore";
 import type { MeResponse, ProjectRoleSummary, UserSummary } from "../api/authTypes";
 
+const SELECTED_PROJECT_KEY = "workflow-ai:selected-project-id";
+
 interface AuthState {
   isAuthenticated: boolean;
   loading: boolean;
   user: UserSummary | null;
   projectRoles: ProjectRoleSummary[];
+  currentProjectId: number | null;
+  currentProject: ProjectRoleSummary | null;
+  selectProject: (projectId: number) => void;
   loginWithGoogle: () => void;
   logout: () => void;
   refreshMe: () => Promise<void>;
@@ -19,6 +24,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserSummary | null>(null);
   const [projectRoles, setProjectRoles] = useState<ProjectRoleSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
+
+  // projectRoles가 (최초 로드/새 프로젝트 생성 등으로) 바뀔 때마다, 저장된 선택이 여전히 유효하면 유지하고
+  // 아니면(첫 로드, 그 프로젝트에서 빠짐 등) 첫 번째 프로젝트로 폴백한다.
+  useEffect(() => {
+    if (projectRoles.length === 0) {
+      setCurrentProjectId(null);
+      return;
+    }
+    const stored = Number(localStorage.getItem(SELECTED_PROJECT_KEY));
+    const stillValid = stored && projectRoles.some((pr) => pr.projectId === stored);
+    setCurrentProjectId(stillValid ? stored : projectRoles[0].projectId);
+  }, [projectRoles]);
+
+  const selectProject = (projectId: number) => {
+    setCurrentProjectId(projectId);
+    localStorage.setItem(SELECTED_PROJECT_KEY, String(projectId));
+  };
+
+  const currentProject = projectRoles.find((pr) => pr.projectId === currentProjectId) ?? null;
 
   const loadMe = async () => {
     if (!tokenStore.getAccessToken()) {
@@ -70,6 +95,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         user,
         projectRoles,
+        currentProjectId,
+        currentProject,
+        selectProject,
         loginWithGoogle,
         logout,
         refreshMe: loadMe,

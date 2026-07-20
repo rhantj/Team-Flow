@@ -47,10 +47,65 @@ CATEGORY_WEIGHT = {
 }
 
 
+## 실 데이터 재검증(2026-07-16)에서 확인된 사실: 실제 tasks.category/priority는 이 딕셔너리의
+# 한글 키가 아니라 프런트(App/frontend/src/board/libs/types/task.ts의 CatId/Priority)가 정의한
+# 영문 슬러그 그대로 저장돼 있다(예: "ai-ml", "frontend", "HIGH"/"high" 등 대소문자 혼재).
+# CATEGORY_WEIGHT/PRIORITY_WEIGHT 자체는 기획 문서 기준 한글 레이블을 유지하고,
+# 실측 값 → 한글 키 별칭만 별도로 둬서 difficulty_of()에서만 정규화한다.
+CATEGORY_ALIASES = {
+    "planning": "기획",
+    "research": "리서치",
+    "ux-ui": "UX/UI",
+    "design": "디자인",
+    "frontend": "프론트엔드",
+    "backend": "백엔드",
+    "ai-ml": "AI/ML",
+    "data": "데이터",
+    "db": "DB",
+    "devops": "DevOps",
+    "github": "GitHub",
+    "qa": "QA/테스트",
+    "security": "보안",
+    "docs": "문서",
+    "presentation": "발표",
+    "deliverable": "산출물",
+    "operation": "운영/제출",
+    "other": "기타",
+}
+
+PRIORITY_ALIASES = {"high": "높음", "medium": "중간", "low": "낮음"}
+
+
+def normalize_category(category: str) -> str:
+    if category in CATEGORY_WEIGHT:
+        return category
+    return CATEGORY_ALIASES.get(str(category).strip().lower(), category)
+
+
+def normalize_priority(priority: str) -> str:
+    if priority in PRIORITY_WEIGHT:
+        return priority
+    return PRIORITY_ALIASES.get(str(priority).strip().lower(), priority)
+
+
+# 실 데이터 재검증(2026-07-16)에서 확인: 실제 tasks.status도 이 모듈이 기대하는 한글값이
+# 아니라 프런트(task.ts의 TaskStatus)가 정의한 영문 슬러그로 저장돼 있다. is_done 판정이
+# status=="완료" 문자열 비교라 이걸 정규화하지 않으면 실제 완료 업무가 있어도 전부
+# completion_rate=0으로 조용히 계산돼버린다(실측에서 실제로 이 버그로 인한 왜곡을 확인함).
+STATUS_ALIASES = {"todo": "할 일", "inprogress": "진행 중", "done": "완료", "blocked": "보류/블로커"}
+_KNOWN_STATUSES = {"할 일", "진행 중", "완료", "보류/블로커"}
+
+
+def normalize_status(status: str) -> str:
+    if status in _KNOWN_STATUSES:
+        return status
+    return STATUS_ALIASES.get(str(status).strip().lower(), status)
+
+
 def difficulty_of(priority: str, category: str) -> float:
     """priority + category 가중치를 합산한 업무 하나의 난이도 프록시 값."""
-    base = PRIORITY_WEIGHT.get(priority, 2)
-    adj = CATEGORY_WEIGHT.get(category, 0.0)
+    base = PRIORITY_WEIGHT.get(normalize_priority(priority), 2)
+    adj = CATEGORY_WEIGHT.get(normalize_category(category), 0.0)
     return base + adj
 
 
@@ -126,7 +181,11 @@ def generate_synthetic_tasks(n_members: int = 7, seed: int = RANDOM_SEED) -> pd.
 # ============================================================
 # 2. 피처 엔지니어링 (실제 DB 연결 시 이 함수 입력만 실제 tasks df로 교체)
 # ============================================================
-def build_features(tasks_df: pd.DataFrame, today: pd.Timestamp = None) -> pd.DataFrame:
+def build_features(
+    tasks_df: pd.DataFrame,
+    today: pd.Timestamp = None,
+    embedding_adjustments: dict[int, float] | None = None,
+) -> pd.DataFrame:
     """
     팀원별(assignee_id) 피처 테이블 생성.
     - task_count_active: 미완료 업무 수
@@ -135,16 +194,27 @@ def build_features(tasks_df: pd.DataFrame, today: pd.Timestamp = None) -> pd.Dat
     - overdue_count: 마감 지났는데 미완료
     - upcoming_due_count: 마감 3일 이내 미완료
     모두 '팀 평균 대비 상대값'으로도 같이 계산한다 (과부하는 상대 개념이므로).
+
+    embedding_adjustments: {task_id: 보정치} — embedding_difficulty.compute_embedding_adjustments()의
+    반환값을 그대로 넘긴다. None이면(기본값) 기존 동작과 완전히 동일.
     """
     if today is None:
         today = pd.Timestamp("2026-07-14")
 
     df = tasks_df.copy()
-    df["is_done"] = df["status"] == "완료"
+    df["is_done"] = df["status"].apply(normalize_status) == "완료"
     df["is_overdue"] = (~df["is_done"]) & (df["due_date"] < today)
     df["is_upcoming"] = (~df["is_done"]) & (df["due_date"] >= today) & \
                          (df["due_date"] <= today + pd.Timedelta(days=3))
-    df["difficulty"] = df.apply(lambda r: difficulty_of(r["priority"], r["category"]), axis=1)
+
+    if embedding_adjustments:
+        df["difficulty"] = df.apply(
+            lambda r: difficulty_of(r["priority"], r["category"])
+            + embedding_adjustments.get(r["task_id"], 0.0),
+            axis=1,
+        )
+    else:
+        df["difficulty"] = df.apply(lambda r: difficulty_of(r["priority"], r["category"]), axis=1)
 
     grouped = df.groupby("assignee_id").agg(
         task_count_total=("task_id", "count"),
