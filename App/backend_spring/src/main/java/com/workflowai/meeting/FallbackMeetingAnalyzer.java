@@ -5,10 +5,16 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.springframework.stereotype.Component;
 
 @Component
 public class FallbackMeetingAnalyzer {
+    private static final List<Pattern> ASSIGNEE_PATTERNS = List.of(
+        Pattern.compile("^([가-힣]{2,4})(?:은|는|이|가)\\s"),
+        Pattern.compile("담당[:\\s]+([가-힣]{2,4})")
+    );
     public MeetingAnalysisResult analyze(AiAnalyzeRequest request) {
         List<String> participants = safeParticipants(request.participants());
         String title = blankToDefault(request.title(), "회의록 AI 분석 회의");
@@ -28,7 +34,7 @@ public class FallbackMeetingAnalyzer {
             risks = List.of("담당자와 마감일이 명확하지 않은 업무는 일정 지연으로 이어질 수 있다.");
         }
 
-        List<MeetingTodo> todos = buildTodos(text, participants, date);
+        List<MeetingTodo> todos = buildTodos(text, date);
         String summary = "%s에서 논의된 내용을 분석해 핵심 결정사항 %d건, To-Do %d건, 위험요소 %d건을 추출했다."
             .formatted(title, decisions.size(), todos.size(), risks.size());
 
@@ -42,7 +48,7 @@ public class FallbackMeetingAnalyzer {
         );
     }
 
-    private List<MeetingTodo> buildTodos(String text, List<String> participants, String date) {
+    private List<MeetingTodo> buildTodos(String text, String date) {
         List<String> taskSentences = extractSentences(text, List.of("담당", "작성", "구현", "정리", "검토", "준비", "연결", "테스트"), 6);
         if (taskSentences.isEmpty()) {
             taskSentences = List.of(
@@ -55,7 +61,7 @@ public class FallbackMeetingAnalyzer {
         List<MeetingTodo> todos = new ArrayList<>();
         for (int i = 0; i < taskSentences.size(); i++) {
             String sentence = taskSentences.get(i);
-            String assignee = participants.isEmpty() ? "" : participants.get(i % participants.size());
+            String assignee = extractAssigneeCandidate(sentence);
             todos.add(new MeetingTodo(
                 shorten(sentence, 42),
                 sentence,
@@ -68,6 +74,18 @@ public class FallbackMeetingAnalyzer {
             ));
         }
         return todos;
+    }
+
+    /** 문장에서 "OO가/은/는 ~한다" 또는 "담당: OO" 형태로 적힌 담당자 이름을 추출한다. 없으면 빈 문자열(미배정 후보). */
+    private String extractAssigneeCandidate(String sentence) {
+        String trimmed = sentence.trim();
+        for (Pattern pattern : ASSIGNEE_PATTERNS) {
+            Matcher matcher = pattern.matcher(trimmed);
+            if (matcher.find()) {
+                return matcher.group(1);
+            }
+        }
+        return "";
     }
 
     private List<String> extractSentences(String text, List<String> keywords, int limit) {

@@ -27,6 +27,7 @@ import {
   REVIEWER_TEAMS,
 } from "../../global/lib/mock/reviewer";
 import { fetchAttendanceSummary, type MeetingAttendanceSummaryDto } from "../../meetings/libs/utils/meetingAiApi";
+import { fetchContributionReport, type MemberContributionDto } from "../libs/utils/contributorsApi";
 import { useAuth } from "../../global/hooks/useAuth";
 
 type Team = (typeof REVIEWER_TEAMS)[number];
@@ -82,13 +83,47 @@ export function ContributorsView() {
     Object.fromEntries(CONTRIB_REPORTS.map((report) => [report.memberId, report.isPublic])) as Record<string, boolean>,
   );
   const [memo, setMemo] = useState("");
+  const [reportOverrides, setReportOverrides] = useState<Record<string, { summary: string; evidence: string[] }>>({});
+  const [isRefreshingReport, setIsRefreshingReport] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+
+  const mergedReports = useMemo(
+    () =>
+      CONTRIB_REPORTS.map((report) => {
+        const override = reportOverrides[report.memberId];
+        if (!override) return report;
+        return { ...report, aiSummary: override.summary, evidence: override.evidence };
+      }),
+    [reportOverrides],
+  );
+
+  const handleRefreshReport = async () => {
+    if (currentProjectId == null) return;
+    setIsRefreshingReport(true);
+    setRefreshError(null);
+    try {
+      const reports = await fetchContributionReport(currentProjectId);
+      setReportOverrides(
+        Object.fromEntries(
+          reports.map((report: MemberContributionDto) => [
+            String(report.userId),
+            { summary: report.summary, evidence: report.evidence },
+          ]),
+        ),
+      );
+    } catch {
+      setRefreshError("기여도 리포트를 새로고침하지 못했습니다.");
+    } finally {
+      setIsRefreshingReport(false);
+    }
+  };
 
   const requestedTeamId = useMemo(() => new URLSearchParams(location.search).get("team"), [location.search]);
   const selectedTeam = REVIEWER_TEAMS.find((team) => team.id === requestedTeamId) ?? REVIEWER_TEAMS[0];
   const filteredReports = useMemo(() => {
     const keyword = query.trim().toLowerCase();
-    if (!keyword) return CONTRIB_REPORTS;
-    return CONTRIB_REPORTS.filter((report) => {
+    if (!keyword) return mergedReports;
+    return mergedReports.filter((report) => {
       const haystack = [
         report.name,
         report.role,
@@ -97,14 +132,14 @@ export function ContributorsView() {
       ].join(" ").toLowerCase();
       return haystack.includes(keyword);
     });
-  }, [query]);
+  }, [query, mergedReports]);
 
-  const selectedMember = CONTRIB_REPORTS.find((report) => report.memberId === selectedMemberId) ?? CONTRIB_REPORTS[0];
-  const averageScore = Math.round(CONTRIB_REPORTS.reduce((sum, report) => sum + report.score, 0) / CONTRIB_REPORTS.length);
+  const selectedMember = mergedReports.find((report) => report.memberId === selectedMemberId) ?? mergedReports[0];
+  const averageScore = Math.round(mergedReports.reduce((sum, report) => sum + report.score, 0) / mergedReports.length);
   const publishedCount = Object.values(publicFlags).filter(Boolean).length;
-  const evidenceCount = CONTRIB_REPORTS.reduce((sum, report) => sum + report.evidence.length, 0);
-  const completedTasks = CONTRIB_REPORTS.reduce((sum, report) => sum + report.todoDone, 0);
-  const totalTasks = CONTRIB_REPORTS.reduce((sum, report) => sum + report.todoTotal, 0);
+  const evidenceCount = mergedReports.reduce((sum, report) => sum + report.evidence.length, 0);
+  const completedTasks = mergedReports.reduce((sum, report) => sum + report.todoDone, 0);
+  const totalTasks = mergedReports.reduce((sum, report) => sum + report.todoTotal, 0);
   const statusMeta = STATUS_META[selectedTeam.evalStatus];
   const selectedTone = scoreTone(selectedMember.score);
 
@@ -139,12 +174,20 @@ export function ContributorsView() {
               <span className="px-2 py-1 rounded-md bg-muted text-foreground font-semibold">심사자 전용</span>
               <span>팀원에게는 공개 처리된 최종 점수와 코멘트만 노출됩니다.</span>
             </div>
+            {refreshError && (
+              <p className="mt-2 text-xs font-semibold text-red-600">{refreshError}</p>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <button className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-xs font-semibold text-foreground hover:bg-muted transition-colors">
-              <RefreshCw className="w-3.5 h-3.5" />
-              리포트 새로고침
+            <button
+              type="button"
+              onClick={handleRefreshReport}
+              disabled={isRefreshingReport || currentProjectId == null}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-xs font-semibold text-foreground hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingReport ? "animate-spin" : ""}`} />
+              {isRefreshingReport ? "새로고침 중..." : "리포트 새로고침"}
             </button>
             <button className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-xs font-semibold text-foreground hover:bg-muted transition-colors">
               <Download className="w-3.5 h-3.5" />
@@ -160,8 +203,8 @@ export function ContributorsView() {
         <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           {[
             { label: "팀 평균 점수", value: `${averageScore}점`, icon: Award, color: "#2563EB" },
-            { label: "평가 대상", value: `${CONTRIB_REPORTS.length}명`, icon: Users, color: "#7C3AED" },
-            { label: "공개 완료", value: `${publishedCount}/${CONTRIB_REPORTS.length}`, icon: Eye, color: "#059669" },
+            { label: "평가 대상", value: `${mergedReports.length}명`, icon: Users, color: "#7C3AED" },
+            { label: "공개 완료", value: `${publishedCount}/${mergedReports.length}`, icon: Eye, color: "#059669" },
             { label: "근거 항목", value: `${evidenceCount}개`, icon: ClipboardCheck, color: "#D97706" },
           ].map((item) => (
             <div key={item.label} className="bg-card border border-border rounded-lg p-4 shadow-sm">

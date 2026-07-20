@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import List, Optional
 from pydantic import BaseModel
 
+CURRENT_WORKLOAD_SCHEMA_VERSION = "1.0"
+
 
 class WorkloadMemberResult(BaseModel):
     assignee_id: str
@@ -14,6 +16,7 @@ class WorkloadMemberResult(BaseModel):
 
 
 class WorkloadScoreData(BaseModel):
+    schema_version: str = CURRENT_WORKLOAD_SCHEMA_VERSION
     project_id: int
     source: str  # "db" | "synthetic_fallback"
     method: str  # "MAD (소규모 팀)" | "Isolation Forest (대규모)"

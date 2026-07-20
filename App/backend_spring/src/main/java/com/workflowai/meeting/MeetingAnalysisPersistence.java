@@ -1,6 +1,7 @@
 package com.workflowai.meeting;
 
 import com.workflowai.common.DemoDataService;
+import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.rag.RagIngestService;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
@@ -20,6 +21,7 @@ public class MeetingAnalysisPersistence {
     private final UserRepository userRepository;
     private final DemoDataService demoDataService;
     private final RagIngestService ragIngestService;
+    private final ProjectMemberRepository projectMemberRepository;
 
     public MeetingAnalysisPersistence(
         MeetingRepository meetingRepository,
@@ -27,7 +29,8 @@ public class MeetingAnalysisPersistence {
         MeetingActionItemRepository meetingActionItemRepository,
         UserRepository userRepository,
         DemoDataService demoDataService,
-        RagIngestService ragIngestService
+        RagIngestService ragIngestService,
+        ProjectMemberRepository projectMemberRepository
     ) {
         this.meetingRepository = meetingRepository;
         this.meetingAnalysisRepository = meetingAnalysisRepository;
@@ -35,6 +38,7 @@ public class MeetingAnalysisPersistence {
         this.userRepository = userRepository;
         this.demoDataService = demoDataService;
         this.ragIngestService = ragIngestService;
+        this.projectMemberRepository = projectMemberRepository;
     }
 
     @Transactional
@@ -54,7 +58,7 @@ public class MeetingAnalysisPersistence {
                 todo.description(),
                 todo.category(),
                 resolveAssigneeByName(todo.assignee_candidate()),
-                resolveAssignee(todo.assignee_id()),
+                resolveFinalAssignee(todo, meeting.getProjectId()),
                 parseDateOrNull(todo.due_date()),
                 todo.priority(),
                 null
@@ -122,6 +126,22 @@ public class MeetingAnalysisPersistence {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    /**
+     * 회의록 본문에 적힌 담당자(assignee_candidate)를 1차 기준으로 최종 담당자를 결정한다.
+     * 참석자 목록 여부와 무관하며, 이름이 프로젝트 멤버로 매칭될 때만 배정하고 그렇지 않으면 미배정(null)으로 남긴다.
+     */
+    private Long resolveFinalAssignee(MeetingTodo todo, Long projectId) {
+        Long explicitAssigneeId = resolveAssignee(todo.assignee_id());
+        if (explicitAssigneeId != null) {
+            return projectMemberRepository.existsByProjectIdAndUserId(projectId, explicitAssigneeId) ? explicitAssigneeId : null;
+        }
+        Long candidateUserId = resolveAssigneeByName(todo.assignee_candidate());
+        if (candidateUserId != null && projectMemberRepository.existsByProjectIdAndUserId(projectId, candidateUserId)) {
+            return candidateUserId;
+        }
+        return null;
     }
 
     private LocalDate parseDateOrNull(String date) {
