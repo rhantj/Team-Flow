@@ -63,8 +63,10 @@ from __future__ import annotations
 | `snapshot_offset_days` | 스냅샷 시점 (이슈 생성 후 며칠째인지) |
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable, Optional
+
+from ml_delay_risk.models.bot_filter import author_identifier
 
 # 스키마 문서의 '정상 완료(Class 0 후보)' 표에 나열된 resolution.name 값들.
 # 이 값이 아닌 이슈(Duplicate, Won't Fix, 미해결 등)는 학습 대상에서 제외한다.
@@ -257,7 +259,7 @@ def build_dynamic_features(
     original_estimate_seconds: float,
     proxy_deadline_hours: float,
     current_assignee: Optional[str],
-    is_bot_author: Callable[[Optional[str]], bool],
+    is_bot_author: Callable[[Any], bool],
     recent_activity_window_days: int,
 ) -> dict[str, Any]:
     """cutoff 시점까지의 events/comments/worklogs만으로 계산하는 시계열 피처."""
@@ -295,7 +297,11 @@ def build_dynamic_features(
     blocked_hours = sum(hours for name, hours in status_breakdown.items() if is_blocked_status(name))
 
     ordered_comments = [c for c in comments if c.get("created")]
-    unique_commenters = {c.get("author") for c in ordered_comments if c.get("author")}
+    unique_commenters = {
+        normalized_author
+        for c in ordered_comments
+        if (normalized_author := author_identifier(c.get("author")))
+    }
     if ordered_comments:
         last_comment_at = max(c["created"] for c in ordered_comments)
         hours_since_last_comment = max((cutoff - last_comment_at).total_seconds() / 3600, 0.0)
@@ -304,7 +310,11 @@ def build_dynamic_features(
 
     human_worklogs = [w for w in worklogs if not is_bot_author(w.get("author"))]
     time_spent_seconds = sum(w.get("timeSpentSeconds") or 0 for w in human_worklogs)
-    unique_workers = {w.get("author") for w in human_worklogs if w.get("author")}
+    unique_workers = {
+        normalized_author
+        for w in human_worklogs
+        if (normalized_author := author_identifier(w.get("author")))
+    }
 
     # 진행률 불균형 지수 (Progress-Time Ratio)
     progress_ratio = (
@@ -317,20 +327,20 @@ def build_dynamic_features(
     hours_until_deadline = proxy_deadline_hours - elapsed_hours
 
     # 최근 활동 모멘텀: 기한 임박 + 최근 N일간 무활동은 '위험'의 강력한 전조
-    window_start = cutoff.timestamp() - recent_activity_window_days * 86400
-    recent_comments = sum(1 for c in ordered_comments if c["created"].timestamp() >= window_start)
+    window_start = cutoff - timedelta(days=recent_activity_window_days)
+    recent_comments = sum(1 for c in ordered_comments if c["created"] >= window_start)
     recent_status_or_assignee_events = sum(
         1
         for e in ordered_events
         for item in (e.get("items") or [])
         if (item.get("field") or "").lower() in {"status", "assignee"}
         and e.get("created")
-        and e["created"].timestamp() >= window_start
+        and e["created"] >= window_start
     )
     recent_worklogs = sum(
         1
         for w in human_worklogs
-        if w.get("started") and w["started"].timestamp() >= window_start
+        if w.get("started") and w["started"] >= window_start
     )
     activity_count_recent_window = recent_comments + recent_status_or_assignee_events + recent_worklogs
 

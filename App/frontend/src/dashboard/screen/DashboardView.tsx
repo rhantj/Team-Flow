@@ -12,11 +12,25 @@ import { MEMBERS } from "../../global/lib/mock/members";
 import { GITHUB } from "../../github/libs/mock/github";
 import { WORKLOAD_DATA, PROGRESS_HISTORY } from "../libs/mock/workload";
 import { getDoneCount, getProgressPercent, getBlockedCount, getInProgressCount, formatDueDate } from "../../board/libs/utils/taskService";
-import type { DetailPage } from "../../board/libs/types/task";
+import type { DetailPage, TaskStatus } from "../../board/libs/types/task";
 import { useState } from "react";
 import { NAV_ITEMS } from "../../global/lib/constants/nav";
+import { useDashboardSummary } from "../libs/hooks/useDashboardSummary";
+import { resolveMemberDisplay } from "../libs/utils/memberDisplay";
 
 const OPEN_AI_ASSISTANT_EVENT = "workflow-ai:open-ai-assistant";
+
+// activities.type(업무 변경/GitHub/회의록/산출물 등)에 사람이 읽을 수 있는 짧은 한글 라벨을 붙인다.
+// activities 테이블엔 자유 텍스트 message 컬럼이 없어 type 기반으로 라벨을 합성한다.
+const ACTIVITY_TYPE_LABELS: Record<string, string> = {
+  TASK_UPDATE: "업무 상태 변경",
+  TASK_CREATE: "업무 생성",
+  MEETING: "회의록 업로드",
+  DELIVERABLE: "산출물 생성",
+  GITHUB: "GitHub 활동",
+  AI: "AI 분석",
+  COMMENT: "코멘트",
+};
 
 const formatRelativeTime = (iso: string): string => {
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -34,17 +48,24 @@ export function DashboardView() {
   const TASKS = useStoredTasks();
   const recentActivity = useStoredActivity();
   const [toast, setToast] = useState<string | null>(null);
+  const { data: summary } = useDashboardSummary();
 
   const showToast = (message: string) => {
     setToast(message);
     setTimeout(() => setToast(null), 2200);
   };
 
-  const totalTasks = TASKS.length;
-  const doneTasks = getDoneCount(TASKS);
-  const progressPct = getProgressPercent(TASKS);
-  const atRisk = getBlockedCount(TASKS);
-  const inProgress = getInProgressCount(TASKS);
+  // 대시보드 API가 아직 응답 전이거나 실패했을 때는 기존 로컬(useStoredTasks) 계산값으로
+  // 화면이 비지 않게 한다.
+  const totalTasks = summary?.totalTasks ?? TASKS.length;
+  const doneTasks = summary?.doneTasks ?? getDoneCount(TASKS);
+  const progressPct = summary?.progressPercent ?? getProgressPercent(TASKS);
+  const atRisk = summary?.blockedTasks ?? getBlockedCount(TASKS);
+  const inProgress = summary?.inProgressTasks ?? getInProgressCount(TASKS);
+
+  const liveUpcoming = summary && summary.upcomingDeadlines.length > 0 ? summary.upcomingDeadlines : null;
+  const liveWorkload = summary && summary.workload.length > 0 ? summary.workload : null;
+  const liveActivity = summary && summary.recentActivity.length > 0 ? summary.recentActivity : null;
 
   const deliverablesActive = NAV_ITEMS.find((item) => item.id === "deliverables")?.activate !== false;
   const githubActive = NAV_ITEMS.find((item) => item.id === "github")?.activate !== false;
@@ -150,19 +171,33 @@ export function DashboardView() {
             <Calendar className="w-4 h-4 text-muted-foreground" />
           </div>
           <div className="space-y-3">
-            {TASKS.filter(t => t.status !== "done").slice(0, 5).map(task => {
-              const m = MEMBERS.find(m => m.id === task.assignee)!;
-              return (
-                <div key={task.id} className="flex items-center gap-2.5">
-                  <StatusIcon status={task.status} />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium text-foreground truncate">{task.title}</div>
-                    <div className="text-[10px] text-muted-foreground">마감 {formatDueDate(task.dueDate)}</div>
-                  </div>
-                  <Avatar member={m} size="sm" />
-                </div>
-              );
-            })}
+            {liveUpcoming
+              ? liveUpcoming.map(task => {
+                  const m = resolveMemberDisplay(task.assigneeName, 0);
+                  return (
+                    <div key={task.id} className="flex items-center gap-2.5">
+                      <StatusIcon status={task.status as TaskStatus} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-medium text-foreground truncate">{task.title}</div>
+                        <div className="text-[10px] text-muted-foreground">마감 {task.dueDate ?? "미정"}</div>
+                      </div>
+                      <Avatar member={m} size="sm" />
+                    </div>
+                  );
+                })
+              : TASKS.filter(t => t.status !== "done").slice(0, 5).map(task => {
+                  const m = MEMBERS.find(m => m.id === task.assignee)!;
+                  return (
+                    <div key={task.id} className="flex items-center gap-2.5">
+                      <StatusIcon status={task.status} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-medium text-foreground truncate">{task.title}</div>
+                        <div className="text-[10px] text-muted-foreground">마감 {formatDueDate(task.dueDate)}</div>
+                      </div>
+                      <Avatar member={m} size="sm" />
+                    </div>
+                  );
+                })}
           </div>
         </div>
       </div>
@@ -176,7 +211,10 @@ export function DashboardView() {
             <BarChart3 className="w-4 h-4 text-muted-foreground" />
           </div>
           <div className="space-y-3">
-            {WORKLOAD_DATA.map(m => (
+            {(liveWorkload
+              ? liveWorkload.map((entry, i) => ({ ...resolveMemberDisplay(entry.assigneeName, i), total: entry.total, done: entry.done }))
+              : WORKLOAD_DATA
+            ).map(m => (
               <div key={m.name}>
                 <div className="flex items-center justify-between text-xs mb-1">
                   <span className="font-medium text-foreground">{m.name}</span>
@@ -191,7 +229,10 @@ export function DashboardView() {
 
           <div className="mt-5 h-28">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={WORKLOAD_DATA} margin={{ top: 0, right: 0, left: -30, bottom: 0 }}>
+              <BarChart
+                data={liveWorkload ? liveWorkload.map(entry => ({ name: entry.assigneeName ?? "미배정", total: entry.total, done: entry.done })) : WORKLOAD_DATA}
+                margin={{ top: 0, right: 0, left: -30, bottom: 0 }}
+              >
                 <CartesianGrid key="bcg" strokeDasharray="3 3" stroke="rgba(0,0,0,0.05)" />
                 <XAxis key="bx" dataKey="name" tick={{ fontSize: 10, fill: "#8892A4" }} />
                 <YAxis key="by" tick={{ fontSize: 10, fill: "#8892A4" }} />
@@ -210,7 +251,22 @@ export function DashboardView() {
             <Zap className="w-4 h-4 text-muted-foreground" />
           </div>
           <div className="space-y-3">
-            {recentActivity.slice(0, 3).map(entry => (
+            {liveActivity && liveActivity.slice(0, 3).map(entry => (
+              <div key={entry.id} className="flex items-start gap-2.5">
+                <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5" style={{ background: "rgba(112,72,232,0.12)" }}>
+                  <Sparkles className="w-3 h-3" style={{ color: "#7048E8" }} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs text-foreground font-medium truncate">
+                    {ACTIVITY_TYPE_LABELS[entry.type] ?? "활동"}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">
+                    {entry.actorName ?? "알 수 없음"} · {entry.createdAt ? formatRelativeTime(entry.createdAt) : ""}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {!liveActivity && recentActivity.slice(0, 3).map(entry => (
               <div key={entry.id} className="flex items-start gap-2.5">
                 <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5" style={{ background: "rgba(112,72,232,0.12)" }}>
                   <Sparkles className="w-3 h-3" style={{ color: "#7048E8" }} />
@@ -221,7 +277,7 @@ export function DashboardView() {
                 </div>
               </div>
             ))}
-            {githubActive && GITHUB.slice(0, Math.max(0, 5 - recentActivity.length)).map((g, i) => (
+            {githubActive && !liveActivity && GITHUB.slice(0, Math.max(0, 5 - recentActivity.length)).map((g, i) => (
               <div key={i} className="flex items-start gap-2.5">
                 <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5" style={{ background: g.type === "pr" ? "#EEF1FB" : g.type === "merge" ? "#ECFDF5" : "#F4F6FA" }}>
                   {g.type === "pr" && <GitPullRequest className="w-3 h-3" style={{ color: "#3B5BDB" }} />}

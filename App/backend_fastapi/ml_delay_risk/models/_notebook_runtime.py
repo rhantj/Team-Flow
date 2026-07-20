@@ -23,9 +23,13 @@
 
 노트북을 JSON으로 파싱해 exec()하는 구조 자체의 "셀 순서·내용이 바뀌면 조용히 깨질 수 있는"
 위험은 train.py가 쓰는 학습 파이프라인 부분에는 여전히 남아 있다(학습은 대화형 탐색이 필요한
-노트북 워크플로우로 남기기로 함). 실패를 "빠르고 분명하게" 만드는 두 가지 안전장치를 둔다.
-1. 셀 실행 중 예외가 나면 어느 셀(인덱스·가장 가까운 마크다운 제목)에서 났는지 덧붙여 재발생시킨다.
-2. ``run_main=False`` 로드가 끝나면 필수 이름이 다 있는지(=import 셀이 여전히 제대로 동작하는지)
+노트북 워크플로우로 남기기로 함). 실패를 "빠르고 분명하게" 만드는 세 가지 안전장치를 둔다.
+1. 실행 전에 모든 code 셀(``_RUN_TRAINING_CELLS`` 게이트 안쪽 포함)을 ``compile()``만 먼저
+   해본다. ``run_main=False``에서는 게이트된 학습 셀이 실제로 실행되지 않아 구문 오류를
+   알 수 없었는데, 이 사전 검사로 그 셀들의 구문 오류까지 (오래 걸리는 학습을 실제로 돌려보지
+   않고도) 잡아낸다.
+2. 셀 실행 중 예외가 나면 어느 셀(인덱스·가장 가까운 마크다운 제목)에서 났는지 덧붙여 재발생시킨다.
+3. ``run_main=False`` 로드가 끝나면 필수 이름이 다 있는지(=import 셀이 여전히 제대로 동작하는지)
    즉시 검사해서, 빠진 이름이 있으면(예: import 셀이 실수로 삭제됨) 바로 실패한다.
 """
 from __future__ import annotations
@@ -66,6 +70,27 @@ def _nearest_heading(cells: list[dict[str, Any]], upto_index: int) -> Optional[s
     return None
 
 
+def _validate_all_cells_compile(cells: list[dict[str, Any]]) -> None:
+    # 학습/EDA 셀(if _RUN_TRAINING_CELLS: 게이트 안쪽)은 run_main=False에서는 건너뛰므로,
+    # 실제로 실행해보지 않으면 구문 오류를 알 수 없다. run_main 값과 무관하게 모든 code 셀을
+    # 실행 전에 미리 compile()만 해봐서, (1) run_main=False 구조 검증 테스트가 학습 셀의 구문
+    # 오류까지 잡아낼 수 있게 하고 (2) run_main=True(train.py)일 때도 오래 걸리는 학습을 다
+    # 돌리다가 뒤늦게 실패하지 않고 시작하자마자 실패하게 한다.
+    for index, cell in enumerate(cells):
+        if cell.get("cell_type") != "code":
+            continue
+        source = "".join(cell.get("source", []))
+        try:
+            compile(source, str(_NOTEBOOK_PATH), "exec")
+        except SyntaxError as exc:
+            heading = _nearest_heading(cells, index)
+            location = f"cell #{index}" + (f" ('{heading}' 아래)" if heading else "")
+            raise NotebookRuntimeError(
+                f"delay_model.ipynb {location}에 구문 오류가 있습니다: {exc!r}. "
+                "노트북 셀이 최근에 편집되지 않았는지 확인하세요."
+            ) from exc
+
+
 def load(
     *, run_main: bool = False, initial_globals: Optional[dict[str, Any]] = None
 ) -> types.ModuleType:
@@ -93,6 +118,7 @@ def load(
         with _NOTEBOOK_PATH.open(encoding="utf-8") as f:
             notebook = json.load(f)
         cells = notebook["cells"]
+        _validate_all_cells_compile(cells)
 
         module = types.ModuleType(_MODULE_NAME)
         module.__file__ = str(_NOTEBOOK_PATH)

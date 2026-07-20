@@ -27,12 +27,16 @@ FREQUENCY_ENCODED_COLUMNS = ["reporter", "assignee_at_cutoff"]
 
 @dataclass
 class ModelArtifact:
-    booster: lgb.Booster
+    booster: Optional[lgb.Booster]
     feature_names: list[str]
     categorical_columns: list[str]
     frequency_maps: dict[str, dict[str, int]]
     proxy_deadline_map: dict[tuple[str, str], float]
     global_median_duration_hours: float
+    model_type: str = "lightgbm"
+    model: Any = None
+    model_feature_columns: Optional[list[str]] = None
+    category_maps: Optional[dict[str, list[Any]]] = None
 
 
 def _model_path() -> Path:
@@ -67,6 +71,11 @@ def load_artifact() -> ModelArtifact:
                         "먼저 'python -m ml_delay_risk.train'을 실행하거나 모델을 내려받으세요."
                     )
                 try:
+                    # joblib.load()는 내부적으로 pickle을 쓴다 — 이 파일의 내용에 따라 임의
+                    # 코드가 실행될 수 있으므로, 신뢰 경계는 "이 경로에 쓸 수 있는 파일이 실제로
+                    # 신뢰할 수 있는 출처(우리 train.py, 또는 fetch_model.py가 체크섬을 검증한
+                    # 다운로드)에서 왔는가"에 있다. fetch_model.py가 DELAY_RISK_HF_MODEL_SHA256이
+                    # 설정된 경우 다운로드 직후 체크섬을 대조해서 이 경계를 지킨다.
                     _artifact_cache = joblib.load(path)
                 except Exception as exc:
                     # 예전 코드(모듈명이 "__main__"으로 고정되던 시절)로 저장된 모델이거나
@@ -104,11 +113,57 @@ def predict_class_probabilities(feature_row: dict[str, Any]) -> list[float]:
 
     for col in artifact.feature_names:
         if col in artifact.categorical_columns:
-            row_df[col] = row_df[col].astype("category")
+            categories = (getattr(artifact, "category_maps", None) or {}).get(col)
+            if categories is not None:
+                row_df[col] = pd.Categorical(row_df[col], categories=categories)
+            else:
+                row_df[col] = row_df[col].astype("category")
         else:
             # 단일 행 DataFrame에서 None(예: 예상시간 없는 이슈의 progress_ratio)은
             # object dtype이 되어 LightGBM predict가 거부한다 -> 명시적으로 float로 강제.
             row_df[col] = pd.to_numeric(row_df[col], errors="coerce")
 
-    probabilities = artifact.booster.predict(row_df, num_iteration=artifact.booster.best_iteration)[0]
-    return [float(p) for p in probabilities]
+    model_type = getattr(artifact, "model_type", "lightgbm")
+    model = getattr(artifact, "model", None)
+
+    if model_type == "lightgbm":
+        booster = artifact.booster or model
+        if booster is None:
+            raise RuntimeError("LightGBM 모델 아티팩트에 booster가 없습니다.")
+        probabilities = booster.predict(row_df, num_iteration=booster.best_iteration)[0]
+        return [float(p) for p in probabilities]
+
+    if model is None:
+        raise RuntimeError(f"{model_type} 모델 아티팩트에 model 객체가 없습니다.")
+
+    if model_type in {"catboost", "xgboost"}:
+        probabilities = model.predict_proba(row_df)[0]
+        classes = getattr(model, "classes_", None)
+        return _align_probabilities(probabilities, classes)
+
+    if model_type == "random_forest":
+        rf_columns = getattr(artifact, "model_feature_columns", None)
+        rf_row_df = pd.get_dummies(
+            row_df,
+            columns=[c for c in artifact.categorical_columns if c in row_df.columns],
+        )
+        if rf_columns is not None:
+            rf_row_df = rf_row_df.reindex(columns=rf_columns, fill_value=0)
+        rf_row_df = rf_row_df.fillna(0)
+        probabilities = model.predict_proba(rf_row_df)[0]
+        classes = getattr(model, "classes_", None)
+        return _align_probabilities(probabilities, classes)
+
+    raise RuntimeError(f"지원하지 않는 지연 위험도 모델 유형입니다: {model_type}")
+
+
+def _align_probabilities(probabilities: Any, classes: Any) -> list[float]:
+    if classes is None:
+        return [float(p) for p in probabilities]
+
+    aligned = [0.0] * NUM_CLASSES
+    for class_label, probability in zip(classes, probabilities):
+        class_index = int(class_label)
+        if 0 <= class_index < NUM_CLASSES:
+            aligned[class_index] = float(probability)
+    return aligned

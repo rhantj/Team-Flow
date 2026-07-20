@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 BOT_NAME_MARKERS = (
     "bot",
@@ -17,7 +17,39 @@ BOT_NAME_MARKERS = (
 )
 
 
-def is_bot_author(author_name: Optional[str]) -> bool:
+def author_identifier(author: Any) -> Optional[str]:
+    """Jira author 값이 문자열/딕셔너리 어느 쪽이어도 비교 가능한 문자열로 정규화."""
+    if not author:
+        return None
+    if isinstance(author, str):
+        normalized = author.strip()
+        return normalized or None
+    if isinstance(author, dict):
+        for key in (
+            "displayName",
+            "display_name",
+            "name",
+            "key",
+            "accountId",
+            "account_id",
+            "emailAddress",
+            "email",
+            "username",
+        ):
+            value = author.get(key)
+            if value:
+                normalized = str(value).strip()
+                if normalized:
+                    return normalized
+        text_values = [str(value).strip() for value in author.values() if value and not isinstance(value, dict)]
+        normalized = " ".join(value for value in text_values if value)
+        return normalized or None
+    normalized = str(author).strip()
+    return normalized or None
+
+
+def is_bot_author(author_name: Any) -> bool:
+    author_name = author_identifier(author_name)
     if not author_name:
         return False
     lowered = author_name.lower()

@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import shutil
 from pathlib import Path
@@ -17,6 +18,14 @@ from ml_delay_risk.config import get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+
+def _sha256_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def main() -> None:
@@ -43,6 +52,13 @@ def main() -> None:
             "배포마다 다른 모델을 받을 수 있어 재현성이 깨지니, 운영 환경에서는 커밋 해시나 "
             "태그로 고정하는 것을 권장합니다."
         )
+    if not settings.hf_model_sha256:
+        logger.warning(
+            "DELAY_RISK_HF_MODEL_SHA256이 설정되지 않았습니다. load_artifact()는 이 파일을 "
+            "joblib.load()(=pickle)로 역직렬화하는데, 저장소가 팀 통제 밖에 있거나 탈취되면 "
+            "임의 코드 실행으로 이어질 수 있습니다. 운영 환경에서는 체크섬을 고정하는 것을 "
+            "권장합니다."
+        )
 
     logger.info(
         "Hugging Face Hub에서 모델 다운로드 중: repo=%s file=%s revision=%s",
@@ -62,6 +78,24 @@ def main() -> None:
         # revision을 안 고정했더라도 실제로 어떤 커밋을 받았는지 로그로 남겨 사후 추적이
         # 가능하게 한다.
         resolved_revision = Path(downloaded_path).parent.name
+
+        if settings.hf_model_sha256:
+            actual_sha256 = _sha256_of(target_path)
+            if actual_sha256.lower() != settings.hf_model_sha256.lower():
+                # 이 파일은 이후 joblib.load()(=pickle)로 역직렬화되므로, 체크섬이 안 맞는
+                # 파일을 그대로 두면 임의 코드가 실행될 수 있다. 신뢰하지 않고 즉시 지운다 —
+                # load_artifact()가 "모델 없음"으로 인식해 기존 503 경로를 그대로 타게 된다.
+                target_path.unlink()
+                logger.error(
+                    "다운로드한 모델의 체크섬이 설정값과 다릅니다(기대=%s, 실제=%s). "
+                    "저장소가 변조되었을 수 있어 이 파일을 신뢰하지 않고 삭제했습니다. "
+                    "repo=%s revision=%s",
+                    settings.hf_model_sha256,
+                    actual_sha256,
+                    settings.hf_model_repo_id,
+                    resolved_revision,
+                )
+                return
     except (OSError, HFValidationError):
         # OSError는 requests/huggingface_hub가 던지는 네트워크 오류와 HTTP 오류(잘못된
         # repo/revision, private 저장소 인증 실패 등 HfHubHTTPError 계열)를 모두 포괄한다

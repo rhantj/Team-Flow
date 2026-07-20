@@ -51,7 +51,7 @@ def build_proxy_deadline_map(
     }
     cursor = db[settings.issues_collection].find(_ISSUE_QUERY, projection)
     if limit:
-        cursor = cursor.limit(limit)
+        cursor = cursor.sort("$natural", 1).limit(limit)
 
     rows = []
     for issue in cursor:
@@ -113,7 +113,7 @@ def build_training_dataframe(
 
     cursor = db[settings.issues_collection].find(_ISSUE_QUERY)
     if limit:
-        cursor = cursor.limit(limit)
+        cursor = cursor.sort("$natural", 1).limit(limit)
 
     rows: list[dict[str, Any]] = []
     issues_scanned = 0

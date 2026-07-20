@@ -60,6 +60,13 @@ class Settings(BaseSettings):
     # 운영 배포에서는 반드시 특정 리비전으로 고정할 것을 권장.
     hf_model_revision: str = ""
 
+    # load_artifact()는 이 파일을 joblib.load()(=pickle)로 역직렬화한다. pickle 역직렬화는
+    # 파일 내용에 따라 임의 코드를 실행할 수 있으므로, hf_model_repo_id가 팀이 통제하지 않는
+    # 저장소를 가리키게 되거나 그 저장소가 탈취되면 서버 프로세스 권한으로 코드 실행이 가능하다.
+    # 여기에 다운로드한 파일의 SHA-256을 채워두면 fetch_model.py가 저장 직후 체크섬을 대조해,
+    # 일치하지 않는 파일은 신뢰하지 않고(=적용하지 않고) 거부한다. 비워두면 이 검증을 건너뛴다.
+    hf_model_sha256: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -12,6 +12,7 @@ import threading
 import lightgbm as lgb
 import pandas as pd
 import pytest
+from sklearn.ensemble import RandomForestClassifier
 
 from ml_delay_risk.models import delay_model
 
@@ -81,6 +82,36 @@ def test_predict_class_probabilities_returns_valid_distribution(monkeypatch):
     monkeypatch.setattr(delay_model, "_artifact_cache", _train_fake_artifact())
 
     probabilities = delay_model.predict_class_probabilities({"elapsed_hours_at_cutoff": 50.0})
+
+    assert len(probabilities) == 3
+    assert all(0.0 <= p <= 1.0 for p in probabilities)
+    assert sum(probabilities) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_predict_class_probabilities_supports_random_forest_artifact(monkeypatch):
+    train_x = pd.DataFrame(
+        {
+            "elapsed_hours_at_cutoff": [2.0, 12.0, 48.0, 96.0],
+            "priority_name_High": [0, 1, 1, 0],
+        }
+    )
+    model = RandomForestClassifier(n_estimators=5, random_state=42).fit(train_x, [0, 0, 1, 2])
+    artifact = delay_model.ModelArtifact(
+        booster=None,
+        feature_names=["elapsed_hours_at_cutoff", "priority_name"],
+        categorical_columns=["priority_name"],
+        frequency_maps={},
+        proxy_deadline_map={},
+        global_median_duration_hours=72.0,
+        model_type="random_forest",
+        model=model,
+        model_feature_columns=list(train_x.columns),
+    )
+    monkeypatch.setattr(delay_model, "_artifact_cache", artifact)
+
+    probabilities = delay_model.predict_class_probabilities(
+        {"elapsed_hours_at_cutoff": 50.0, "priority_name": "High"}
+    )
 
     assert len(probabilities) == 3
     assert all(0.0 <= p <= 1.0 for p in probabilities)

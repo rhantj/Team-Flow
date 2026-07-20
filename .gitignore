@@ -281,5 +281,7 @@ docs/superpowers/
 # FS-3 ml_delay_risk: 학습된 바이너리 모델 산출물 (재현 불가 + 저장소 비대화)
 # `python -m ml_delay_risk.train`으로 로컬에서 재생성할 것.
 App/backend_fastapi/ml_delay_risk/models/*.pkl
+# MLflow 로컬 실험 로그 — 하이퍼파라미터 튜닝 실행 시 생성됨.
+App/backend_fastapi/mlruns/
 # CatBoost가 fit() 실행 시 자동 생성하는 학습 로그(TensorBoard 이벤트 등) — 노트북 재실행마다 새로 생김.
 App/backend_fastapi/ml_delay_risk/models/catboost_info/
