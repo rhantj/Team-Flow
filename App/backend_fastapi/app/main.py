@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import json
+import logging
+import os
 import re
 from datetime import date, timedelta
 from typing import List, Optional
 
+import ollama
 from fastapi import FastAPI, File, Form, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from llm_rag_assistant.app.routers.chat_router import router as rag_router
 from ml_workload_score.app.routers.workload_router import router as workload_router
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="WorkFlow AI FastAPI", version="0.1.0")
 
@@ -85,6 +91,14 @@ def health():
 
 @app.post("/api/v1/meetings/analyze-json", response_model=MeetingAnalysisResult)
 def analyze_json(request: AnalyzeRequest):
+    provider = os.getenv("MEETING_ANALYSIS_PROVIDER", "ollama")
+    if provider == "ollama":
+        try:
+            return analyze_meeting_with_ollama(request)
+        except Exception:
+            # Ollama 미실행/모델 없음/timeout/JSON 파싱 실패/Pydantic 검증 실패 등
+            # 원인이 다양하지만 전부 동일하게 규칙 기반 분석으로 대체해야 하므로 광범위하게 잡는다.
+            logger.exception("Ollama 회의록 분석 실패, 규칙 기반 분석으로 대체합니다.")
     return analyze_meeting(request)
 
 
@@ -116,12 +130,17 @@ async def analyze_upload(
     )
 
 
-def analyze_meeting(request: AnalyzeRequest) -> MeetingAnalysisResult:
-    raw_text = request.text or request.title
-    text = normalize_text(raw_text)
+def resolve_participants(request: AnalyzeRequest) -> List[str]:
     participants = [p for p in request.participants if p and p.strip()]
     if not participants:
         participants = ["팀장", "팀원"]
+    return participants
+
+
+def analyze_meeting(request: AnalyzeRequest) -> MeetingAnalysisResult:
+    raw_text = request.text or request.title
+    text = normalize_text(raw_text)
+    participants = resolve_participants(request)
 
     decisions = extract_sentences(text, ["확정", "결정", "통일", "진행", "사용", "구성"], 5)
     if not decisions:
@@ -152,6 +171,153 @@ def analyze_meeting(request: AnalyzeRequest) -> MeetingAnalysisResult:
             title=request.title,
             meeting_date=request.meeting_date,
             participants=participants,
+        ),
+    )
+
+
+_VALID_PRIORITIES = {"HIGH", "MEDIUM", "LOW"}
+_VALID_CATEGORIES = {
+    "FRONTEND",
+    "BACKEND",
+    "AI",
+    "DATABASE",
+    "QA",
+    "DOCUMENT",
+    "PRESENTATION",
+    "ETC",
+}
+
+
+def analyze_meeting_with_ollama(request: AnalyzeRequest) -> MeetingAnalysisResult:
+    host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    model = os.getenv("MEETING_ANALYSIS_MODEL", "llama3.2:3b")
+    timeout_seconds = float(os.getenv("MEETING_ANALYSIS_TIMEOUT_SECONDS", "45"))
+    temperature = float(os.getenv("OLLAMA_ANALYSIS_TEMPERATURE", "0.1"))
+
+    client = ollama.Client(host=host, timeout=timeout_seconds)
+    response = client.chat(
+        model=model,
+        messages=[{"role": "user", "content": build_ollama_prompt(request)}],
+        format="json",
+        options={"temperature": temperature},
+    )
+    raw = response["message"]["content"]
+    return parse_ollama_analysis_response(raw, request)
+
+
+def build_ollama_prompt(request: AnalyzeRequest) -> str:
+    participants = ", ".join(resolve_participants(request))
+    text = request.text or request.title
+    return f"""다음은 회의록 원문입니다. 이 내용을 분석해서 아래 JSON 스키마로만 응답하세요. 스키마에 없는 다른 텍스트는 출력하지 마세요.
+
+회의 제목: {request.title}
+회의 일자: {request.meeting_date}
+선택된 참석자: {participants}
+
+회의록 원문:
+{text}
+
+JSON 스키마:
+{{
+  "summary": "회의 내용 한두 문장 요약",
+  "decisions": ["결정사항 문장", "..."],
+  "todos": [
+    {{
+      "title": "업무 제목(간단히)",
+      "description": "업무 상세 설명",
+      "assignee_candidate": "담당자 이름 또는 빈 문자열",
+      "due_date": "YYYY-MM-DD 또는 null",
+      "priority": "HIGH 또는 MEDIUM 또는 LOW",
+      "category": "FRONTEND 또는 BACKEND 또는 AI 또는 DATABASE 또는 QA 또는 DOCUMENT 또는 PRESENTATION 또는 ETC"
+    }}
+  ],
+  "risks": ["위험요소 문장", "..."],
+  "keywords": ["키워드", "..."]
+}}
+
+담당자(assignee_candidate) 규칙 - 반드시 지킬 것:
+1. 회의록 내용에서 특정 인물이 명시적으로 담당한다고 말한 업무만 그 사람 이름을 assignee_candidate로 적는다.
+   예: "제가 하겠습니다", "저는 OO를 맡겠습니다" -> 발언자 본인. "OO가 맡겠습니다", "OO가 구현합니다", "담당: OO" -> 명시된 OO.
+2. 위와 같이 명시적으로 담당을 밝힌 경우가 아니면 assignee_candidate는 반드시 빈 문자열("")로 남긴다.
+3. 선택된 참석자 목록에 있다는 이유만으로 아무에게나 업무를 임의 배정하지 않는다.
+4. 회의록에 실제로 등장하지 않는 이름을 만들어내지 않는다.
+5. 특정 인물이나 목록의 첫 번째 참석자에게 fallback으로 몰아서 배정하지 않는다. 한 사람에게 모든 업무를 배정하는 것은 금지된다.
+"""
+
+
+def _strip_code_fence(raw: str) -> str:
+    trimmed = raw.strip()
+    if trimmed.startswith("```"):
+        trimmed = re.sub(r"^```[a-zA-Z]*\n?", "", trimmed)
+        trimmed = re.sub(r"```\s*$", "", trimmed)
+    return trimmed.strip()
+
+
+def _sanitize_assignee_candidate(candidate: str, source_text: str) -> str:
+    """모델이 회의록에 등장하지 않는 이름을 지어내는 것을 막는 안전장치.
+    회의록 원문에 실제로 등장하지 않는 이름은 미배정(빈 문자열)으로 되돌린다."""
+    name = candidate.strip()
+    if not name or name not in source_text:
+        return ""
+    return name
+
+
+def parse_ollama_analysis_response(raw: str, request: AnalyzeRequest) -> MeetingAnalysisResult:
+    payload = json.loads(_strip_code_fence(raw))
+    if not isinstance(payload, dict):
+        raise ValueError("Ollama 응답이 JSON 객체가 아닙니다.")
+
+    summary = str(payload.get("summary") or "").strip()
+    if not summary:
+        raise ValueError("Ollama 응답에 summary가 없습니다.")
+
+    source_text = request.text or request.title
+    todos: List[MeetingTodo] = []
+    for item in payload.get("todos") or []:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        description = str(item.get("description") or "").strip()
+        if not title and not description:
+            continue
+
+        priority = str(item.get("priority") or "MEDIUM").upper()
+        if priority not in _VALID_PRIORITIES:
+            priority = "MEDIUM"
+        category = str(item.get("category") or "ETC").upper()
+        if category not in _VALID_CATEGORIES:
+            category = "ETC"
+        due_date = item.get("due_date")
+        due_date = due_date if isinstance(due_date, str) and due_date.strip() else None
+        assignee_candidate = _sanitize_assignee_candidate(str(item.get("assignee_candidate") or ""), source_text)
+
+        todos.append(
+            MeetingTodo(
+                title=shorten(title or description, 44),
+                description=description or title,
+                assignee_candidate=assignee_candidate,
+                assignee_id=None,
+                due_date=due_date,
+                priority=priority,
+                category=category,
+                needs_leader_review=True,
+            )
+        )
+
+    decisions = [str(d).strip() for d in (payload.get("decisions") or []) if str(d).strip()]
+    risks = [str(r).strip() for r in (payload.get("risks") or []) if str(r).strip()]
+    keywords = [str(k).strip() for k in (payload.get("keywords") or []) if str(k).strip()]
+
+    return MeetingAnalysisResult(
+        summary=summary,
+        decisions=decisions,
+        todos=todos,
+        risks=risks,
+        keywords=keywords[:8],
+        meeting_meta=MeetingMeta(
+            title=request.title,
+            meeting_date=request.meeting_date,
+            participants=resolve_participants(request),
         ),
     )
 

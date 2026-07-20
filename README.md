@@ -48,6 +48,20 @@
 2. **업무 관리** → 카테고리 선택 → 상세 정보 입력 → 상태별 칸반 관리
 3. **심사자 평가** → 진행률·산출물·GitHub 조회 → 기여도 리포트 확인 → 점수 입력
 
+## 회의록 AI 분석 (로컬 Ollama)
+
+회의록 AI 분석은 기본적으로 로컬 Ollama 모델을 사용합니다 (외부 유료 LLM 미사용).
+
+- Ollama 설치: https://ollama.com
+- 빠른 분석용 모델(기본값): `ollama pull llama3.2:3b`
+- 품질 우선 모델: `ollama pull qwen3:8b` (`MEETING_ANALYSIS_MODEL=qwen3:8b`로 전환)
+- FastAPI 직접 실행 시: `OLLAMA_HOST=http://localhost:11434`
+- Docker Compose 사용 시: `OLLAMA_HOST=http://host.docker.internal:11434`
+- Ollama를 끄고 기존 규칙 기반 분석만 쓰려면: `MEETING_ANALYSIS_PROVIDER=rule`
+- 환경변수 변경 후에는 `backend-fastapi`를 재시작해야 반영됩니다.
+- 기존에 업로드된 회의록은 새 분석 로직이 소급 적용되지 않으므로 재분석/재업로드가 필요합니다.
+- Ollama 서버가 꺼져 있거나 모델이 없거나 응답 파싱에 실패하면 자동으로 기존 규칙 기반 분석으로 대체됩니다.
+
 ## 문서
 
 - [PRD](docs/WorkFlow_AI_PRD.md) — 기능 범위, 요구사항, 권한, AI 적용 범위
