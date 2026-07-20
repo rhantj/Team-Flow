@@ -53,14 +53,25 @@
 회의록 AI 분석은 기본적으로 로컬 Ollama 모델을 사용합니다 (외부 유료 LLM 미사용).
 
 - Ollama 설치: https://ollama.com
-- 빠른 분석용 모델(기본값): `gemma4:e2b` (로컬에 없으면 `ollama pull gemma4:e2b`)
-- 품질 우선 모델: `ollama pull qwen3:8b` (`MEETING_ANALYSIS_MODEL=qwen3:8b`로 전환)
+- 빠른 분석용 모델(기본값): `qwen2.5:1.5b` (로컬에 없으면 `ollama pull qwen2.5:1.5b`)
+- 품질 우선 모델: `ollama pull llama3.2:3b` 또는 `ollama pull qwen3:8b` (`MEETING_ANALYSIS_MODEL=모델명`으로 전환)
 - FastAPI 직접 실행 시: `OLLAMA_HOST=http://localhost:11434`
 - Docker Compose 사용 시: `OLLAMA_HOST=http://host.docker.internal:11434`
 - Ollama를 끄고 기존 규칙 기반 분석만 쓰려면: `MEETING_ANALYSIS_PROVIDER=rule`
+- 로컬 모델 응답이 느리면 `MEETING_ANALYSIS_TIMEOUT_SECONDS`, `MEETING_ANALYSIS_MAX_CHARS`, `MEETING_ANALYSIS_NUM_PREDICT` 값을 낮춰 fallback을 더 빨리 태울 수 있습니다.
 - 환경변수 변경 후에는 `backend-fastapi`를 재시작해야 반영됩니다.
 - 기존에 업로드된 회의록은 새 분석 로직이 소급 적용되지 않으므로 재분석/재업로드가 필요합니다.
 - Ollama 서버가 꺼져 있거나 모델이 없거나 응답 파싱에 실패하면 자동으로 기존 규칙 기반 분석으로 대체됩니다.
+
+### Hugging Face Inference로 전환
+
+다른 컴퓨터에서 Ollama 설치 없이 시연해야 하면 Hugging Face Inference Provider를 사용할 수 있습니다.
+
+- `.env`에 `MEETING_ANALYSIS_PROVIDER=huggingface` 설정
+- `.env`에 `HF_TOKEN=발급받은_토큰` 설정
+- 기본 모델: `HF_MEETING_ANALYSIS_MODEL=Qwen/Qwen3-4B-Instruct-2507`
+- Docker Compose 사용 시 `backend-fastapi`를 재빌드/재시작해야 반영됩니다.
+- Hugging Face 호출 실패 시에는 Ollama, 규칙 기반 분석 순서로 자동 대체됩니다.
 
 ## 문서
 

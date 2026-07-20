@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { Mail, Lock, Eye, EyeOff, ArrowRight } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, ArrowRight, Check } from "lucide-react";
 import { AuthBrandPanel } from "../components/AuthBrandPanel";
 import { AuthInput } from "../components/AuthInput";
 import { useAuth } from "../../global/hooks/useAuth";
@@ -9,10 +9,10 @@ import type { AuthTokenResponse } from "../../global/api/authTypes";
 import { tokenStore } from "../../global/api/tokenStore";
 
 const DEV_TEST_ACCOUNTS = [
-  { id: "1", name: "김민준", role: "팀장" },
-  { id: "2", name: "이서연", role: "팀원" },
-  { id: "3", name: "박지수", role: "팀원" },
-  { id: "4", name: "최동혁", role: "심사자" },
+  { id: "1", name: "김민준", role: "팀장", email: "kim.minjun@university.ac.kr" },
+  { id: "2", name: "이서연", role: "팀원", email: "lee.seoyeon@university.ac.kr" },
+  { id: "3", name: "박지수", role: "팀원", email: "park.jisu@university.ac.kr" },
+  { id: "4", name: "최동혁", role: "심사자", email: "choi.prof@university.ac.kr" },
 ];
 const demoAuthEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_AUTH === "true";
 
@@ -22,9 +22,10 @@ export function LoginScreen() {
   const [searchParams] = useSearchParams();
   const [devLoginError, setDevLoginError] = useState<string | null>(null);
   const [devLoggingInId, setDevLoggingInId] = useState<string | null>(null);
-  const [demoId, setDemoId] = useState("");
-  const [demoPw, setDemoPw] = useState("");
-  const [showDemoPw, setShowDemoPw] = useState(false);
+  const [email, setEmail] = useState("kim.minjun@university.ac.kr");
+  const [password, setPassword] = useState("workflow1234");
+  const [showPassword, setShowPassword] = useState(false);
+  const [remember, setRemember] = useState(false);
   const oauthFailed = searchParams.get("error") === "oauth_failed";
 
   const handleDevLogin = async (demoUserId: string) => {
@@ -33,6 +34,10 @@ export function LoginScreen() {
     setDevLoggingInId(demoUserId);
     try {
       const response = await fetch(`${API_BASE_URL}/auth/dev-login-token/${demoUserId}`);
+      const contentType = response.headers.get("Content-Type") ?? "";
+      if (!contentType.toLowerCase().includes("application/json")) {
+        throw new Error("인증 서버가 아직 준비되지 않았습니다. 잠시 후 다시 시도해주세요.");
+      }
       const body = await response.json() as ApiEnvelope<AuthTokenResponse>;
       if (!response.ok || !body.success || !body.data?.accessToken || !body.data?.refreshToken) {
         throw new Error(body.error?.message ?? "개발용 로그인에 실패했습니다.");
@@ -40,7 +45,7 @@ export function LoginScreen() {
       tokenStore.clear();
       tokenStore.setTokens(body.data.accessToken, body.data.refreshToken);
       await refreshMe();
-      navigate("/dashboard", { replace: true });
+      navigate("/projects", { replace: true });
     } catch (error) {
       setDevLoginError(error instanceof Error ? error.message : "개발용 로그인에 실패했습니다.");
     } finally {
@@ -48,12 +53,24 @@ export function LoginScreen() {
     }
   };
 
-  // 데모 ID/PW 로그인: 실제 비밀번호 인증 백엔드는 없음 — 입력한 이름/번호를 데모 계정과 매칭해
-  // 기존 dev-login-token 발급 흐름(handleDevLogin)을 그대로 재사용한다. 비밀번호는 검증하지 않는다.
-  const handleDemoIdPwLogin = () => {
-    const matched = DEV_TEST_ACCOUNTS.find(account => account.id === demoId.trim() || account.name === demoId.trim());
+  // 현재 서버에는 별도 ID/PW 인증 API가 없어 로컬/데모에서는 개발용 토큰 발급 흐름을 재사용한다.
+  const handleIdPwLogin = () => {
+    if (!demoAuthEnabled) {
+      setDevLoginError("ID/PW 로그인 API가 아직 연결되지 않았습니다. Google 로그인을 이용해주세요.");
+      return;
+    }
+    const id = email.trim();
+    const matched = DEV_TEST_ACCOUNTS.find(account => (
+      account.id === id ||
+      account.name === id ||
+      account.email === id
+    ));
     if (!matched) {
-      setDevLoginError("데모 환경에 등록된 테스트 계정이 아닙니다. 이름(예: 김민준) 또는 번호(1~4)를 입력해주세요.");
+      setDevLoginError("등록된 테스트 계정이 아닙니다. 이메일, 이름 또는 번호(1~4)를 입력해주세요.");
+      return;
+    }
+    if (!password.trim()) {
+      setDevLoginError("비밀번호를 입력해주세요.");
       return;
     }
     void handleDevLogin(matched.id);
@@ -67,7 +84,7 @@ export function LoginScreen() {
         <div className="w-full max-w-sm">
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-foreground mb-1">다시 만나서 반가워요!</h1>
-            <p className="text-sm text-muted-foreground">Google 계정으로 계속하세요.</p>
+            <p className="text-sm text-muted-foreground">계속하려면 로그인하세요.</p>
           </div>
 
           {oauthFailed && (
@@ -75,6 +92,56 @@ export function LoginScreen() {
               Google 로그인에 실패했습니다. 다시 시도해주세요.
             </div>
           )}
+
+          <div className="space-y-4">
+            <AuthInput label="이메일 또는 ID" type="text" placeholder="name@university.ac.kr"
+              value={email} onChange={setEmail} icon={Mail} />
+            <AuthInput
+              label="비밀번호" type={showPassword ? "text" : "password"} placeholder="비밀번호 입력"
+              value={password} onChange={setPassword} icon={Lock}
+              right={
+                <button type="button" onClick={() => setShowPassword(v => !v)} className="text-muted-foreground hover:text-foreground transition-colors">
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              }
+            />
+          </div>
+
+          <div className="flex items-center justify-between mt-3 mb-6">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <div onClick={() => setRemember(v => !v)}
+                className={`w-4 h-4 rounded border flex items-center justify-center transition-all cursor-pointer ${remember ? "border-blue-500 bg-blue-500" : "border-border"}`}>
+                {remember && <Check className="w-3 h-3 text-white" />}
+              </div>
+              <span className="text-xs text-muted-foreground">로그인 유지</span>
+            </label>
+            <button className="text-xs font-medium text-blue-600 hover:text-blue-700 transition-colors">비밀번호 찾기</button>
+          </div>
+
+          {devLoginError && (
+            <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-600">
+              {devLoginError}
+            </div>
+          )}
+
+          <button
+            onClick={handleIdPwLogin}
+            disabled={Boolean(devLoggingInId)}
+            className="w-full py-3 rounded-xl text-white text-sm font-semibold transition-all disabled:opacity-70 hover:opacity-90 flex items-center justify-center gap-2"
+            style={{ background: "linear-gradient(135deg, #3B5BDB 0%, #4F6EF7 100%)" }}
+          >
+            {devLoggingInId ? (
+              <><div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> 로그인 중...</>
+            ) : (
+              <><ArrowRight className="w-4 h-4" /> 로그인</>
+            )}
+          </button>
+
+          <div className="flex items-center gap-3 my-5">
+            <div className="flex-1 h-px bg-border" />
+            <span className="text-xs text-muted-foreground">또는</span>
+            <div className="flex-1 h-px bg-border" />
+          </div>
 
           <button
             onClick={loginWithGoogle}
@@ -97,36 +164,7 @@ export function LoginScreen() {
                 ⚠ 개발/데모 전용 — 아래는 실제 계정 인증이 아닙니다
               </p>
 
-              <div className="space-y-3 mb-5">
-                <AuthInput
-                  label="데모 ID (계정 이름 또는 번호)" type="text" placeholder="예: 김민준 또는 1"
-                  value={demoId} onChange={setDemoId} icon={Mail}
-                />
-                <AuthInput
-                  label="비밀번호 (데모 - 검증하지 않음)" type={showDemoPw ? "text" : "password"} placeholder="아무 값이나 입력"
-                  value={demoPw} onChange={setDemoPw} icon={Lock}
-                  right={
-                    <button type="button" onClick={() => setShowDemoPw(v => !v)} className="text-muted-foreground hover:text-foreground transition-colors">
-                      {showDemoPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  }
-                />
-                <button
-                  onClick={handleDemoIdPwLogin}
-                  disabled={Boolean(devLoggingInId)}
-                  className="w-full py-2.5 rounded-xl text-white text-sm font-semibold transition-all disabled:opacity-70 hover:opacity-90 flex items-center justify-center gap-2"
-                  style={{ background: "linear-gradient(135deg, #3B5BDB 0%, #4F6EF7 100%)" }}
-                >
-                  <ArrowRight className="w-4 h-4" /> ID/PW로 로그인 (데모)
-                </button>
-              </div>
-
               <p className="text-center text-[11px] font-semibold text-muted-foreground mb-3">개발용 테스트 계정으로 입장</p>
-              {devLoginError && (
-                <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-600">
-                  {devLoginError}
-                </div>
-              )}
               <div className="grid grid-cols-2 gap-2">
                 {DEV_TEST_ACCOUNTS.map((account) => (
                   <button

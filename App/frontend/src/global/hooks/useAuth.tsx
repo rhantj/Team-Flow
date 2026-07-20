@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { API_BASE_URL, apiFetch, AUTH_LOGOUT_EVENT } from "../api/apiClient";
 import { tokenStore } from "../api/tokenStore";
 import type { MeResponse, ProjectRoleSummary, UserSummary } from "../api/authTypes";
@@ -13,6 +13,7 @@ interface AuthState {
   currentProjectId: number | null;
   currentProject: ProjectRoleSummary | null;
   selectProject: (projectId: number) => void;
+  addLocalProjectRole: (projectTitle: string, role: ProjectRoleSummary["role"]) => number;
   loginWithGoogle: () => void;
   logout: () => void;
   refreshMe: () => Promise<void>;
@@ -22,9 +23,14 @@ const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserSummary | null>(null);
-  const [projectRoles, setProjectRoles] = useState<ProjectRoleSummary[]>([]);
+  const [serverProjectRoles, setServerProjectRoles] = useState<ProjectRoleSummary[]>([]);
+  const [localProjectRoles, setLocalProjectRoles] = useState<ProjectRoleSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
+  const projectRoles = useMemo(
+    () => [...serverProjectRoles, ...localProjectRoles],
+    [serverProjectRoles, localProjectRoles],
+  );
 
   // projectRoles가 (최초 로드/새 프로젝트 생성 등으로) 바뀔 때마다, 저장된 선택이 여전히 유효하면 유지하고
   // 아니면(첫 로드, 그 프로젝트에서 빠짐 등) 첫 번째 프로젝트로 폴백한다.
@@ -43,23 +49,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(SELECTED_PROJECT_KEY, String(projectId));
   };
 
+  const addLocalProjectRole = (projectTitle: string, role: ProjectRoleSummary["role"]) => {
+    const projectId = -Date.now();
+    setLocalProjectRoles((prev) => [
+      { projectId, projectTitle, role },
+      ...prev.filter((project) => project.projectTitle !== projectTitle),
+    ]);
+    selectProject(projectId);
+    return projectId;
+  };
+
   const currentProject = projectRoles.find((pr) => pr.projectId === currentProjectId) ?? null;
 
   const loadMe = async () => {
     if (!tokenStore.getAccessToken()) {
       setUser(null);
-      setProjectRoles([]);
+      setServerProjectRoles([]);
       setLoading(false);
       return;
     }
     try {
       const me = await apiFetch<MeResponse>("/me");
       setUser(me.user);
-      setProjectRoles(me.projectRoles);
+      setServerProjectRoles(me.projectRoles);
     } catch (err) {
       tokenStore.clear();
       setUser(null);
-      setProjectRoles([]);
+      setServerProjectRoles([]);
       throw err;
     } finally {
       setLoading(false);
@@ -71,7 +87,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const handleForcedLogout = () => {
       setUser(null);
-      setProjectRoles([]);
+      setServerProjectRoles([]);
+      setLocalProjectRoles([]);
     };
     window.addEventListener(AUTH_LOGOUT_EVENT, handleForcedLogout);
     return () => window.removeEventListener(AUTH_LOGOUT_EVENT, handleForcedLogout);
@@ -85,7 +102,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     apiFetch("/auth/logout", { method: "POST" }).catch(() => {});
     tokenStore.clear();
     setUser(null);
-    setProjectRoles([]);
+    setServerProjectRoles([]);
+    setLocalProjectRoles([]);
   };
 
   return (
@@ -98,6 +116,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         currentProjectId,
         currentProject,
         selectProject,
+        addLocalProjectRole,
         loginWithGoogle,
         logout,
         refreshMe: loadMe,

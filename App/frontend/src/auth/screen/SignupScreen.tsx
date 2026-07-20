@@ -1,6 +1,20 @@
 import { useState, type ChangeEvent } from "react";
 import { useNavigate } from "react-router";
-import { Mail, Lock, Eye, EyeOff, ArrowRight } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  Check,
+  CheckCircle2,
+  Clock,
+  Eye,
+  EyeOff,
+  FileText,
+  GraduationCap,
+  Lock,
+  Mail,
+  ShieldCheck,
+  User,
+} from "lucide-react";
 import { AuthBrandPanel } from "../components/AuthBrandPanel";
 import { AuthInput } from "../components/AuthInput";
 import { useAuth } from "../../global/hooks/useAuth";
@@ -8,69 +22,86 @@ import { API_BASE_URL, type ApiEnvelope } from "../../global/api/apiClient";
 import type { AuthTokenResponse } from "../../global/api/authTypes";
 import { tokenStore } from "../../global/api/tokenStore";
 
-const DEV_TEST_ACCOUNTS = [
-  { id: "1", name: "김민준", role: "팀장" },
-  { id: "2", name: "이서연", role: "팀원" },
-  { id: "3", name: "박지수", role: "팀원" },
-  { id: "4", name: "최동혁", role: "심사자" },
-];
 const demoAuthEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_AUTH === "true";
 
 export function SignupScreen() {
   const navigate = useNavigate();
   const { loginWithGoogle, refreshMe } = useAuth();
-  const [judgeSignup, setJudgeSignup] = useState(false);
-  const [affiliation, setAffiliation] = useState("");
-  const [professorCode, setProfessorCode] = useState("");
-  const [certificateFileName, setCertificateFileName] = useState("");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+  const [pwConfirm, setPwConfirm] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [agreed, setAgreed] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [isProfessor, setIsProfessor] = useState(false);
+  const [professorNo, setProfessorNo] = useState("");
+  const [certificateName, setCertificateName] = useState("");
+  const [approvalSubmitted, setApprovalSubmitted] = useState(false);
   const [signupError, setSignupError] = useState<string | null>(null);
-  const [demoId, setDemoId] = useState("");
-  const [demoPw, setDemoPw] = useState("");
-  const [showDemoPw, setShowDemoPw] = useState(false);
-  const [demoSignupError, setDemoSignupError] = useState<string | null>(null);
-  const [demoSigningUp, setDemoSigningUp] = useState(false);
+
+  const pwMatch = Boolean(pw && pwConfirm && pw === pwConfirm);
+  const pwMismatch = Boolean(pw && pwConfirm && pw !== pwConfirm);
+  const professorValid = !isProfessor || Boolean(professorNo.trim() || certificateName);
+  const valid = Boolean(name.trim() && email.trim() && pw && pwMatch && agreed && professorValid);
 
   const handleCertificateChange = (event: ChangeEvent<HTMLInputElement>) => {
-    setCertificateFileName(event.target.files?.[0]?.name ?? "");
+    setCertificateName(event.target.files?.[0]?.name ?? "");
   };
 
-  const handleSignup = () => {
+  const loginWithDevAccount = async (demoUserId: string) => {
+    const response = await fetch(`${API_BASE_URL}/auth/dev-login-token/${demoUserId}`);
+    const contentType = response.headers.get("Content-Type") ?? "";
+    if (!contentType.toLowerCase().includes("application/json")) {
+      throw new Error("인증 서버가 아직 준비되지 않았습니다. 잠시 후 다시 시도해주세요.");
+    }
+    const body = await response.json() as ApiEnvelope<AuthTokenResponse>;
+    if (!response.ok || !body.success || !body.data?.accessToken || !body.data?.refreshToken) {
+      throw new Error(body.error?.message ?? "회원가입 처리에 실패했습니다.");
+    }
+    tokenStore.clear();
+    tokenStore.setTokens(body.data.accessToken, body.data.refreshToken);
+    await refreshMe();
+  };
+
+  const handleSubmit = async () => {
+    if (!valid || loading) return;
     setSignupError(null);
+    setLoading(true);
+    try {
+      if (isProfessor) {
+        setApprovalSubmitted(true);
+        return;
+      }
 
-    if (judgeSignup && (!affiliation.trim() || !professorCode.trim())) {
-      setSignupError("소속 학교/기관과 교수 인증번호를 입력해주세요.");
-      return;
+      if (!demoAuthEnabled) {
+        loginWithGoogle();
+        return;
+      }
+
+      await loginWithDevAccount("1");
+      navigate("/projects", { replace: true });
+    } catch (error) {
+      setSignupError(error instanceof Error ? error.message : "회원가입 처리에 실패했습니다.");
+    } finally {
+      setLoading(false);
     }
-
-    // 심사자 인증 심사(소속/교수 인증번호/서류) 백엔드가 아직 없어, 우선 일반 Google 가입/로그인으로 연결한다.
-    loginWithGoogle();
   };
 
-  // 데모 ID/PW 회원가입: 실제 계정 생성 백엔드는 없음 — 데모 계정 이름/번호로 매칭해
-  // 기존 dev-login-token 발급 흐름을 그대로 재사용한다(LoginScreen의 데모 로그인과 동일한 방식).
-  const handleDemoSignup = async () => {
-    if (demoSigningUp) return;
-    setDemoSignupError(null);
-    const matched = DEV_TEST_ACCOUNTS.find(account => account.id === demoId.trim() || account.name === demoId.trim());
-    if (!matched) {
-      setDemoSignupError("데모 환경에서는 새 계정을 만들 수 없습니다. 이름(예: 김민준) 또는 번호(1~4)의 기존 데모 계정으로 입장해주세요.");
+  const handleApproveDemo = async () => {
+    if (!demoAuthEnabled || loading) {
+      navigate("/login");
       return;
     }
-    setDemoSigningUp(true);
+    setSignupError(null);
+    setLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/dev-login-token/${matched.id}`);
-      const body = await response.json() as ApiEnvelope<AuthTokenResponse>;
-      if (!response.ok || !body.success || !body.data?.accessToken || !body.data?.refreshToken) {
-        throw new Error(body.error?.message ?? "데모 회원가입에 실패했습니다.");
-      }
-      tokenStore.clear();
-      tokenStore.setTokens(body.data.accessToken, body.data.refreshToken);
-      await refreshMe();
-      navigate("/dashboard", { replace: true });
+      await loginWithDevAccount("4");
+      navigate("/projects", { replace: true });
     } catch (error) {
-      setDemoSignupError(error instanceof Error ? error.message : "데모 회원가입에 실패했습니다.");
+      setSignupError(error instanceof Error ? error.message : "심사자 승인 시연에 실패했습니다.");
     } finally {
-      setDemoSigningUp(false);
+      setLoading(false);
     }
   };
 
@@ -78,130 +109,199 @@ export function SignupScreen() {
     <div className="flex min-h-screen flex-col lg:flex-row" style={{ fontFamily: "'Inter', 'Noto Sans KR', sans-serif" }}>
       <AuthBrandPanel />
 
-      <div className="flex-1 flex items-center justify-center bg-background px-8">
-        <div className="w-full max-w-md">
-          <div className="mb-8">
-            <h1 className="text-2xl font-bold text-foreground mb-1">TeamFlow AI 시작하기</h1>
-            <p className="text-sm text-muted-foreground">
-              Google 계정 하나로 가입과 로그인이 한번에 끝나요. 팀 프로젝트를 스마트하게 관리해보세요.
-            </p>
-          </div>
+      <div className="flex-1 flex items-center justify-center bg-background px-4 sm:px-8 overflow-y-auto">
+        <div className="w-full max-w-sm py-8">
+          {approvalSubmitted ? (
+            <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
+              <div className="w-12 h-12 rounded-2xl flex items-center justify-center mb-5" style={{ background: "rgba(112,72,232,0.12)", color: "#7048E8" }}>
+                <Clock className="w-6 h-6" />
+              </div>
+              <h1 className="text-2xl font-bold text-foreground mb-2">관리자 승인 대기 중</h1>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                교수 인증 정보가 제출되었습니다. 관리자 승인 후 가입이 완료되며,
+                승인된 계정은 심사자 권한으로 로그인됩니다.
+              </p>
 
-          <div className="space-y-4">
-            <button
-              onClick={handleSignup}
-              className="w-full py-3 rounded-xl border border-border bg-card text-sm font-semibold text-foreground transition-all hover:bg-muted flex items-center justify-center gap-2.5"
-            >
-              <GoogleIcon />
-              {judgeSignup ? "심사자 가입 신청하기" : "Google로 시작하기"}
-            </button>
-
-            <label className={`block rounded-2xl border p-4 transition-all cursor-pointer ${judgeSignup ? "border-blue-400 bg-blue-50" : "border-border bg-card hover:bg-muted/50"}`}>
-              <div className="flex items-start gap-3">
-                <input
-                  type="checkbox"
-                  checked={judgeSignup}
-                  onChange={event => {
-                    setJudgeSignup(event.target.checked);
-                    setSignupError(null);
-                  }}
-                  className="mt-1 h-4 w-4 rounded border-border accent-blue-600"
-                />
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-foreground">교수/심사자로 가입 신청</div>
-                  <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                    입력한 인증 정보는 Google 가입 후 관리자가 별도로 확인합니다. (자동 승인 아님)
+              <div className="mt-5 rounded-xl border border-violet-100 bg-violet-50 p-4">
+                <div className="flex items-start gap-3">
+                  <ShieldCheck className="w-5 h-5 text-violet-600 mt-0.5" />
+                  <div>
+                    <div className="text-sm font-bold text-violet-700">승인 후 제공 화면</div>
+                    <div className="text-xs text-violet-600 mt-1 leading-relaxed">
+                      담당 프로젝트 목록, 개인별 기여도 리포트, AI 평가 근거, 최종 점수 입력 화면
+                    </div>
                   </div>
                 </div>
               </div>
-            </label>
 
-            {judgeSignup && (
-              <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4 space-y-3">
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">소속 학교/기관</label>
-                  <input
-                    value={affiliation}
-                    onChange={event => setAffiliation(event.target.value)}
-                    placeholder="예: 한국대학교 컴퓨터공학과"
-                    className="w-full rounded-xl border border-blue-100 bg-white px-3 py-2 text-sm outline-none transition-colors focus:border-blue-400"
-                  />
+              {signupError && (
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-600">
+                  {signupError}
                 </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">교수 인증번호</label>
-                  <input
-                    value={professorCode}
-                    onChange={event => setProfessorCode(event.target.value)}
-                    placeholder="교수 일련번호 또는 인증 코드"
-                    className="w-full rounded-xl border border-blue-100 bg-white px-3 py-2 text-sm outline-none transition-colors focus:border-blue-400"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">인증서류 첨부</label>
-                  <label className="flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-xl border border-dashed border-blue-200 bg-white px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-blue-400">
-                    <span className="truncate">{certificateFileName || "재직증명서 또는 심사자 인증 서류"}</span>
-                    <span className="shrink-0 text-xs font-semibold text-blue-600">파일 선택</span>
-                    <input type="file" className="hidden" onChange={handleCertificateChange} />
-                  </label>
-                </div>
-                <div className="rounded-xl bg-blue-100/60 border border-blue-200 px-3 py-2.5 text-xs text-blue-800 leading-relaxed">
-                  가입 신청 후 <strong>관리자 승인 절차</strong>를 거칩니다. 승인이 완료되면 심사자 권한으로 로그인됩니다.
-                </div>
+              )}
+
+              {demoAuthEnabled && (
+                <button
+                  onClick={() => void handleApproveDemo()}
+                  disabled={loading}
+                  className="mt-5 w-full py-3 rounded-xl text-white text-sm font-semibold transition-opacity hover:opacity-90 disabled:opacity-60 flex items-center justify-center gap-2"
+                  style={{ background: "linear-gradient(135deg, #7048E8 0%, #4F6EF7 100%)" }}
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  {loading ? "승인 처리 중..." : "승인 완료 시연하기"}
+                </button>
+              )}
+              <button onClick={() => navigate("/login")} className="w-full mt-3 text-sm font-semibold text-blue-600 hover:text-blue-700">
+                로그인 화면으로 이동
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="mb-7">
+                <h1 className="text-2xl font-bold text-foreground mb-1">TeamFlow AI 시작하기</h1>
+                <p className="text-sm text-muted-foreground">팀 프로젝트를 스마트하게 관리해보세요.</p>
               </div>
-            )}
 
-            {signupError && (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-600">
-                {signupError}
-              </div>
-            )}
-          </div>
-
-          <p className="text-center text-[11px] text-muted-foreground mt-4 leading-relaxed">
-            계속 진행하면 이용약관 및 개인정보처리방침에 동의하는 것으로 간주됩니다.
-          </p>
-
-          <p className="text-center text-sm text-muted-foreground mt-6">
-            이미 계정이 있으신가요?{" "}
-            <button onClick={() => navigate("/login")} className="font-semibold text-blue-600 hover:text-blue-700 transition-colors">
-              로그인
-            </button>
-          </p>
-
-          {demoAuthEnabled && (
-            <div className="mt-8 pt-6 border-t border-border">
-              <p className="text-center text-[11px] font-semibold text-amber-600 mb-3">
-                ⚠ 개발/데모 전용 — 실제 계정을 생성하지 않습니다
-              </p>
-              <div className="space-y-3">
+              <div className="space-y-4">
+                <AuthInput label="이름" placeholder="실명을 입력하세요" value={name} onChange={setName} icon={User} />
+                <AuthInput label="이메일" type="email" placeholder="name@university.ac.kr" value={email} onChange={setEmail} icon={Mail} />
                 <AuthInput
-                  label="데모 ID (계정 이름 또는 번호)" type="text" placeholder="예: 김민준 또는 1"
-                  value={demoId} onChange={setDemoId} icon={Mail}
-                />
-                <AuthInput
-                  label="비밀번호 (데모 - 검증하지 않음)" type={showDemoPw ? "text" : "password"} placeholder="아무 값이나 입력"
-                  value={demoPw} onChange={setDemoPw} icon={Lock}
+                  label="비밀번호"
+                  type={showPw ? "text" : "password"}
+                  placeholder="8자 이상 입력"
+                  value={pw}
+                  onChange={setPw}
+                  icon={Lock}
                   right={
-                    <button type="button" onClick={() => setShowDemoPw(v => !v)} className="text-muted-foreground hover:text-foreground transition-colors">
-                      {showDemoPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    <button type="button" onClick={() => setShowPw(v => !v)} className="text-muted-foreground hover:text-foreground transition-colors">
+                      {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   }
                 />
-                {demoSignupError && (
-                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-600">
-                    {demoSignupError}
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-foreground">비밀번호 확인</label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <input
+                      type="password"
+                      placeholder="비밀번호를 다시 입력"
+                      value={pwConfirm}
+                      onChange={e => setPwConfirm(e.target.value)}
+                      className={`w-full rounded-xl border text-sm text-foreground placeholder-muted-foreground outline-none focus:ring-2 transition-all bg-input-background ${
+                        pwMismatch
+                          ? "border-red-400 focus:ring-red-100"
+                          : pwMatch
+                            ? "border-emerald-400 focus:ring-emerald-100"
+                            : "border-border focus:border-blue-400 focus:ring-blue-100"
+                      }`}
+                      style={{ padding: "10px 36px 10px 36px" }}
+                    />
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                      {pwMatch && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+                      {pwMismatch && <AlertTriangle className="w-4 h-4 text-red-400" />}
+                    </div>
+                  </div>
+                  {pwMismatch && <span className="text-xs text-red-500">비밀번호가 일치하지 않습니다.</span>}
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-xl border border-border bg-card p-4">
+                <button type="button" onClick={() => setIsProfessor(v => !v)} className="w-full flex items-start gap-3 text-left">
+                  <div className={`w-5 h-5 rounded border flex items-center justify-center mt-0.5 shrink-0 ${isProfessor ? "border-violet-500 bg-violet-500" : "border-border"}`}>
+                    {isProfessor && <Check className="w-3.5 h-3.5 text-white" />}
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <GraduationCap className="w-4 h-4 text-violet-600" />
+                      <span className="text-sm font-bold text-foreground">교수/심사자 계정으로 신청합니다</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      인증 후 심사자 전용 UI와 평가 기능을 사용할 수 있습니다.
+                    </p>
+                  </div>
+                </button>
+
+                {isProfessor && (
+                  <div className="mt-4 space-y-3">
+                    <div>
+                      <label className="text-xs font-semibold text-foreground">교수 일련번호 또는 교직원 번호</label>
+                      <input
+                        value={professorNo}
+                        onChange={e => setProfessorNo(e.target.value)}
+                        className="mt-1.5 w-full rounded-xl border border-border bg-input-background px-3 py-2.5 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                        placeholder="예: PROF-2026-001"
+                      />
+                    </div>
+                    <label className="block">
+                      <span className="text-xs font-semibold text-foreground">인증 서류 첨부</span>
+                      <div className="mt-1.5 flex items-center gap-2 rounded-xl border border-dashed border-violet-200 bg-violet-50 px-3 py-3">
+                        <FileText className="w-4 h-4 text-violet-600" />
+                        <span className="flex-1 text-xs text-violet-700 truncate">{certificateName || "재직증명서, 교원증 이미지 등"}</span>
+                        <span className="text-xs font-semibold text-violet-700">선택</span>
+                      </div>
+                      <input type="file" className="hidden" onChange={handleCertificateChange} />
+                    </label>
+                    <div className="text-xs text-violet-600 bg-violet-50 rounded-lg px-3 py-2">
+                      가입하기를 누르면 관리자 승인 후 가입 처리됩니다.
+                    </div>
                   </div>
                 )}
-                <button
-                  onClick={() => void handleDemoSignup()}
-                  disabled={demoSigningUp}
-                  className="w-full py-2.5 rounded-xl text-white text-sm font-semibold transition-all disabled:opacity-70 hover:opacity-90 flex items-center justify-center gap-2"
-                  style={{ background: "linear-gradient(135deg, #3B5BDB 0%, #4F6EF7 100%)" }}
-                >
-                  <ArrowRight className="w-4 h-4" /> {demoSigningUp ? "처리 중..." : "ID/PW로 회원가입 (데모)"}
-                </button>
               </div>
-            </div>
+
+              <label className="flex items-start gap-2 mt-5 mb-6 cursor-pointer select-none">
+                <div
+                  onClick={() => setAgreed(v => !v)}
+                  className={`w-4 h-4 rounded border flex items-center justify-center transition-all mt-0.5 cursor-pointer shrink-0 ${agreed ? "border-blue-500 bg-blue-500" : "border-border"}`}
+                >
+                  {agreed && <Check className="w-3 h-3 text-white" />}
+                </div>
+                <span className="text-xs text-muted-foreground leading-relaxed">
+                  <button className="font-semibold text-blue-600 hover:text-blue-700">이용약관</button> 및{" "}
+                  <button className="font-semibold text-blue-600 hover:text-blue-700">개인정보처리방침</button>에 동의합니다.
+                </span>
+              </label>
+
+              {signupError && (
+                <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-600">
+                  {signupError}
+                </div>
+              )}
+
+              <button
+                onClick={() => void handleSubmit()}
+                disabled={!valid || loading}
+                className="w-full py-3 rounded-xl text-white text-sm font-semibold transition-all disabled:opacity-50 hover:opacity-90 flex items-center justify-center gap-2"
+                style={{ background: valid ? "linear-gradient(135deg, #3B5BDB 0%, #4F6EF7 100%)" : "#C1C9D9" }}
+              >
+                {loading ? (
+                  <><div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> 가입 중...</>
+                ) : (
+                  <><ArrowRight className="w-4 h-4" /> 가입하기</>
+                )}
+              </button>
+
+              <div className="flex items-center gap-3 my-5">
+                <div className="flex-1 h-px bg-border" />
+                <span className="text-xs text-muted-foreground">또는</span>
+                <div className="flex-1 h-px bg-border" />
+              </div>
+
+              <button
+                onClick={loginWithGoogle}
+                className="w-full py-3 rounded-xl border border-border bg-card text-sm font-semibold text-foreground transition-all hover:bg-muted flex items-center justify-center gap-2.5"
+              >
+                <GoogleIcon />
+                Google로 계속하기
+              </button>
+
+              <p className="text-center text-sm text-muted-foreground mt-4">
+                이미 계정이 있으신가요?{" "}
+                <button onClick={() => navigate("/login")} className="font-semibold text-blue-600 hover:text-blue-700 transition-colors">
+                  로그인
+                </button>
+              </p>
+            </>
           )}
         </div>
       </div>

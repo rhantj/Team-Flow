@@ -16,7 +16,7 @@ import dashboard.DTO.WorkloadEntryDto;
 import dashboard.entity.Activity;
 import dashboard.entity.Milestone;
 import dashboard.entity.MlPrediction;
-import dashboard.repository.ActivityRepository;
+import dashboard.repository.DashboardActivityRepository;
 import dashboard.repository.MilestoneRepository;
 import dashboard.repository.MlPredictionRepository;
 import java.time.format.DateTimeFormatter;
@@ -43,7 +43,7 @@ public class DashboardService {
 
     private final TaskRepository taskRepository;
     private final MilestoneRepository milestoneRepository;
-    private final ActivityRepository activityRepository;
+    private final DashboardActivityRepository activityRepository;
     private final MlPredictionRepository mlPredictionRepository;
     private final UserRepository userRepository;
     private final DemoDataService demoDataService;
@@ -52,7 +52,7 @@ public class DashboardService {
     public DashboardService(
         TaskRepository taskRepository,
         MilestoneRepository milestoneRepository,
-        ActivityRepository activityRepository,
+        DashboardActivityRepository activityRepository,
         MlPredictionRepository mlPredictionRepository,
         UserRepository userRepository,
         DemoDataService demoDataService,

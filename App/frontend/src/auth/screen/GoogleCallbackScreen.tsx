@@ -27,7 +27,7 @@ export function GoogleCallbackScreen() {
 
     tokenStore.setTokens(accessToken, refreshToken);
     refreshMe()
-      .then(() => navigate("/dashboard", { replace: true }))
+      .then(() => navigate("/projects", { replace: true }))
       .catch(() => navigate("/login?error=oauth_failed", { replace: true }));
   }, [navigate, refreshMe]);
 

@@ -51,6 +51,50 @@ const MEETING_STATUS_POLL_INTERVAL_MS = 2000;
 const MEETING_STATUS_MAX_POLL_ATTEMPTS = 60;
 const MEETING_STATUS_MAX_NETWORK_FAILURES = 5;
 
+type AnalysisPhase = "idle" | "uploading" | "queued" | "analyzing" | "finalizing";
+
+const ANALYSIS_PHASE_COPY: Record<AnalysisPhase, { title: string; message: string; badge: string }> = {
+  idle: {
+    title: "AI 분석 준비 중",
+    message: "회의록 분석을 시작할 준비를 하고 있습니다.",
+    badge: "준비 중",
+  },
+  uploading: {
+    title: "회의록 업로드 중",
+    message: "파일을 서버에 보내고 분석 작업을 생성하고 있습니다.",
+    badge: "서버 요청 처리 중",
+  },
+  queued: {
+    title: "분석 작업 접수 완료",
+    message: "서버가 회의록을 저장했고 백그라운드 분석 작업을 준비하고 있습니다.",
+    badge: "상태 확인 대기 중",
+  },
+  analyzing: {
+    title: "AI 분석 진행 중",
+    message: "서버의 PROCESSING 상태를 확인하면서 로컬 Ollama 분석 결과를 기다리고 있습니다.",
+    badge: "Ollama 분석 중",
+  },
+  finalizing: {
+    title: "결과 정리 중",
+    message: "분석 결과를 저장하고 화면에 표시할 준비를 하고 있습니다.",
+    badge: "결과 저장 중",
+  },
+};
+
+const getStageIndexFromProgress = (progress: number, stageCount: number) => {
+  if (stageCount <= 1) return 0;
+  if (progress >= 100) return stageCount - 1;
+  return Math.min(Math.floor(progress / (100 / stageCount)), stageCount - 1);
+};
+
+const getProcessingProgressTarget = (attempts: number) => Math.min(86, 34 + attempts * 5);
+
+const formatElapsed = (seconds: number) => {
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return minutes > 0 ? `${minutes}분 ${rest}초` : `${rest}초`;
+};
+
 const groupTodosByAssignee = (list: GenTodo[], resolveAssignee: (todo: GenTodo) => string): GenTodo[] => {
   const UNASSIGNED_KEY = "__unassigned__";
   const order: string[] = [];
@@ -326,6 +370,11 @@ export function MeetingsView() {
   const [modalStep, setModalStep] = useState(0);
   const [analyzeStage, setAnalyzeStage] = useState(0);
   const [analyzeProgress, setAnalyzeProgress] = useState(0);
+  const [analyzeProgressTarget, setAnalyzeProgressTarget] = useState(0);
+  const [analysisPhase, setAnalysisPhase] = useState<AnalysisPhase>("idle");
+  const [analysisElapsedSeconds, setAnalysisElapsedSeconds] = useState(0);
+  const [pollAttemptCount, setPollAttemptCount] = useState(0);
+  const [analysisRequestPending, setAnalysisRequestPending] = useState(false);
   const [meetTitle, setMeetTitle] = useState("");
   const [meetDate, setMeetDate] = useState(getTodayIsoDate());
   const [meetKind, setMeetKind] = useState("정기회의");
@@ -367,22 +416,38 @@ export function MeetingsView() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pdfCaptureRef = useRef<HTMLDivElement | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const resultTransitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollSessionRef = useRef(0);
   const analyzeStages = getAnalyzeStages(uploadType);
   const canAddManualTodo = CURRENT_USER_ROLE === "leader";
 
-  // 가짜 진행률 애니메이션: 실제 서버 상태를 모르므로 90%에서 멈추고 대기한다.
-  // 실제 완료/실패 전환은 아래 polling(stopPolling/pollMeetingStatus)이 담당한다.
+  // 실제 서버 처리 흐름에 맞춘 진행률 표시:
+  // 업로드 요청 → 서버 PROCESSING 폴링 → 완료/실패 응답 순서로 목표 진행률만 올린다.
   useEffect(() => {
     if (uploadFlow !== "analyzing") return;
-    let prog = 0; let stg = 0;
     const iv = setInterval(() => {
-      prog = Math.min(prog + 1.5, 90);
-      stg = Math.min(Math.floor(prog / (100 / analyzeStages.length)), analyzeStages.length - 1);
-      setAnalyzeStage(stg); setAnalyzeProgress(Math.round(prog));
-    }, 70);
+      setAnalyzeProgress(prev => {
+        if (prev >= analyzeProgressTarget) return prev;
+        const remaining = analyzeProgressTarget - prev;
+        return Math.min(analyzeProgressTarget, prev + Math.max(1, Math.ceil(remaining * 0.25)));
+      });
+    }, 350);
     return () => clearInterval(iv);
-  }, [uploadFlow, analyzeStages.length]);
+  }, [uploadFlow, analyzeProgressTarget]);
+
+  useEffect(() => {
+    setAnalyzeStage(getStageIndexFromProgress(analyzeProgress, analyzeStages.length));
+  }, [analyzeProgress, analyzeStages.length]);
+
+  useEffect(() => {
+    if (uploadFlow !== "analyzing") return;
+    const startedAt = Date.now();
+    setAnalysisElapsedSeconds(0);
+    const iv = setInterval(() => {
+      setAnalysisElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [uploadFlow]);
 
   const stopPolling = () => {
     pollSessionRef.current += 1;
@@ -390,11 +455,19 @@ export function MeetingsView() {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
     }
+    if (resultTransitionTimeoutRef.current) {
+      clearTimeout(resultTransitionTimeoutRef.current);
+      resultTransitionTimeoutRef.current = null;
+    }
   };
 
   // "analyzing" 화면을 벗어나면(완료/실패/사용자 이탈) polling을 중단한다.
   useEffect(() => {
-    if (uploadFlow !== "analyzing") stopPolling();
+    if (uploadFlow !== "analyzing") {
+      stopPolling();
+      setAnalysisRequestPending(false);
+      setAnalysisPhase("idle");
+    }
   }, [uploadFlow]);
 
   // unmount 시 polling 정리
@@ -407,9 +480,25 @@ export function MeetingsView() {
     pollSessionRef.current = pollSessionId;
     let attempts = 0;
     let consecutiveNetworkFailures = 0;
-    pollIntervalRef.current = setInterval(() => {
+    setPollAttemptCount(0);
+    setAnalysisPhase("queued");
+    setAnalyzeProgressTarget(prev => Math.max(prev, 28));
+
+    const finishToResults = (applyResult: () => void) => {
+      setAnalysisPhase("finalizing");
+      setAnalyzeProgressTarget(100);
+      setAnalyzeProgress(100);
+      stopPolling();
+      resultTransitionTimeoutRef.current = setTimeout(() => {
+        resultTransitionTimeoutRef.current = null;
+        applyResult();
+      }, 550);
+    };
+
+    const checkStatus = () => {
       if (pollSessionRef.current !== pollSessionId) return;
       attempts += 1;
+      setPollAttemptCount(attempts);
       if (attempts > MEETING_STATUS_MAX_POLL_ATTEMPTS) {
         stopPolling();
         setAnalysisResult(null);
@@ -423,8 +512,11 @@ export function MeetingsView() {
       fetchMeeting(projectId, meetingId).then(response => {
         if (pollSessionRef.current !== pollSessionId) return;
         consecutiveNetworkFailures = 0;
-        if (response.status === "PROCESSING") return;
-        stopPolling();
+        if (response.status === "PROCESSING") {
+          setAnalysisPhase("analyzing");
+          setAnalyzeProgressTarget(getProcessingProgressTarget(attempts));
+          return;
+        }
         if (response.status === "COMPLETED" && response.analysis) {
           const apiTodos = buildGeneratedTodos(response.analysis);
           const source = response.analysisSource === "FASTAPI" ? "fastapi" : "spring-fallback";
@@ -434,23 +526,27 @@ export function MeetingsView() {
             fileName: selectedFile?.name,
             uploadedAt,
           });
-          setAnalysisResult(response.analysis);
-          setSelTodos(apiTodos.map(t => t.id));
-          setAnalysisSource(source);
-          setMeetings(prev => {
-            const next = [analyzedMeeting, ...prev.filter(item => item.id !== analyzedMeeting.id)];
-            saveStoredMeetings(next, projectId);
-            return next;
+          finishToResults(() => {
+            setAnalysisResult(response.analysis);
+            setSelTodos(apiTodos.map(t => t.id));
+            setAnalysisSource(source);
+            setMeetings(prev => {
+              const next = [analyzedMeeting, ...prev.filter(item => item.id !== analyzedMeeting.id)];
+              saveStoredMeetings(next, projectId);
+              return next;
+            });
+            setSelected(analyzedMeeting.id);
+            setUploadFlow("results");
+            setPanelTab("summary");
           });
-          setSelected(analyzedMeeting.id);
-          setUploadFlow("results");
-          setPanelTab("summary");
         } else {
-          setAnalysisResult(null);
-          setSelTodos([]);
-          setAnalysisSource(null);
-          setAnalysisError(response.errorMessage ?? "분석 중 오류가 발생했습니다. 다시 시도해주세요.");
-          setUploadFlow("results");
+          finishToResults(() => {
+            setAnalysisResult(null);
+            setSelTodos([]);
+            setAnalysisSource(null);
+            setAnalysisError(response.errorMessage ?? "분석 중 오류가 발생했습니다. 다시 시도해주세요.");
+            setUploadFlow("results");
+          });
         }
       }).catch(() => {
         if (pollSessionRef.current !== pollSessionId) return;
@@ -464,7 +560,10 @@ export function MeetingsView() {
           setUploadFlow("results");
         }
       });
-    }, MEETING_STATUS_POLL_INTERVAL_MS);
+    };
+
+    void checkStatus();
+    pollIntervalRef.current = setInterval(checkStatus, MEETING_STATUS_POLL_INTERVAL_MS);
   };
 
   useEffect(() => {
@@ -768,6 +867,11 @@ export function MeetingsView() {
     setAnalysisError(null);
     setAnalyzeStage(0);
     setAnalyzeProgress(0);
+    setAnalyzeProgressTarget(8);
+    setAnalysisElapsedSeconds(0);
+    setPollAttemptCount(0);
+    setAnalysisPhase("uploading");
+    setAnalysisRequestPending(true);
     setUploadFlow("analyzing");
 
     void analyzeMeeting({
@@ -780,9 +884,13 @@ export function MeetingsView() {
       participants: selectedAttendeeIds.map(id => projectMembers.find(member => String(member.userId) === id)?.name ?? id),
       attendeeIds: selectedAttendeeIds.map(Number),
     }).then(response => {
+      setAnalysisRequestPending(false);
       setActiveMeetingId(response.meetingId);
+      setAnalysisPhase("queued");
+      setAnalyzeProgressTarget(28);
       pollMeetingStatus(response.meetingId, title, uploadedAt);
     }).catch(() => {
+      setAnalysisRequestPending(false);
       setAnalysisResult(null);
       setSelTodos([]);
       setAnalysisSource(null);
@@ -800,12 +908,21 @@ export function MeetingsView() {
     setAnalysisError(null);
     setAnalyzeStage(0);
     setAnalyzeProgress(0);
+    setAnalyzeProgressTarget(8);
+    setAnalysisElapsedSeconds(0);
+    setPollAttemptCount(0);
+    setAnalysisPhase("uploading");
+    setAnalysisRequestPending(true);
     setUploadFlow("analyzing");
 
     void retryMeetingAnalysis(projectId, activeMeetingId).then(response => {
+      setAnalysisRequestPending(false);
       setActiveMeetingId(response.meetingId);
+      setAnalysisPhase("queued");
+      setAnalyzeProgressTarget(28);
       pollMeetingStatus(response.meetingId, meetTitle, uploadedAt);
     }).catch(() => {
+      setAnalysisRequestPending(false);
       setAnalysisError("재분석 요청에 실패했습니다. 다시 시도해주세요.");
       setUploadFlow("results");
     });
@@ -1171,7 +1288,14 @@ export function MeetingsView() {
   ) : null;
 
   // ── Analyzing screen ────────────────────────────────────────────────────────
-  const renderAnalyzing = () => (
+  const renderAnalyzing = () => {
+    const phaseCopy = ANALYSIS_PHASE_COPY[analysisPhase];
+    const waitHint = analysisPhase === "uploading"
+      ? "파일 업로드와 분석 작업 생성이 끝나면 서버 상태 확인을 시작합니다"
+      : `경과 ${formatElapsed(analysisElapsedSeconds)} · 상태 확인 ${pollAttemptCount}회`;
+    const currentStageLabel = analyzeStages[analyzeStage] ?? "분석 준비";
+
+    return (
     <div className="h-full flex items-center justify-center bg-background" style={{ fontFamily:"'Inter','Noto Sans KR',sans-serif" }}>
       <div className="w-full max-w-lg px-6 text-center">
         {/* Spinner */}
@@ -1191,13 +1315,32 @@ export function MeetingsView() {
         </div>
 
         <div className="mb-2 text-xs font-mono text-muted-foreground">{uploadFileName || "업로드된 회의록"}</div>
-        <h2 className="text-xl font-bold text-foreground mb-1">AI 분석 진행 중</h2>
-        <p className="text-sm text-muted-foreground mb-8">잠시만 기다려주세요. 회의 내용을 분석하고 업무를 자동 생성합니다.</p>
+        <h2 className="text-xl font-bold text-foreground mb-1">{phaseCopy.title}</h2>
+        <p className="text-sm text-muted-foreground mb-5">{phaseCopy.message}</p>
+
+        <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-700">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          {phaseCopy.badge}
+        </div>
+
+        <div className="mb-4 rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-left shadow-sm">
+          <div className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-500">
+            <span>현재 작업</span>
+            <span>{waitHint}</span>
+          </div>
+          <div className="mt-1 text-sm font-bold text-slate-900">{currentStageLabel}</div>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{ width: `${analyzeProgress}%`, background: "linear-gradient(135deg,#3B5BDB,#7048E8)" }}
+            />
+          </div>
+        </div>
 
         {/* Stage list */}
         <div className="space-y-2 text-left max-w-sm mx-auto">
           {analyzeStages.map((stage, i) => {
-            const done = i < analyzeStage; const active = i === analyzeStage;
+            const done = analyzeProgress >= 100 || i < analyzeStage; const active = analyzeProgress < 100 && i === analyzeStage;
             return (
               <div key={i} className={`flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all ${active ? "bg-blue-50 border border-blue-200" : done ? "opacity-60" : "opacity-30"}`}>
                 <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${done ? "bg-emerald-500" : active ? "border-2 border-blue-500" : "border-2 border-slate-300"}`}>
@@ -1210,10 +1353,11 @@ export function MeetingsView() {
           })}
         </div>
 
-        <p className="text-xs text-muted-foreground mt-8">약 20~40초 소요 · 분석이 완료되면 자동으로 이동합니다</p>
+        <p className="text-xs text-muted-foreground mt-8">{waitHint}</p>
       </div>
     </div>
-  );
+    );
+  };
 
   // ── Results screen ───────────────────────────────────────────────────────────
   const renderResults = () => {
