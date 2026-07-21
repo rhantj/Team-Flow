@@ -19,9 +19,14 @@ tokenizers>=0.21,<0.22
 faster-whisper==1.2.1
 joblib==1.5.3
 
-# LLM (6.6, LangChain은 미사용으로 보류)
+# LLM (6.6, RAG 챗봇은 LangChain으로 전환됨. 회의록 분석/기여도 보고서는 아직 직접 호출)
 openai==1.59.7
 ollama==0.6.2
+langchain-core==1.4.9
+langchain-huggingface==1.2.2
+langsmith==0.10.9
+aiohttp==3.14.2
+requests==2.34.2
 
 # File Processing (6.7, FFmpeg는 pip 패키지가 아닌 OS 바이너리라 제외)
 pdfplumber==0.11.4

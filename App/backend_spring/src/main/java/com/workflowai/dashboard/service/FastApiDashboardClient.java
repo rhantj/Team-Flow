@@ -1,4 +1,4 @@
-package dashboard.service;
+package com.workflowai.dashboard.service;
 
 import java.net.http.HttpClient;
 import org.springframework.beans.factory.annotation.Value;

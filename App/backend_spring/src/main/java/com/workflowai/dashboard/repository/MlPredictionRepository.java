@@ -1,6 +1,6 @@
-package dashboard.repository;
+package com.workflowai.dashboard.repository;
 
-import dashboard.entity.MlPrediction;
+import com.workflowai.dashboard.entity.MlPrediction;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 
