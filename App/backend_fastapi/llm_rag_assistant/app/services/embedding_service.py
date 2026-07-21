@@ -1,12 +1,18 @@
 from __future__ import annotations
 
-from ollama import AsyncClient
+import asyncio
+
+from huggingface_hub import InferenceClient
 
 from core.config import get_settings
 
 
 async def embed_text(text: str) -> list[float]:
     settings = get_settings()
-    client = AsyncClient(host=settings.ollama_host)
-    response = await client.embeddings(model=settings.embedding_model, prompt=text)
-    return response["embedding"]
+    client = InferenceClient(token=settings.hf_token)
+    vector = await asyncio.to_thread(
+        client.feature_extraction, text, model=settings.hf_embedding_model
+    )
+    if vector.ndim == 2:
+        vector = vector.mean(axis=0)
+    return vector.tolist()
