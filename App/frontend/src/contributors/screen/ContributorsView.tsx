@@ -39,7 +39,7 @@ const STATUS_META: Record<EvalStatus, { label: string; color: string; bg: string
 };
 
 const CATEGORY_LABELS: Record<CategoryKey, string> = {
-  workload: "워크로드",
+  workload: "업무 편중도",
   task: "업무 수행",
   meeting: "회의 참여",
 };
@@ -277,7 +277,7 @@ export function ContributorsView() {
                     <div>기여 점수</div>
                     <div>업무 수행</div>
                     <div>회의 참여</div>
-                    <div>workload</div>
+                    <div>업무 편중도</div>
                     <div>공개</div>
                   </div>
 
@@ -319,7 +319,7 @@ export function ContributorsView() {
                       <div className="text-xs text-foreground">
                         <span className="font-bold">{report.todoDone}</span>
                         <span className="text-muted-foreground">/{report.todoTotal}</span>
-                        <div className="text-[10px] text-muted-foreground">{taskRate}%</div>
+                        <div className="text-[10px] text-muted-foreground">수행율 {taskRate}%</div>
                       </div>
                       <div className="text-xs text-foreground">
                         {attendanceByMemberId[report.memberId] ? (
