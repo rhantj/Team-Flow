@@ -8,10 +8,11 @@ import { BoardToolbar } from "../components/BoardToolbar";
 import { BoardFilterBar } from "../components/BoardFilterBar";
 import { KanbanBoard } from "../components/KanbanBoard";
 import { TaskDetailPanel } from "../components/TaskDetailPanel";
+import { TaskResultPanel } from "../components/TaskResultPanel";
 import { AddTaskModal } from "../components/AddTaskModal";
 import { EditTaskModal } from "../components/EditTaskModal";
 import { fetchTasks, updateTaskPosition, deleteTask, DEMO_PROJECT_ID } from "../libs/utils/taskApi";
-import { NEXT_STATUS } from "../libs/utils/taskActions";
+import { NEXT_STATUS, quickMoveTargetStatus } from "../libs/utils/taskActions";
 import { reorderTasks } from "../libs/utils/taskService";
 import { useAuth } from "../../global/hooks/useAuth";
 import type { Task, TaskStatus } from "../libs/types/task";
@@ -33,6 +34,7 @@ export function BoardView() {
   const [modalStatus, setModalStatus] = useState<TaskStatus>("todo");
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [workResultOpen, setWorkResultOpen] = useState(false);
 
   const selTask = selId ? tasks.find((t) => t.id === selId) ?? null : null;
 
@@ -125,12 +127,20 @@ export function BoardView() {
 
   const handleSelectTask = (id: string) => {
     setSelId((prev) => (prev === id ? null : id));
+    setWorkResultOpen(false);
   };
 
   const handleQuickAction = (label: string, isPrimary: boolean) => {
     if (!selTask) return;
+    const moveTo = quickMoveTargetStatus(label, selTask.status);
+    if (moveTo) {
+      const columnCount = tasks.filter((t) => t.status === moveTo && t.id !== selTask.id).length;
+      moveTask(selTask.id, moveTo, columnCount);
+      showToast(`${label} 완료`);
+      return;
+    }
     if (isPrimary) {
-      const nextStatus = selTask.status === "done" ? "inprogress" : NEXT_STATUS[selTask.status];
+      const nextStatus = NEXT_STATUS[selTask.status];
       if (nextStatus) {
         const columnCount = tasks.filter((t) => t.status === nextStatus && t.id !== selTask.id).length;
         moveTask(selTask.id, nextStatus, columnCount);
@@ -216,7 +226,7 @@ export function BoardView() {
           {loadState === "ready" && (
             workspaceMode && selTask ? (
               <PanelGroup direction="horizontal">
-                <Panel defaultSize={68} minSize={40} className="min-w-0">
+                <Panel defaultSize={workResultOpen ? 50 : 68} minSize={30} className="min-w-0">
                   <KanbanBoard
                     tasks={filteredTasks}
                     compact
@@ -230,7 +240,7 @@ export function BoardView() {
                 <PanelResizeHandle className="group relative w-2.5 shrink-0 flex items-center justify-center outline-none cursor-col-resize">
                   <div className="w-1 h-10 rounded-full bg-border transition-colors group-hover:bg-blue-300 group-active:bg-blue-400" />
                 </PanelResizeHandle>
-                <Panel defaultSize={32} minSize={24} maxSize={50} className="min-w-0">
+                <Panel defaultSize={workResultOpen ? 25 : 32} minSize={24} maxSize={50} className="min-w-0">
                   <TaskDetailPanel
                     task={selTask}
                     onClose={() => setSelId(null)}
@@ -238,8 +248,23 @@ export function BoardView() {
                     onShowToast={showToast}
                     onDeleteTask={handleDeleteTask}
                     onEditTask={() => setEditingTask(selTask)}
+                    onOpenWorkResult={() => setWorkResultOpen(true)}
                   />
                 </Panel>
+                {workResultOpen && (
+                  <>
+                    <PanelResizeHandle className="group relative w-2.5 shrink-0 flex items-center justify-center outline-none cursor-col-resize">
+                      <div className="w-1 h-10 rounded-full bg-border transition-colors group-hover:bg-blue-300 group-active:bg-blue-400" />
+                    </PanelResizeHandle>
+                    <Panel key={selTask.id} defaultSize={25} minSize={20} maxSize={45} className="min-w-0">
+                      <TaskResultPanel
+                        task={selTask}
+                        onClose={() => setWorkResultOpen(false)}
+                        onShowToast={showToast}
+                      />
+                    </Panel>
+                  </>
+                )}
               </PanelGroup>
             ) : (
               <KanbanBoard

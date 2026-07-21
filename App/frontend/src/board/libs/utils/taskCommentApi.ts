@@ -1,11 +1,14 @@
 import { DEMO_PROJECT_ID } from "./taskApi";
 import { apiFetch } from "../../../global/api/apiClient";
 
+export type TaskCommentType = "COMMENT" | "FEEDBACK";
+
 export interface TaskCommentDto {
   id: string;
   authorId: string | null;
   authorName: string;
   content: string;
+  type: TaskCommentType;
   createdAt: string;
 }
 
@@ -21,11 +24,12 @@ export async function createTaskComment(
   taskId: string,
   authorId: string,
   content: string,
-  projectId: number = DEMO_PROJECT_ID
+  projectId: number = DEMO_PROJECT_ID,
+  type: TaskCommentType = "COMMENT"
 ): Promise<TaskCommentDto> {
   return apiFetch<TaskCommentDto>(commentsPath(taskId, projectId), {
     method: "POST",
-    body: JSON.stringify({ authorId, content }),
+    body: JSON.stringify({ authorId, content, type }),
   });
 }
 

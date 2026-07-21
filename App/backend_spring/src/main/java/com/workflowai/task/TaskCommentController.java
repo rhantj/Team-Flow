@@ -2,6 +2,8 @@ package com.workflowai.task;
 
 import com.workflowai.common.ApiResponse;
 import com.workflowai.common.DemoDataService;
+import com.workflowai.project.ProjectMemberRepository;
+import com.workflowai.project.ProjectRole;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
 import io.swagger.v3.oas.annotations.Operation;
@@ -32,17 +34,20 @@ public class TaskCommentController {
     private final TaskRepository taskRepository;
     private final UserRepository userRepository;
     private final DemoDataService demoDataService;
+    private final ProjectMemberRepository projectMemberRepository;
 
     public TaskCommentController(
         TaskCommentRepository taskCommentRepository,
         TaskRepository taskRepository,
         UserRepository userRepository,
-        DemoDataService demoDataService
+        DemoDataService demoDataService,
+        ProjectMemberRepository projectMemberRepository
     ) {
         this.taskCommentRepository = taskCommentRepository;
         this.taskRepository = taskRepository;
         this.userRepository = userRepository;
         this.demoDataService = demoDataService;
+        this.projectMemberRepository = projectMemberRepository;
     }
 
     private Task resolveTaskOrNull(String projectId, Long taskId) {
@@ -52,6 +57,16 @@ public class TaskCommentController {
             return null;
         }
         return task;
+    }
+
+    private static String normalizeType(String type) {
+        return "FEEDBACK".equals(type) ? "FEEDBACK" : "COMMENT";
+    }
+
+    private boolean isLeader(Long projectId, Long userId) {
+        return projectMemberRepository.findByProjectIdAndUserId(projectId, userId)
+            .map(member -> member.getRole() == ProjectRole.LEADER)
+            .orElse(false);
     }
 
     // 데모 유저는 provider="demo"이고 providerId가 곧 프론트가 쓰는 mock id("1"~"4")다.
@@ -80,7 +95,7 @@ public class TaskCommentController {
         return ResponseEntity.ok(ApiResponse.ok(dtos));
     }
 
-    @Operation(summary = "코멘트 작성", description = "업무에 새 코멘트를 남깁니다.")
+    @Operation(summary = "코멘트 작성", description = "업무에 새 코멘트를 남깁니다. type=FEEDBACK은 팀장만 작성할 수 있습니다.")
     @PostMapping
     @PreAuthorize("@projectAccess.isMember(#projectId)")
     public ResponseEntity<ApiResponse<TaskCommentDto>> createComment(
@@ -91,7 +106,8 @@ public class TaskCommentController {
         if (request.content() == null || request.content().isBlank()) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("CONTENT_REQUIRED", "코멘트 내용은 필수입니다."));
         }
-        if (resolveTaskOrNull(projectId, taskId) == null) {
+        Task task = resolveTaskOrNull(projectId, taskId);
+        if (task == null) {
             return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
         }
         // TODO: 로그인이 없어 요청에 담긴 mock 작성자 id를 그대로 쓴다. 실제 인증이 붙으면 로그인 사용자 id로 교체.
@@ -99,7 +115,11 @@ public class TaskCommentController {
         if (authorDbId == null) {
             authorDbId = demoDataService.resolveUserId("1");
         }
-        TaskComment saved = taskCommentRepository.save(new TaskComment(taskId, authorDbId, request.content()));
+        String type = normalizeType(request.type());
+        if ("FEEDBACK".equals(type) && !isLeader(task.getProjectId(), authorDbId)) {
+            return ResponseEntity.status(403).body(ApiResponse.fail("FORBIDDEN_NOT_LEADER", "팀장만 피드백을 남길 수 있습니다."));
+        }
+        TaskComment saved = taskCommentRepository.save(new TaskComment(taskId, authorDbId, request.content(), type));
         User author = userRepository.findById(authorDbId).orElse(null);
         String authorName = author != null ? author.getName() : "알 수 없음";
         String authorMockId = author != null ? author.getProviderId() : null;
