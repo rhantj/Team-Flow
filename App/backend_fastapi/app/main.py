@@ -14,8 +14,6 @@ from typing import List, Optional
 
 import httpx
 import ollama
-import pdfplumber
-from docx import Document
 from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -570,6 +568,8 @@ def extract_uploaded_text(raw: bytes, file_name: Optional[str] = None) -> str:
 
 def extract_pdf_text(raw: bytes) -> str:
     try:
+        import pdfplumber
+
         with pdfplumber.open(BytesIO(raw)) as pdf:
             pages = [page.extract_text() or "" for page in pdf.pages]
         text = "\n".join(page.strip() for page in pages if page.strip()).strip()
@@ -578,6 +578,9 @@ def extract_pdf_text(raw: bytes) -> str:
         return text
     except DocumentTextExtractionError:
         raise
+    except ImportError as exc:
+        logger.exception("PDF 텍스트 추출 의존성 누락")
+        raise DocumentTextExtractionError("PDF 분석에 필요한 서버 의존성이 설치되지 않았습니다.") from exc
     except Exception as exc:
         logger.exception("PDF 텍스트 추출 실패")
         raise DocumentTextExtractionError("PDF 텍스트 추출에 실패했습니다.") from exc
@@ -585,6 +588,8 @@ def extract_pdf_text(raw: bytes) -> str:
 
 def extract_docx_text(raw: bytes) -> str:
     try:
+        from docx import Document
+
         document = Document(BytesIO(raw))
         chunks: List[str] = []
         chunks.extend(paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip())
@@ -599,6 +604,9 @@ def extract_docx_text(raw: bytes) -> str:
         return text
     except DocumentTextExtractionError:
         raise
+    except ImportError as exc:
+        logger.exception("DOCX 텍스트 추출 의존성 누락")
+        raise DocumentTextExtractionError("DOCX 분석에 필요한 서버 의존성이 설치되지 않았습니다.") from exc
     except Exception as exc:
         logger.exception("DOCX 텍스트 추출 실패")
         raise DocumentTextExtractionError("DOCX 텍스트 추출에 실패했습니다.") from exc

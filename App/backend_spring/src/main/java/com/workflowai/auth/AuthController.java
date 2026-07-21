@@ -226,7 +226,7 @@ public class AuthController {
             + "이메일 중복이면 409, 입력값이 유효하지 않으면 400을 반환한다."
     )
     @PostMapping("/signup")
-    public ResponseEntity<ApiResponse<SignupResponse>> signup(@RequestBody SignupRequest request) {
+    public ResponseEntity<ApiResponse<SignupResponse>> signup(@Valid @RequestBody SignupRequest request) {
         try {
             return ResponseEntity.ok(ApiResponse.ok(
                 authService.signup(request.email(), request.password(), request.name(), request.roleType())
@@ -244,7 +244,7 @@ public class AuthController {
             + "Google 로그인 안내 메시지를 반환한다."
     )
     @PostMapping("/login")
-    public ResponseEntity<ApiResponse<AuthTokenResponse>> login(@RequestBody LoginRequest request) {
+    public ResponseEntity<ApiResponse<AuthTokenResponse>> login(@Valid @RequestBody LoginRequest request) {
         try {
             return ResponseEntity.ok(ApiResponse.ok(authService.loginWithPassword(request.email(), request.password())));
         } catch (GoogleAccountRequiredException e) {

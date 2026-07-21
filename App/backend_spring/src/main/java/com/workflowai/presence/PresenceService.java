@@ -33,14 +33,25 @@ public class PresenceService {
         return true;
     }
 
-    /** 로그인 유지(heartbeat). 세션이 만료되어 있었더라도 다시 활성화한다. */
-    public synchronized void touch(Long userId, String sessionId) {
+    /** 로그인 유지(heartbeat). 테스트 로그인에서 획득한 세션만 연장한다. */
+    public synchronized boolean touch(Long userId, String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
-            return;
+            return false;
         }
-        lastSeenByUserIdAndSessionId
-            .computeIfAbsent(userId, ignored -> new ConcurrentHashMap<>())
-            .put(sessionId, Instant.now());
+        Map<String, Instant> sessions = lastSeenByUserIdAndSessionId.get(userId);
+        if (sessions == null) {
+            return false;
+        }
+        Instant now = Instant.now();
+        removeExpiredSessions(sessions, now);
+        if (!sessions.containsKey(sessionId)) {
+            if (sessions.isEmpty()) {
+                lastSeenByUserIdAndSessionId.remove(userId);
+            }
+            return false;
+        }
+        sessions.put(sessionId, now);
+        return true;
     }
 
     /** 로그아웃 시 현재 테스트 세션의 접속 상태만 제거한다. */

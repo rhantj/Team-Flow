@@ -26,4 +26,24 @@ class PresenceServiceTest {
         assertThat(service.tryAcquire(1L, "session-b")).isFalse();
         assertThat(service.tryAcquire(1L, "session-a")).isTrue();
     }
+
+    @Test
+    void touch_doesNotCreateUnacquiredSession() {
+        PresenceService service = new PresenceService();
+
+        assertThat(service.touch(1L, "unknown-session")).isFalse();
+
+        assertThat(service.isActive(1L)).isFalse();
+    }
+
+    @Test
+    void touch_extendsOnlyAcquiredSession() {
+        PresenceService service = new PresenceService();
+
+        assertThat(service.tryAcquire(1L, "session-a")).isTrue();
+        assertThat(service.touch(1L, "session-a")).isTrue();
+        assertThat(service.touch(1L, "session-b")).isFalse();
+
+        assertThat(service.isActive(1L)).isTrue();
+    }
 }
