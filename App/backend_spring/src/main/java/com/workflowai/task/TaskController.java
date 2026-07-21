@@ -3,6 +3,10 @@ package com.workflowai.task;
 import com.workflowai.activity.ActivityService;
 import com.workflowai.common.ApiResponse;
 import com.workflowai.common.DemoDataService;
+import com.workflowai.notification.NotificationService;
+import com.workflowai.project.ProjectMemberRepository;
+import com.workflowai.project.ProjectRole;
+import com.workflowai.security.CurrentUser;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
 import io.swagger.v3.oas.annotations.Operation;
@@ -35,21 +39,38 @@ public class TaskController {
         "done", "완료"
     );
 
+    private static final Map<String, String> NUDGE_TITLES = Map.of(
+        "START", "업무 시작 알림",
+        "PROGRESS", "진행상황 공유 요청",
+        "URGENT", "긴급 확인 요청"
+    );
+    private static final Map<String, String> NUDGE_MESSAGE_TEMPLATES = Map.of(
+        "START", "'%s' 업무를 시작해주세요.",
+        "PROGRESS", "'%s' 업무의 진행상황을 공유해주세요.",
+        "URGENT", "'%s' 업무가 보류 중입니다. 빠른 확인이 필요합니다."
+    );
+
     private final TaskRepository taskRepository;
     private final UserRepository userRepository;
     private final DemoDataService demoDataService;
     private final ActivityService activityService;
+    private final NotificationService notificationService;
+    private final ProjectMemberRepository projectMemberRepository;
 
     public TaskController(
         TaskRepository taskRepository,
         UserRepository userRepository,
         DemoDataService demoDataService,
-        ActivityService activityService
+        ActivityService activityService,
+        NotificationService notificationService,
+        ProjectMemberRepository projectMemberRepository
     ) {
         this.taskRepository = taskRepository;
         this.userRepository = userRepository;
         this.demoDataService = demoDataService;
         this.activityService = activityService;
+        this.notificationService = notificationService;
+        this.projectMemberRepository = projectMemberRepository;
     }
 
     // TODO: 로그인이 없어 활동 로그의 행위자를 항상 mock 사용자 "1"로 남긴다. 실제 인증이 붙으면 로그인 사용자로 교체.
@@ -131,6 +152,12 @@ public class TaskController {
             nextAppendPosition(projectDbId, status)
         ));
         activityService.record(projectDbId, createdBy, "TASK_CREATED", task.getId(), "'" + task.getTitle() + "' 업무를 새로 추가했습니다.");
+        if (task.getAssigneeId() != null && !task.getAssigneeId().equals(createdBy)) {
+            notificationService.notify(
+                task.getAssigneeId(), "TASK_ASSIGNED", "새 업무가 배정되었습니다.",
+                "'" + task.getTitle() + "' 업무가 배정되었습니다.", "task", task.getId()
+            );
+        }
         return ResponseEntity.ok(ApiResponse.ok(TaskListItem.from(task)));
     }
 
@@ -150,15 +177,36 @@ public class TaskController {
         if (task == null || !task.getProjectId().equals(projectDbId)) {
             return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
         }
+        Long currentUserId = CurrentUser.id();
+        if (!isLeader(projectDbId, currentUserId) && !currentUserId.equals(task.getAssigneeId())) {
+            return ResponseEntity.status(403).body(ApiResponse.fail("FORBIDDEN_NOT_OWNER", "본인이 담당자인 업무만 이동할 수 있습니다."));
+        }
         String previousStatus = task.getStatus();
         task.moveTo(request.status(), request.position());
         taskRepository.save(task);
         if (!previousStatus.equals(task.getStatus())) {
             String label = STATUS_LABELS.getOrDefault(task.getStatus(), task.getStatus());
+            Long moveActorId = currentActorId();
             activityService.record(
-                projectDbId, currentActorId(), "STATUS_CHANGED", task.getId(),
+                projectDbId, moveActorId, "STATUS_CHANGED", task.getId(),
                 "'" + task.getTitle() + "' 상태를 '" + label + "'(으)로 변경했습니다."
             );
+            String notificationContent = "'" + task.getTitle() + "' 업무가 '" + label + "'(으)로 이동했습니다.";
+            if (task.getAssigneeId() != null && !task.getAssigneeId().equals(moveActorId)) {
+                notificationService.notify(
+                    task.getAssigneeId(), "STATUS_CHANGED", "담당 업무 상태가 변경되었습니다.",
+                    notificationContent, "task", task.getId()
+                );
+            }
+            projectMemberRepository.findAllByProjectId(projectDbId).stream()
+                .filter(member -> member.getRole() == ProjectRole.LEADER)
+                .map(com.workflowai.project.ProjectMember::getUserId)
+                .filter(leaderId -> !leaderId.equals(moveActorId))
+                .filter(leaderId -> !leaderId.equals(task.getAssigneeId()))
+                .forEach(leaderId -> notificationService.notify(
+                    leaderId, "STATUS_CHANGED", "업무 상태가 변경되었습니다.",
+                    notificationContent, "task", task.getId()
+                ));
         }
         return ResponseEntity.ok(ApiResponse.ok(TaskListItem.from(task)));
     }
@@ -168,7 +216,7 @@ public class TaskController {
         description = "업무의 제목/카테고리/담당자/마감일/우선순위/설명을 부분 수정합니다. null인 필드는 변경하지 않습니다."
     )
     @PatchMapping("/{taskId}")
-    @PreAuthorize("@projectAccess.isMember(#projectId)")
+    @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER')")
     public ResponseEntity<ApiResponse<TaskListItem>> updateTask(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId,
@@ -214,9 +262,21 @@ public class TaskController {
                 projectDbId, actorId, "ASSIGNEE_CHANGED", task.getId(),
                 "담당자를 '" + userName(task.getAssigneeId()) + "'(으)로 변경했습니다."
             );
+            if (task.getAssigneeId() != null && !task.getAssigneeId().equals(actorId)) {
+                notificationService.notify(
+                    task.getAssigneeId(), "TASK_ASSIGNED", "업무 담당자로 지정되었습니다.",
+                    "'" + task.getTitle() + "' 업무 담당자로 지정되었습니다.", "task", task.getId()
+                );
+            }
         }
         if (otherFieldsChanged) {
             activityService.record(projectDbId, actorId, "TASK_UPDATED", task.getId(), "'" + task.getTitle() + "' 업무 정보를 수정했습니다.");
+            if (task.getAssigneeId() != null && !task.getAssigneeId().equals(actorId)) {
+                notificationService.notify(
+                    task.getAssigneeId(), "TASK_UPDATED", "담당 업무 정보가 수정되었습니다.",
+                    "'" + task.getTitle() + "' 업무 정보가 수정되었습니다.", "task", task.getId()
+                );
+            }
         }
         return ResponseEntity.ok(ApiResponse.ok(TaskListItem.from(task)));
     }
@@ -226,7 +286,7 @@ public class TaskController {
         description = "업무를 영구적으로 삭제합니다."
     )
     @DeleteMapping("/{taskId}")
-    @PreAuthorize("@projectAccess.isMember(#projectId)")
+    @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER')")
     public ResponseEntity<ApiResponse<Void>> deleteTask(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId
@@ -237,9 +297,52 @@ public class TaskController {
             return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
         }
         // 삭제되면 상세 화면이 바로 닫혀서 이 업무 자체의 피드에는 안 보이지만, 프로젝트 전체 활동 로그를 위해 남겨둔다.
-        activityService.record(projectDbId, currentActorId(), "TASK_DELETED", task.getId(), "'" + task.getTitle() + "' 업무를 삭제했습니다.");
+        Long deleteActorId = currentActorId();
+        activityService.record(projectDbId, deleteActorId, "TASK_DELETED", task.getId(), "'" + task.getTitle() + "' 업무를 삭제했습니다.");
+        if (task.getAssigneeId() != null && !task.getAssigneeId().equals(deleteActorId)) {
+            notificationService.notify(
+                task.getAssigneeId(), "TASK_DELETED", "담당 업무가 삭제되었습니다.",
+                "'" + task.getTitle() + "' 업무가 삭제되었습니다.", "task", task.getId()
+            );
+        }
         taskRepository.delete(task);
         return ResponseEntity.ok(ApiResponse.ok(null));
+    }
+
+    @Operation(
+        summary = "업무 알림(넛지) 보내기",
+        description = "담당자에게 정형화된 메시지(업무 시작/진행상황 공유/긴급 확인)를 알림으로 보냅니다."
+    )
+    @PostMapping("/{taskId}/nudge")
+    @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER')")
+    public ResponseEntity<ApiResponse<Void>> sendNudge(
+        @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
+        @Parameter(description = "업무 ID") @PathVariable Long taskId,
+        @RequestBody NudgeRequest request
+    ) {
+        String messageTemplate = NUDGE_MESSAGE_TEMPLATES.get(request.kind());
+        if (messageTemplate == null) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_NUDGE_KIND", "알 수 없는 알림 종류입니다."));
+        }
+        Long projectDbId = demoDataService.resolveProjectId(projectId);
+        Task task = taskRepository.findById(taskId).orElse(null);
+        if (task == null || !task.getProjectId().equals(projectDbId)) {
+            return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
+        }
+        Long actorId = CurrentUser.id();
+        if (task.getAssigneeId() != null && !task.getAssigneeId().equals(actorId)) {
+            notificationService.notify(
+                task.getAssigneeId(), "TASK_NUDGE", NUDGE_TITLES.get(request.kind()),
+                String.format(messageTemplate, task.getTitle()), "task", task.getId()
+            );
+        }
+        return ResponseEntity.ok(ApiResponse.ok(null));
+    }
+
+    private boolean isLeader(Long projectId, Long userId) {
+        return projectMemberRepository.findByProjectIdAndUserId(projectId, userId)
+            .map(member -> member.getRole() == ProjectRole.LEADER)
+            .orElse(false);
     }
 
     private static LocalDate parseDate(String dueDate) {

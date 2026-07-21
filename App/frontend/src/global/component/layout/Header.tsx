@@ -1,17 +1,19 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { ChevronRight, Search, Calendar, Bell, LogOut, Menu } from "lucide-react";
-import { MEMBERS } from "../../lib/mock/members";
 import { TAB_TITLES } from "../../lib/constants/nav";
 import type { Tab } from "../../../board/libs/types/task";
-import { useStoredNotifications, markNotificationsRead } from "../../../board/libs/utils/activityStore";
+import {
+  fetchNotifications, fetchUnreadNotificationCount, markAllNotificationsRead,
+  type NotificationResponse,
+} from "../../api/notificationApi";
 import { useAuth } from "../../hooks/useAuth";
 import { usePresence } from "../../hooks/usePresence";
 import { useProject } from "../../hooks/useProject";
 import type { ProjectRoleKo } from "../../api/authTypes";
 import { useIsMobile } from "../ui/use-mobile";
 
-const CURRENT_USER = MEMBERS[0];
+const NOTIFICATION_POLL_INTERVAL_MS = 30_000;
 
 const ROLE_COLORS: Record<ProjectRoleKo, string> = {
   "팀장": "#3B5BDB",
@@ -48,9 +50,34 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
   const currentProjectName = currentProject?.projectTitle ?? null;
   const dDay = projectDetail?.deadline ? computeDDay(projectDetail.deadline) : null;
   const role: ProjectRoleKo = currentProject?.role ?? "팀장";
-  const allNotifications = useStoredNotifications();
-  const myNotifications = allNotifications.filter(n => n.recipientId === CURRENT_USER.id);
-  const unreadCount = myNotifications.filter(n => !n.read).length;
+  const [notifications, setNotifications] = useState<NotificationResponse[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // 실시간 푸시(SSE/WebSocket)가 아직 없어 안 읽은 개수만 주기적으로 폴링한다.
+  // 목록 자체는 벨을 열 때만 불러온다(불필요한 요청을 줄이기 위함).
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    const loadUnreadCount = () => {
+      fetchUnreadNotificationCount().then((count) => {
+        if (!cancelled) setUnreadCount(count);
+      }).catch(() => {});
+    };
+    loadUnreadCount();
+    const interval = setInterval(loadUnreadCount, NOTIFICATION_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [user]);
+
+  const handleToggleNotifications = () => {
+    const opening = !notifOpen;
+    setNotifOpen(opening);
+    if (!opening) return;
+    fetchNotifications().then(setNotifications).catch(() => {});
+    markAllNotificationsRead().then(() => setUnreadCount(0)).catch(() => {});
+  };
 
   const segments = location.pathname.split("/").filter(Boolean);
   const activeTab = (segments[0] ?? "dashboard") as Tab;
@@ -109,7 +136,7 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
 
         <div className="relative">
           <button
-            onClick={() => { setNotifOpen(v => !v); if (!notifOpen) markNotificationsRead(); }}
+            onClick={handleToggleNotifications}
             className={`relative h-10 min-w-10 px-2.5 rounded-xl border shadow-sm transition-all flex items-center justify-center ${
               notifOpen
                 ? "border-blue-400 bg-blue-100 text-blue-700"
@@ -130,11 +157,12 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
               <div className="absolute right-0 top-full mt-2 w-80 bg-card border border-border rounded-xl shadow-lg z-50 overflow-hidden">
                 <div className="px-4 py-2.5 border-b border-border text-xs font-semibold text-foreground">알림</div>
                 <div className="max-h-80 overflow-y-auto">
-                  {myNotifications.length === 0 ? (
+                  {notifications.length === 0 ? (
                     <div className="px-4 py-6 text-xs text-muted-foreground text-center">알림이 없습니다.</div>
-                  ) : myNotifications.map(n => (
+                  ) : notifications.map(n => (
                     <div key={n.id} className="px-4 py-2.5 border-b border-border last:border-0 text-xs text-foreground">
-                      {n.message}
+                      <div className="font-semibold">{n.title}</div>
+                      {n.content && <div className="text-muted-foreground mt-0.5">{n.content}</div>}
                       <div className="text-[10px] text-muted-foreground mt-0.5">{new Date(n.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })}</div>
                     </div>
                   ))}
