@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -32,6 +33,9 @@ public class ChecklistController {
     private final DemoDataService demoDataService;
     private final ActivityService activityService;
     private final ChecklistGenerator checklistGenerator;
+    // 업무 ID별 락. 같은 업무에 대한 자동 생성 요청이 동시에 들어와도 조회-후-저장 사이에
+    // 끼어들어 같은 항목이 중복 저장되는 것을 막는다(단일 인스턴스 배포 기준).
+    private final ConcurrentHashMap<Long, Object> generateLocks = new ConcurrentHashMap<>();
 
     public ChecklistController(
         ChecklistRepository checklistRepository,
@@ -111,14 +115,17 @@ public class ChecklistController {
         if (task == null) {
             return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
         }
-        List<Checklist> existing = checklistRepository.findByTaskIdOrderByCreatedAtAsc(taskId);
-        Set<String> existingTitles = existing.stream().map(Checklist::getTitle).collect(Collectors.toSet());
-        List<String> titles = checklistGenerator.generate(task).stream()
-            .filter(title -> !existingTitles.contains(title))
-            .toList();
-        List<Checklist> saved = titles.stream()
-            .map(title -> checklistRepository.save(new Checklist(taskId, title)))
-            .toList();
+        List<Checklist> saved;
+        synchronized (generateLocks.computeIfAbsent(taskId, id -> new Object())) {
+            List<Checklist> existing = checklistRepository.findByTaskIdOrderByCreatedAtAsc(taskId);
+            Set<String> existingTitles = existing.stream().map(Checklist::getTitle).collect(Collectors.toSet());
+            List<String> titles = checklistGenerator.generate(task).stream()
+                .filter(title -> !existingTitles.contains(title))
+                .toList();
+            saved = titles.stream()
+                .map(title -> checklistRepository.save(new Checklist(taskId, title)))
+                .toList();
+        }
         if (!saved.isEmpty()) {
             activityService.record(
                 task.getProjectId(), currentActorId(), "CHECKLIST_CREATED", taskId,

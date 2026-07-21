@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -26,6 +27,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.http.MediaType;
@@ -157,6 +159,32 @@ class TaskResultControllerTest {
     }
 
     @Test
+    void saveResultRetriesAsUpdateWhenConcurrentInsertWinsRace() throws Exception {
+        authenticateAs(5L);
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(taskRepository.findById(42L)).thenReturn(Optional.of(taskWithAssignee(5L)));
+        TaskResult concurrentlyCreated = new TaskResult(42L, "다른 요청이 먼저 만든 내용");
+        when(taskResultRepository.findByTaskId(42L))
+            .thenReturn(Optional.empty())
+            .thenReturn(Optional.of(concurrentlyCreated));
+        when(taskResultRepository.save(any(TaskResult.class)))
+            .thenThrow(new DataIntegrityViolationException("unique violation"))
+            .thenAnswer(inv -> inv.getArgument(0));
+        when(taskResultLinkRepository.findByTaskIdOrderByCreatedAtAsc(42L)).thenReturn(List.of());
+        when(taskResultFileRepository.findByTaskIdOrderByCreatedAtAsc(42L)).thenReturn(List.of());
+
+        mockMvc.perform(put("/api/v1/projects/demo-project/tasks/42/result")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"content":"내가 쓴 내용으로 갱신"}
+                    """))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.content").value("내가 쓴 내용으로 갱신"));
+
+        verify(taskResultRepository, times(2)).save(any(TaskResult.class));
+    }
+
+    @Test
     void nonAssigneeCannotSaveContent() throws Exception {
         authenticateAs(9L);
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
@@ -216,6 +244,22 @@ class TaskResultControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {"url":"javascript:alert(1)","title":"악성 링크"}
+                    """))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("URL_INVALID_SCHEME"));
+
+        verify(taskResultLinkRepository, never()).save(any());
+    }
+
+    @Test
+    void addLinkRejectsHttpSchemeUrlWithoutHost() throws Exception {
+        authenticateAs(5L);
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+
+        mockMvc.perform(post("/api/v1/projects/demo-project/tasks/42/result/links")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"url":"http:///no-host","title":"호스트 없는 URL"}
                     """))
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.error.code").value("URL_INVALID_SCHEME"));
@@ -348,6 +392,7 @@ class TaskResultControllerTest {
             .andExpect(jsonPath("$.success").value(true));
 
         verify(taskResultFileRepository).delete(file);
+        verify(storageClient, times(2)).delete("tasks/42/uuid-meeting_result.pdf");
     }
 
     @Test

@@ -8,11 +8,13 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.List;
 import java.util.UUID;
-import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -36,7 +38,6 @@ public class TaskResultController {
     private static final int MAX_TITLE_LENGTH = 200;
     private static final int MAX_FILE_NAME_LENGTH = 255;
     private static final int MAX_CONTENT_LENGTH = 2000;
-    private static final Pattern URL_SCHEME_PATTERN = Pattern.compile("(?i)^https?://.+");
 
     private final TaskResultRepository taskResultRepository;
     private final TaskResultLinkRepository taskResultLinkRepository;
@@ -72,6 +73,20 @@ public class TaskResultController {
 
     private boolean isAssignee(Task task, Long userId) {
         return userId != null && task.getAssigneeId() != null && task.getAssigneeId().equals(userId);
+    }
+
+    /** 정규식 대신 URI 파서로 검증해 스킴은 맞지만 호스트가 없는 등 형식이 잘못된 URL을 걸러낸다. */
+    private boolean isValidHttpUrl(String url) {
+        try {
+            URI uri = new URI(url);
+            String scheme = uri.getScheme();
+            return scheme != null
+                && (scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))
+                && uri.getHost() != null
+                && !uri.getHost().isBlank();
+        } catch (URISyntaxException e) {
+            return false;
+        }
     }
 
     /** '/', '\', '..' 등 경로 조작에 쓰일 수 있는 문자를 제거해 Storage 경로 조작을 막는다. */
@@ -144,7 +159,14 @@ public class TaskResultController {
         } else {
             result.setContent(request.content());
         }
-        taskResultRepository.save(result);
+        try {
+            taskResultRepository.save(result);
+        } catch (DataIntegrityViolationException e) {
+            // 동시 요청이 먼저 행을 만든 경우(task_id UNIQUE 충돌): 재조회해 수정으로 전환한다.
+            result = taskResultRepository.findByTaskId(taskId).orElseThrow(() -> e);
+            result.setContent(request.content());
+            taskResultRepository.save(result);
+        }
         return ResponseEntity.ok(ApiResponse.ok(TaskResultDto.from(result, links(taskId), files(taskId))));
     }
 
@@ -159,8 +181,8 @@ public class TaskResultController {
         if (request.url() == null || request.url().isBlank()) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("URL_REQUIRED", "URL은 필수입니다."));
         }
-        if (!URL_SCHEME_PATTERN.matcher(request.url()).matches()) {
-            return ResponseEntity.badRequest().body(ApiResponse.fail("URL_INVALID_SCHEME", "URL은 http:// 또는 https://로 시작해야 합니다."));
+        if (!isValidHttpUrl(request.url())) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("URL_INVALID_SCHEME", "URL은 http:// 또는 https://로 시작하는 올바른 형식이어야 합니다."));
         }
         if (request.url().length() > MAX_URL_LENGTH) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("URL_TOO_LONG", "URL은 " + MAX_URL_LENGTH + "자를 초과할 수 없습니다."));
@@ -275,11 +297,15 @@ public class TaskResultController {
         taskResultFileRepository.delete(taskResultFile);
         try {
             storageClient.delete(taskResultFile.getStoragePath());
-        } catch (RuntimeException e) {
-            log.error(
-                "메타데이터 삭제 후 Storage 객체 정리 실패(고아 객체로 남을 수 있음): fileId={}, path={}",
-                fileId, taskResultFile.getStoragePath(), e
-            );
+        } catch (RuntimeException firstError) {
+            try {
+                storageClient.delete(taskResultFile.getStoragePath());
+            } catch (RuntimeException retryError) {
+                log.error(
+                    "메타데이터 삭제 후 Storage 객체 정리 실패(재시도 포함, 고아 객체로 남을 수 있음): fileId={}, path={}",
+                    fileId, taskResultFile.getStoragePath(), retryError
+                );
+            }
         }
         return ResponseEntity.ok(ApiResponse.ok(null));
     }
