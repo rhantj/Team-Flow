@@ -70,3 +70,20 @@ def test_different_project_ids_are_forwarded_unmodified_to_service() -> None:
             assert called_args[1] == project_id
 
     app.dependency_overrides.clear()
+
+
+def test_query_endpoint_returns_503_when_huggingface_returns_error_status() -> None:
+    _override_pool()
+    error_response = httpx.Response(status_code=503, request=httpx.Request("POST", "https://router.huggingface.co/v1/chat/completions"))
+    with patch(
+        "llm_rag_assistant.app.routers.chat_router.answer_question",
+        new=AsyncMock(
+            side_effect=httpx.HTTPStatusError("service unavailable", request=error_response.request, response=error_response)
+        ),
+    ):
+        client = TestClient(app)
+        response = client.post("/ai/rag/query", json={"project_id": 1, "question": "질문"})
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 503
+    assert response.json()["detail"] == {"error": "llm_unavailable"}
