@@ -35,6 +35,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class MeetingAnalysisServiceTest {
@@ -404,6 +405,34 @@ class MeetingAnalysisServiceTest {
         assertThat(detail.get(0).title()).isEqualTo("12.10 팀 정기 회의");
         assertThat(detail.get(0).attended()).isFalse();
         assertThat(detail.get(1).title()).isEqualTo("12.11 스프린트 리뷰");
+        assertThat(detail.get(1).attended()).isFalse();
+    }
+
+    @Test
+    void attendanceDetailMarksAttendedMeetingAsAttended() {
+        mockMember(1L);
+        Long attendedMeetingId = 50L;
+
+        Meeting attendedMeeting = new Meeting(1L, "12.10 참석한 회의", "document", null, "completed", LocalDate.of(2026, 12, 10), "정기회의", "a.txt", null, 1L);
+        ReflectionTestUtils.setField(attendedMeeting, "id", attendedMeetingId);
+
+        Meeting absentMeeting = new Meeting(1L, "12.11 미참석 회의", "document", null, "completed", LocalDate.of(2026, 12, 11), "정기회의", "b.txt", null, 1L);
+
+        when(meetingRepository.findByProjectIdOrderByCreatedAtDesc(1L)).thenReturn(List.of(absentMeeting, attendedMeeting));
+
+        MeetingAttendee attendee = new MeetingAttendee(null, 2L);
+        ReflectionTestUtils.setField(attendee, "meetingId", attendedMeetingId);
+
+        when(meetingAttendeeRepository.findByMeetingIdIn(any())).thenReturn(List.of(attendee));
+
+        MeetingAnalysisService service = newService();
+
+        List<MeetingAttendanceDetail> detail = service.attendanceDetail("demo-project", 2L);
+
+        assertThat(detail).hasSize(2);
+        assertThat(detail.get(0).title()).isEqualTo("12.10 참석한 회의");
+        assertThat(detail.get(0).attended()).isTrue();
+        assertThat(detail.get(1).title()).isEqualTo("12.11 미참석 회의");
         assertThat(detail.get(1).attended()).isFalse();
     }
 
