@@ -1,0 +1,80 @@
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { TaskDetailPanel } from "./TaskDetailPanel";
+import type { Task } from "../libs/types/task";
+
+const mockUseAuth = vi.fn();
+vi.mock("../../global/hooks/useAuth", () => ({
+  useAuth: () => mockUseAuth(),
+}));
+
+vi.mock("../libs/utils/checklistApi", () => ({
+  fetchChecklist: vi.fn().mockResolvedValue([]),
+  createChecklistItem: vi.fn(),
+  updateChecklistItem: vi.fn(),
+  deleteChecklistItem: vi.fn(),
+  generateChecklist: vi.fn(),
+}));
+
+vi.mock("../libs/utils/taskCommentApi", () => ({
+  fetchTaskComments: vi.fn().mockResolvedValue([]),
+  createTaskComment: vi.fn().mockResolvedValue({
+    id: "c1", authorId: "1", authorName: "김민준", content: "잘 진행되고 있어요", type: "FEEDBACK", createdAt: new Date().toISOString(),
+  }),
+  updateTaskComment: vi.fn(),
+  deleteTaskComment: vi.fn(),
+}));
+
+vi.mock("../libs/utils/activityApi", () => ({
+  fetchTaskActivity: vi.fn().mockResolvedValue([]),
+}));
+
+function makeTask(): Task {
+  return {
+    id: "TF-01", title: "테스트 업무", status: "done", priority: "medium",
+    assignee: "1", dueDate: "2026-07-20", labels: [], category: "backend", position: 0,
+  };
+}
+
+function renderPanel() {
+  render(
+    <TaskDetailPanel
+      task={makeTask()}
+      onClose={vi.fn()}
+      onQuickAction={vi.fn()}
+      onShowToast={vi.fn()}
+      onDeleteTask={vi.fn()}
+      onEditTask={vi.fn()}
+      onOpenWorkResult={vi.fn()}
+    />
+  );
+}
+
+describe("TaskDetailPanel 팀장 피드백", () => {
+  beforeEach(() => {
+    mockUseAuth.mockReset();
+  });
+
+  it("shows the 팀장 피드백 menu item for leaders", async () => {
+    mockUseAuth.mockReturnValue({ currentProjectId: 1, currentProject: { projectId: 1, projectTitle: "데모", role: "팀장" } });
+    renderPanel();
+    await userEvent.click(screen.getByTitle("더보기"));
+    expect(await screen.findByText("팀장 피드백")).toBeInTheDocument();
+  });
+
+  it("hides the 팀장 피드백 menu item for non-leaders", async () => {
+    mockUseAuth.mockReturnValue({ currentProjectId: 1, currentProject: { projectId: 1, projectTitle: "데모", role: "팀원" } });
+    renderPanel();
+    await userEvent.click(screen.getByTitle("더보기"));
+    expect(screen.queryByText("팀장 피드백")).not.toBeInTheDocument();
+  });
+
+  it("switches the comment box placeholder into feedback mode when clicked", async () => {
+    mockUseAuth.mockReturnValue({ currentProjectId: 1, currentProject: { projectId: 1, projectTitle: "데모", role: "팀장" } });
+    renderPanel();
+    await userEvent.click(screen.getByTitle("더보기"));
+    await userEvent.click(await screen.findByText("팀장 피드백"));
+    expect(await screen.findByPlaceholderText(/팀장 피드백을 남기세요/)).toBeInTheDocument();
+  });
+});

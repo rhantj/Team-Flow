@@ -9,8 +9,8 @@ import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "task_comments")
-public class TaskComment {
+@Table(name = "task_result_links")
+public class TaskResultLink {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -19,26 +19,22 @@ public class TaskComment {
     @Column(name = "task_id", nullable = false)
     private Long taskId;
 
-    @Column(name = "author_id", nullable = false)
-    private Long authorId;
-
     @Column(nullable = false, columnDefinition = "text")
-    private String content;
+    private String url;
 
-    @Column(nullable = false, length = 20)
-    private String type;
+    @Column(nullable = false, length = 200)
+    private String title;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
-    protected TaskComment() {
+    protected TaskResultLink() {
     }
 
-    public TaskComment(Long taskId, Long authorId, String content, String type) {
+    public TaskResultLink(Long taskId, String url, String title) {
         this.taskId = taskId;
-        this.authorId = authorId;
-        this.content = content;
-        this.type = type;
+        this.url = url;
+        this.title = title;
         this.createdAt = LocalDateTime.now();
     }
 
@@ -50,23 +46,15 @@ public class TaskComment {
         return taskId;
     }
 
-    public Long getAuthorId() {
-        return authorId;
+    public String getUrl() {
+        return url;
     }
 
-    public String getContent() {
-        return content;
-    }
-
-    public String getType() {
-        return type;
+    public String getTitle() {
+        return title;
     }
 
     public LocalDateTime getCreatedAt() {
         return createdAt;
-    }
-
-    public void setContent(String content) {
-        this.content = content;
     }
 }

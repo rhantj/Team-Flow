@@ -1,15 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Sparkles, X, Send, Check, MoreHorizontal, ChevronDown, Trash2, Pencil, Plus } from "lucide-react";
 import { CatTag } from "./CatTag";
 import { TaskStatusPill } from "./TaskStatusPill";
 import { PriorityBadge } from "./PriorityBadge";
 import { LabelBadge } from "../../global/component/LabelBadge";
 import { getCat, formatDueDate } from "../libs/utils/taskService";
-import { getCatDetailFields, CAT_AI_BTN } from "../libs/utils/catFields";
-import { STATUS_ACTIONS } from "../libs/utils/taskActions";
+import { getCatDetailFields } from "../libs/utils/catFields";
+import { STATUS_ACTIONS, visibleSecondaryActions } from "../libs/utils/taskActions";
 import { MEMBERS } from "../../global/lib/mock/members";
 import { addNotification } from "../libs/utils/activityStore";
-import { fetchChecklist, createChecklistItem, updateChecklistItem, deleteChecklistItem } from "../libs/utils/checklistApi";
+import { fetchChecklist, createChecklistItem, updateChecklistItem, deleteChecklistItem, generateChecklist } from "../libs/utils/checklistApi";
 import { fetchTaskComments, createTaskComment, updateTaskComment, deleteTaskComment, type TaskCommentDto } from "../libs/utils/taskCommentApi";
 import { fetchTaskActivity, type TaskActivityDto } from "../libs/utils/activityApi";
 import { DEMO_PROJECT_ID } from "../libs/utils/taskApi";
@@ -19,7 +19,7 @@ import type { Task, ChecklistItem } from "../libs/types/task";
 const CURRENT_USER = MEMBERS[0];
 
 type FeedType = "comment" | "status" | "system";
-interface FeedItem { id: string; type: FeedType; who: string; when: string; msg: string; at: number; commentId?: string; }
+interface FeedItem { id: string; type: FeedType; who: string; when: string; msg: string; at: number; commentId?: string; isFeedback?: boolean; }
 
 const DOT_COLOR: Record<FeedType, string> = {
   comment: "#3B5BDB",
@@ -58,6 +58,22 @@ function WipBadge() {
   return <span className="shrink-0 text-[9px] font-semibold px-1.5 py-0.5 rounded bg-muted text-muted-foreground">준비 중</span>;
 }
 
+// 담당자 변경은 별도 UI를 새로 만들지 않고 이미 있는 "업무 수정" 모달로 보낸다(담당자 필드가 거기 이미 있음).
+const ASSIGNEE_ACTION_LABELS = new Set(["담당자 변경", "담당자 재배정"]);
+
+// 알림류는 별도 입력 없이 정형화된 메시지를 담당자에게 즉시 보내는 원클릭 액션이다.
+const NUDGE_MESSAGES: Record<string, (title: string) => string> = {
+  "시작 알림": (title) => `'${title}' 업무를 시작해주세요.`,
+  "진행상황 요청": (title) => `'${title}' 업무의 진행상황을 공유해주세요.`,
+  "긴급 알림": (title) => `'${title}' 업무가 보류 중입니다. 빠른 확인이 필요합니다.`,
+};
+
+const IMPLEMENTED_ACTION_LABELS = new Set([
+  "다시 열기", "팀장 피드백", "블로커 등록",
+  ...ASSIGNEE_ACTION_LABELS,
+  ...Object.keys(NUDGE_MESSAGES),
+]);
+
 interface TaskDetailPanelProps {
   task: Task;
   onClose: () => void;
@@ -65,19 +81,23 @@ interface TaskDetailPanelProps {
   onShowToast: (message: string) => void;
   onDeleteTask: (taskId: string) => void;
   onEditTask: () => void;
+  onOpenWorkResult: () => void;
 }
 
-export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onDeleteTask, onEditTask }: TaskDetailPanelProps) {
-  const { currentProjectId } = useAuth();
+export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onDeleteTask, onEditTask, onOpenWorkResult }: TaskDetailPanelProps) {
+  const { currentProjectId, currentProject } = useAuth();
   const projectId = currentProjectId ?? DEMO_PROJECT_ID;
   const [devInfoOpen, setDevInfoOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [newComment, setNewComment] = useState("");
   const [commentSentMessage, setCommentSentMessage] = useState<string | null>(null);
+  const [feedbackMode, setFeedbackMode] = useState(false);
+  const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
   const [checklistState, setChecklistState] = useState<"loading" | "ready" | "error">("loading");
+  const [generatingChecklist, setGeneratingChecklist] = useState(false);
   const [newItemTitle, setNewItemTitle] = useState("");
   const [addingItem, setAddingItem] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -99,6 +119,7 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
     setConfirmingDelete(false);
     setNewComment("");
     setCommentSentMessage(null);
+    setFeedbackMode(false);
     setNewItemTitle("");
     setEditingItemId(null);
     setEditingCommentId(null);
@@ -180,6 +201,30 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
     }
   };
 
+  const handleGenerateChecklist = async () => {
+    if (generatingChecklist) return;
+    setGeneratingChecklist(true);
+    try {
+      const generated = await generateChecklist(task.id, projectId);
+      setChecklist((cur) => [...cur, ...generated]);
+      onShowToast(`체크리스트 ${generated.length}개를 생성했습니다.`);
+    } catch {
+      onShowToast("체크리스트 자동 생성에 실패했습니다.");
+    } finally {
+      setGeneratingChecklist(false);
+    }
+  };
+
+  const handleSendNudge = (label: string) => {
+    const buildMessage = NUDGE_MESSAGES[label];
+    if (!buildMessage) return;
+    const assignee = MEMBERS.find((mm) => mm.id === task.assignee);
+    if (assignee) {
+      addNotification(assignee.id, buildMessage(task.title), task.id);
+    }
+    onShowToast(`${label}을 보냈습니다.`);
+  };
+
   const handleStartEditChecklistItem = (item: ChecklistItem) => {
     setEditingItemId(item.id);
     setEditingText(item.label);
@@ -222,10 +267,12 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
   const progressPct = checklist.length ? Math.round((doneCount / checklist.length) * 100) : 0;
   const m = MEMBERS.find((me) => me.id === task.assignee)!;
   const actions = STATUS_ACTIONS[task.status] ?? [];
-  const primaryAction = actions.find((a) => a.primary);
-  const secondaryActions = actions.filter((a) => !a.primary);
+  const isLeader = currentProject?.role === "팀장";
+  // done 상태는 "다음 상태"가 없으므로 큰 primary CTA를 아예 보여주지 않는다("검수 완료"가
+  // 실제로는 다시 열기와 동일한 동작을 하던 버그를 없애기 위함 — "다시 열기" 보조 액션만 남긴다).
+  const primaryAction = task.status === "done" ? undefined : actions.find((a) => a.primary);
+  const secondaryActions = visibleSecondaryActions(actions.filter((a) => !a.primary), isLeader);
   const catFields = getCatDetailFields(task.id, taskCat);
-  const aiBtn = CAT_AI_BTN[taskCat] ?? CAT_AI_BTN["default"];
 
   // 실제로 저장된 코멘트 + 이 업무에서 실제로 일어난 활동 로그만 보여준다(더미 항목 없음).
   // 코멘트 작성 자체는 taskComments가 이미 기록이라, 백엔드는 별도로 "코멘트 작성" 활동을 남기지 않는다(중복 방지).
@@ -238,6 +285,7 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
       when: formatTimestamp(c.createdAt),
       msg: c.content,
       at: new Date(c.createdAt).getTime(),
+      isFeedback: c.type === "FEEDBACK",
     })),
     ...activity.map((a): FeedItem => ({
       id: a.id,
@@ -253,18 +301,21 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
     const text = newComment.trim();
     if (!text || sendingComment) return;
     setSendingComment(true);
+    const type = feedbackMode ? "FEEDBACK" : "COMMENT";
     try {
-      const created = await createTaskComment(task.id, CURRENT_USER.id, text, projectId);
+      const created = await createTaskComment(task.id, text, projectId, type);
       setTaskComments((cur) => [...cur, created]);
       const assignee = MEMBERS.find((mm) => mm.id === task.assignee);
       if (assignee) {
-        addNotification(assignee.id, `${CURRENT_USER.name} 팀장이 '${task.title}' 업무에 코멘트를 남겼습니다.`, task.id);
+        const verb = type === "FEEDBACK" ? "피드백을" : "코멘트를";
+        addNotification(assignee.id, `${CURRENT_USER.name} 팀장이 '${task.title}' 업무에 ${verb} 남겼습니다.`, task.id);
       }
       setNewComment("");
-      setCommentSentMessage("코멘트 전송 완료");
+      setFeedbackMode(false);
+      setCommentSentMessage(type === "FEEDBACK" ? "피드백 전송 완료" : "코멘트 전송 완료");
       setTimeout(() => setCommentSentMessage(null), 2200);
     } catch {
-      onShowToast("코멘트 전송에 실패했습니다.");
+      onShowToast(type === "FEEDBACK" ? "피드백 전송에 실패했습니다." : "코멘트 전송에 실패했습니다.");
     } finally {
       setSendingComment(false);
     }
@@ -320,7 +371,10 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
             <button onClick={onEditTask} className="p-1.5 hover:bg-muted rounded-lg transition-colors" title="업무 수정">
               <Pencil className="w-4 h-4 text-muted-foreground" />
             </button>
-            <button onClick={() => setMenuOpen((o) => !o)} className="p-1.5 hover:bg-muted rounded-lg transition-colors">
+            <button onClick={onOpenWorkResult} className="p-1.5 hover:bg-muted rounded-lg transition-colors" title="작업 내용 작성">
+              <Plus className="w-4 h-4 text-muted-foreground" />
+            </button>
+            <button onClick={() => setMenuOpen((o) => !o)} className="p-1.5 hover:bg-muted rounded-lg transition-colors" title="더보기">
               <MoreHorizontal className="w-4 h-4 text-muted-foreground" />
             </button>
             <button onClick={onClose} className="p-1.5 hover:bg-muted rounded-lg transition-colors">
@@ -332,33 +386,46 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
                 <div className="absolute right-0 top-9 z-20 w-52 bg-card border border-border rounded-xl shadow-lg py-1.5">
                   {secondaryActions.map((a) => {
                     const Icon = a.icon;
+                    const isImplemented = IMPLEMENTED_ACTION_LABELS.has(a.label);
                     return (
                       <button
                         key={a.label}
-                        onClick={() => { onQuickAction(a.label, false); setMenuOpen(false); }}
+                        onClick={() => {
+                          if (a.label === "팀장 피드백") {
+                            setFeedbackMode(true);
+                            setMenuOpen(false);
+                            commentTextareaRef.current?.focus();
+                            return;
+                          }
+                          if (ASSIGNEE_ACTION_LABELS.has(a.label)) {
+                            setMenuOpen(false);
+                            onEditTask();
+                            return;
+                          }
+                          if (a.label in NUDGE_MESSAGES) {
+                            setMenuOpen(false);
+                            handleSendNudge(a.label);
+                            return;
+                          }
+                          onQuickAction(a.label, false);
+                          setMenuOpen(false);
+                        }}
                         className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-xs font-medium hover:bg-muted text-left transition-colors ${a.danger ? "text-red-600" : "text-foreground"}`}
                       >
                         <span className="flex items-center gap-2"><Icon className="w-3.5 h-3.5" />{a.label}</span>
-                        <WipBadge />
+                        {!isImplemented && <WipBadge />}
                       </button>
                     );
                   })}
                   <div className="my-1 border-t border-border" />
                   <button
-                    onClick={() => { onShowToast("준비 중인 기능입니다."); setMenuOpen(false); }}
-                    className="w-full flex items-center justify-between gap-2 px-3 py-2 text-xs font-medium hover:bg-muted text-left transition-colors"
+                    onClick={() => { setMenuOpen(false); void handleGenerateChecklist(); }}
+                    disabled={generatingChecklist}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium hover:bg-muted text-left transition-colors disabled:opacity-50"
                     style={{ color: "#7048E8" }}
                   >
-                    <span className="flex items-center gap-2"><Sparkles className="w-3.5 h-3.5" />{aiBtn}</span>
-                    <WipBadge />
-                  </button>
-                  <button
-                    onClick={() => { onShowToast("준비 중인 기능입니다."); setMenuOpen(false); }}
-                    className="w-full flex items-center justify-between gap-2 px-3 py-2 text-xs font-medium hover:bg-muted text-left transition-colors"
-                    style={{ color: "#7048E8" }}
-                  >
-                    <span className="flex items-center gap-2"><Sparkles className="w-3.5 h-3.5" />체크리스트 자동 생성</span>
-                    <WipBadge />
+                    <Sparkles className="w-3.5 h-3.5" />
+                    {generatingChecklist ? "생성 중..." : "체크리스트 자동 생성"}
                   </button>
                   <div className="my-1 border-t border-border" />
                   <button
@@ -555,6 +622,11 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs font-bold text-foreground">{item.who}</span>
+                  {item.isFeedback && (
+                    <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "rgba(112,72,232,0.12)", color: "#7048E8" }}>
+                      피드백
+                    </span>
+                  )}
                   <span className="text-[10px] text-muted-foreground">{item.when}</span>
                   {item.commentId && (
                     <span className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -592,14 +664,15 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
       <div className="p-4 border-t border-border shrink-0">
         <div className="flex gap-2">
           <textarea
+            ref={commentTextareaRef}
             value={newComment}
             onChange={(e) => setNewComment(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendComment(); }
             }}
             rows={2}
-            placeholder="팀원에게 코멘트를 남기세요... (Shift+Enter: 줄바꿈)"
-            className="flex-1 text-xs rounded-lg border border-border bg-input-background px-3 py-2 outline-none focus:border-blue-400 resize-none"
+            placeholder={feedbackMode ? "팀장 피드백을 남기세요... (Shift+Enter: 줄바꿈)" : "팀원에게 코멘트를 남기세요... (Shift+Enter: 줄바꿈)"}
+            className={`flex-1 text-xs rounded-lg border ${feedbackMode ? "border-purple-300" : "border-border"} bg-input-background px-3 py-2 outline-none focus:border-blue-400 resize-none`}
           />
           <button onClick={handleSendComment} disabled={!newComment.trim() || sendingComment} className="self-end p-2 rounded-lg text-white shrink-0 disabled:opacity-40" style={{ background: "var(--primary)" }}>
             <Send className="w-3.5 h-3.5" />

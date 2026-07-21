@@ -20,7 +20,7 @@ docker compose up -d
 
 - **db / redis / kafka 서비스는 아직 앱 코드가 사용하지 않는다.** `backend_spring`의
   `build.gradle`에는 JPA/Postgres/Redis/Kafka 의존성이 없고 `application.yml`에도 관련 설정이
-  없다. `backend_fastapi`의 `requirements.txt`에도 kafka/redis 클라이언트가 없다.
+  없다. 저장소 루트의 `requirements.txt`에도 kafka/redis 클라이언트가 없다.
   즉 지금 `docker compose up`을 해도 이 세 서비스는 컨테이너만 뜨고 백엔드와 실제로 연결되지는
   않는다. 나중에 DB/Redis/Kafka 연동 코드가 추가되면, 그때 `KAFKA_BOOTSTRAP_SERVERS` /
   `DB_HOST` / `REDIS_HOST` 환경변수 이름이 실제 Spring/FastAPI 설정 프로퍼티 키와 맞는지

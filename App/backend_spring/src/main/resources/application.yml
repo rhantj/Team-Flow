@@ -25,6 +25,10 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
     password: ${SPRING_DATASOURCE_PASSWORD:root}
     hikari:
+      # Supabase 무료/저가 플랜 pooler는 세션 모드 동시 접속이 15개로 제한된다.
+      # 기본값(10)은 인스턴스 하나만 떠도 대부분을 차지해버려서 다른 클라이언트(SQL 콘솔 등)가
+      # 붙지 못하는 문제가 반복됐다 — 넉넉히 남기도록 작게 유지한다.
+      maximum-pool-size: ${SPRING_DATASOURCE_HIKARI_MAX_POOL_SIZE:4}
       data-source-properties:
         # Supabase Supavisor(pgbouncer) 트랜잭션 풀러(6543)는 커넥션마다 다른
         # 물리 세션을 재사용하므로, PgJDBC 서버사이드 prepared statement 캐시를
@@ -69,3 +73,7 @@ workflow:
     dev-login-enabled: ${WORKFLOW_DEMO_DEV_LOGIN_ENABLED:false}
   uploads:
     dir: ${WORKFLOW_UPLOADS_DIR:uploads}
+  supabase:
+    url: ${SUPABASE_URL:}
+    service-role-key: ${SUPABASE_SERVICE_ROLE_KEY:}
+    storage-bucket: ${SUPABASE_STORAGE_BUCKET:task-results}

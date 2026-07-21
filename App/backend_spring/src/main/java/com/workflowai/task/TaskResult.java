@@ -8,38 +8,35 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 
+/** 업무당 1행. "작업 내용 작성"은 새로 만드는 게 아니라 upsert(생성/수정)한다. */
 @Entity
-@Table(name = "task_comments")
-public class TaskComment {
+@Table(name = "task_results")
+public class TaskResult {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "task_id", nullable = false)
+    @Column(name = "task_id", nullable = false, unique = true)
     private Long taskId;
-
-    @Column(name = "author_id", nullable = false)
-    private Long authorId;
 
     @Column(nullable = false, columnDefinition = "text")
     private String content;
 
-    @Column(nullable = false, length = 20)
-    private String type;
-
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
-    protected TaskComment() {
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+
+    protected TaskResult() {
     }
 
-    public TaskComment(Long taskId, Long authorId, String content, String type) {
+    public TaskResult(Long taskId, String content) {
         this.taskId = taskId;
-        this.authorId = authorId;
         this.content = content;
-        this.type = type;
         this.createdAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now();
     }
 
     public Long getId() {
@@ -50,23 +47,16 @@ public class TaskComment {
         return taskId;
     }
 
-    public Long getAuthorId() {
-        return authorId;
-    }
-
     public String getContent() {
         return content;
     }
 
-    public String getType() {
-        return type;
-    }
-
-    public LocalDateTime getCreatedAt() {
-        return createdAt;
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
     }
 
     public void setContent(String content) {
         this.content = content;
+        this.updatedAt = LocalDateTime.now();
     }
 }
