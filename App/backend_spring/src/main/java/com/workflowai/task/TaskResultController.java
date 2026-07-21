@@ -2,10 +2,12 @@ package com.workflowai.task;
 
 import com.workflowai.common.ApiResponse;
 import com.workflowai.common.DemoDataService;
+import com.workflowai.security.CurrentUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -23,13 +25,15 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
-// TODO: 실제 인증이 도입되면 userId를 요청 바디 대신 인증 컨텍스트에서 가져와야 한다.
 @Tag(name = "업무 작업 내용", description = "업무 상세의 \"작업 내용 작성\" 패널(내용/링크/첨부파일) API. 담당자만 쓸 수 있다.")
 @RestController
 @RequestMapping("/api/v1/projects/{projectId}/tasks/{taskId}/result")
 public class TaskResultController {
     private static final Logger log = LoggerFactory.getLogger(TaskResultController.class);
     private static final int SIGNED_URL_EXPIRES_SECONDS = 3600;
+    private static final int MAX_URL_LENGTH = 2000;
+    private static final int MAX_TITLE_LENGTH = 200;
+    private static final int MAX_FILE_NAME_LENGTH = 255;
 
     private final TaskResultRepository taskResultRepository;
     private final TaskResultLinkRepository taskResultLinkRepository;
@@ -108,7 +112,7 @@ public class TaskResultController {
         if (task == null) {
             return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
         }
-        if (!isAssignee(task, request.userId())) {
+        if (!isAssignee(task, CurrentUser.id())) {
             return ResponseEntity.status(403).body(ApiResponse.fail("FORBIDDEN_NOT_ASSIGNEE", "담당자만 작업 내용을 작성할 수 있습니다."));
         }
         TaskResult result = taskResultRepository.findByTaskId(taskId).orElse(null);
@@ -132,14 +136,23 @@ public class TaskResultController {
         if (request.url() == null || request.url().isBlank()) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("URL_REQUIRED", "URL은 필수입니다."));
         }
+        if (request.url().length() > MAX_URL_LENGTH) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("URL_TOO_LONG", "URL은 " + MAX_URL_LENGTH + "자를 초과할 수 없습니다."));
+        }
+        if (request.title() != null && request.title().length() > MAX_TITLE_LENGTH) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("TITLE_TOO_LONG", "제목은 " + MAX_TITLE_LENGTH + "자를 초과할 수 없습니다."));
+        }
         Task task = resolveTaskOrNull(projectId, taskId);
         if (task == null) {
             return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
         }
-        if (!isAssignee(task, request.userId())) {
+        if (!isAssignee(task, CurrentUser.id())) {
             return ResponseEntity.status(403).body(ApiResponse.fail("FORBIDDEN_NOT_ASSIGNEE", "담당자만 링크를 추가할 수 있습니다."));
         }
         String title = (request.title() == null || request.title().isBlank()) ? request.url() : request.title();
+        if (title.length() > MAX_TITLE_LENGTH) {
+            title = title.substring(0, MAX_TITLE_LENGTH);
+        }
         TaskResultLink saved = taskResultLinkRepository.save(new TaskResultLink(taskId, request.url(), title));
         return ResponseEntity.ok(ApiResponse.ok(TaskResultLinkDto.from(saved)));
     }
@@ -150,14 +163,13 @@ public class TaskResultController {
     public ResponseEntity<ApiResponse<Void>> deleteLink(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId,
-        @Parameter(description = "링크 ID") @PathVariable Long linkId,
-        @Parameter(description = "로그인한 사용자 DB id") @RequestParam Long userId
+        @Parameter(description = "링크 ID") @PathVariable Long linkId
     ) {
         Task task = resolveTaskOrNull(projectId, taskId);
         if (task == null) {
             return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
         }
-        if (!isAssignee(task, userId)) {
+        if (!isAssignee(task, CurrentUser.id())) {
             return ResponseEntity.status(403).body(ApiResponse.fail("FORBIDDEN_NOT_ASSIGNEE", "담당자만 링크를 삭제할 수 있습니다."));
         }
         TaskResultLink link = taskResultLinkRepository.findById(linkId).orElse(null);
@@ -174,30 +186,44 @@ public class TaskResultController {
     public ResponseEntity<ApiResponse<TaskResultFileDto>> uploadFile(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId,
-        @RequestParam Long userId,
         @RequestParam MultipartFile file
     ) {
         if (file.isEmpty()) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("FILE_REQUIRED", "파일이 비어있습니다."));
         }
+        String originalName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "file";
+        if (originalName.length() > MAX_FILE_NAME_LENGTH) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("FILE_NAME_TOO_LONG", "파일명은 " + MAX_FILE_NAME_LENGTH + "자를 초과할 수 없습니다."));
+        }
         Task task = resolveTaskOrNull(projectId, taskId);
         if (task == null) {
             return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
         }
-        if (!isAssignee(task, userId)) {
+        Long uploaderId = CurrentUser.id();
+        if (!isAssignee(task, uploaderId)) {
             return ResponseEntity.status(403).body(ApiResponse.fail("FORBIDDEN_NOT_ASSIGNEE", "담당자만 파일을 업로드할 수 있습니다."));
         }
-        String originalName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "file";
         String storagePath = "tasks/" + taskId + "/" + UUID.randomUUID() + "-" + originalName;
-        try {
-            storageClient.upload(storagePath, file.getBytes(), file.getContentType());
+        try (InputStream in = file.getInputStream()) {
+            storageClient.upload(storagePath, in, file.getSize(), file.getContentType());
         } catch (IOException | RuntimeException e) {
             log.error("Supabase Storage 업로드 실패: taskId={}, path={}", taskId, storagePath, e);
             return ResponseEntity.status(502).body(ApiResponse.fail("STORAGE_UPLOAD_FAILED", "파일 업로드에 실패했습니다."));
         }
-        TaskResultFile saved = taskResultFileRepository.save(
-            new TaskResultFile(taskId, originalName, storagePath, file.getSize(), file.getContentType(), userId)
-        );
+        TaskResultFile saved;
+        try {
+            saved = taskResultFileRepository.save(
+                new TaskResultFile(taskId, originalName, storagePath, file.getSize(), file.getContentType(), uploaderId)
+            );
+        } catch (RuntimeException e) {
+            log.error("파일 메타데이터 저장 실패, Storage 객체를 정리합니다: taskId={}, path={}", taskId, storagePath, e);
+            try {
+                storageClient.delete(storagePath);
+            } catch (RuntimeException cleanupError) {
+                log.error("고아 Storage 객체 정리 실패: path={}", storagePath, cleanupError);
+            }
+            return ResponseEntity.status(500).body(ApiResponse.fail("FILE_SAVE_FAILED", "파일 정보를 저장하지 못했습니다."));
+        }
         return ResponseEntity.ok(ApiResponse.ok(TaskResultFileDto.from(saved)));
     }
 
@@ -207,14 +233,13 @@ public class TaskResultController {
     public ResponseEntity<ApiResponse<Void>> deleteFile(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId,
-        @Parameter(description = "파일 ID") @PathVariable Long fileId,
-        @Parameter(description = "로그인한 사용자 DB id") @RequestParam Long userId
+        @Parameter(description = "파일 ID") @PathVariable Long fileId
     ) {
         Task task = resolveTaskOrNull(projectId, taskId);
         if (task == null) {
             return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
         }
-        if (!isAssignee(task, userId)) {
+        if (!isAssignee(task, CurrentUser.id())) {
             return ResponseEntity.status(403).body(ApiResponse.fail("FORBIDDEN_NOT_ASSIGNEE", "담당자만 파일을 삭제할 수 있습니다."));
         }
         TaskResultFile taskResultFile = taskResultFileRepository.findById(fileId).orElse(null);

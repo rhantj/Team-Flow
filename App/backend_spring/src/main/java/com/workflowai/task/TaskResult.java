@@ -57,5 +57,6 @@ public class TaskResult {
 
     public void setContent(String content) {
         this.content = content;
+        this.updatedAt = LocalDateTime.now();
     }
 }

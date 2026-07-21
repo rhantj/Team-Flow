@@ -22,14 +22,13 @@ export async function fetchTaskComments(taskId: string, projectId: number = DEMO
 
 export async function createTaskComment(
   taskId: string,
-  authorId: string,
   content: string,
   projectId: number = DEMO_PROJECT_ID,
   type: TaskCommentType = "COMMENT"
 ): Promise<TaskCommentDto> {
   return apiFetch<TaskCommentDto>(commentsPath(taskId, projectId), {
     method: "POST",
-    body: JSON.stringify({ authorId, content, type }),
+    body: JSON.stringify({ content, type }),
   });
 }
 

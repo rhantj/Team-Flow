@@ -1,10 +1,13 @@
 package com.workflowai.task;
 
+import java.io.InputStream;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -50,12 +53,17 @@ public class SupabaseStorageClient {
     // 전부 .pathSegment(path.split("/"))로 세그먼트별로 붙여서 "/"는 구분자로 남기고 파일명 안의
     // 한글/공백 등 내용만 인코딩되게 한다.
 
-    /** path는 버킷 하위 object 경로(예: tasks/42/uuid-파일명.pdf). */
-    public void upload(String path, byte[] content, String contentType) {
+    /**
+     * path는 버킷 하위 object 경로(예: tasks/42/uuid-파일명.pdf).
+     * MultipartFile 전체를 byte[]로 미리 읽으면 동시 대용량 업로드 시 힙 메모리를 크게 잡아먹으므로,
+     * InputStream을 그대로 전달해 Content-Length만 미리 알려주고 본문은 스트리밍으로 전송한다.
+     */
+    public void upload(String path, InputStream content, long contentLength, String contentType) {
         restClient.post()
             .uri(uriBuilder -> uriBuilder.path("/object/{bucket}").pathSegment(path.split("/")).build(bucket))
             .contentType(contentType != null ? MediaType.parseMediaType(contentType) : MediaType.APPLICATION_OCTET_STREAM)
-            .body(content)
+            .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(contentLength))
+            .body(new InputStreamResource(content))
             .retrieve()
             .toBodilessEntity();
     }

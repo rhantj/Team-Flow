@@ -4,6 +4,7 @@ import com.workflowai.common.ApiResponse;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.project.ProjectRole;
+import com.workflowai.security.CurrentUser;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
 import io.swagger.v3.oas.annotations.Operation;
@@ -24,8 +25,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 // DONE: @projectAccess.isMember(#projectId)로 프로젝트 멤버십 검사 적용 완료 (2026-07-18).
-// TODO: createComment가 request.authorId()를 그대로 신뢰해 로그인 사용자가 아닌 임의 명의로
-// 코멘트가 남을 수 있다(CurrentUser.id() 기반으로 교체 필요). 남은 과제는 document_고무서에 별도 기록.
 @Tag(name = "업무 코멘트", description = "업무에 대한 코멘트 조회/작성/수정/삭제 API")
 @RestController
 @RequestMapping("/api/v1/projects/{projectId}/tasks/{taskId}/comments")
@@ -110,11 +109,7 @@ public class TaskCommentController {
         if (task == null) {
             return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
         }
-        // TODO: 로그인이 없어 요청에 담긴 mock 작성자 id를 그대로 쓴다. 실제 인증이 붙으면 로그인 사용자 id로 교체.
-        Long authorDbId = demoDataService.resolveUserId(request.authorId());
-        if (authorDbId == null) {
-            authorDbId = demoDataService.resolveUserId("1");
-        }
+        Long authorDbId = CurrentUser.id();
         String type = normalizeType(request.type());
         if ("FEEDBACK".equals(type) && !isLeader(task.getProjectId(), authorDbId)) {
             return ResponseEntity.status(403).body(ApiResponse.fail("FORBIDDEN_NOT_LEADER", "팀장만 피드백을 남길 수 있습니다."));

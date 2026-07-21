@@ -94,7 +94,7 @@ export function TaskResultPanel({ task, onClose, onShowToast }: TaskResultPanelP
     setSaving(true);
     const wasSaved = isSaved;
     try {
-      await saveTaskResult(task.id, user.id, content, projectId);
+      await saveTaskResult(task.id, content, projectId);
       setIsSaved(true);
       onShowToast(wasSaved ? "작업 내용을 수정했습니다." : "작업 내용을 저장했습니다.");
     } catch (e) {
@@ -119,7 +119,7 @@ export function TaskResultPanel({ task, onClose, onShowToast }: TaskResultPanelP
           continue;
         }
         try {
-          const uploaded = await uploadTaskResultFile(task.id, user.id, file, projectId);
+          const uploaded = await uploadTaskResultFile(task.id, file, projectId);
           setFiles((cur) => [...cur, uploaded]);
         } catch (e) {
           onShowToast(errorMessage(e, `'${file.name}' 업로드에 실패했습니다.`));
@@ -141,7 +141,7 @@ export function TaskResultPanel({ task, onClose, onShowToast }: TaskResultPanelP
     const prev = files;
     setFiles((cur) => cur.filter((f) => f.id !== id));
     try {
-      await deleteTaskResultFile(task.id, id, user.id, projectId);
+      await deleteTaskResultFile(task.id, id, projectId);
     } catch (e) {
       setFiles(prev);
       onShowToast(errorMessage(e, "파일 삭제에 실패했습니다."));
@@ -172,7 +172,7 @@ export function TaskResultPanel({ task, onClose, onShowToast }: TaskResultPanelP
     if (!url || savingLink || !user) return;
     setSavingLink(true);
     try {
-      const created = await addTaskResultLink(task.id, user.id, url, linkTitle.trim(), projectId);
+      const created = await addTaskResultLink(task.id, url, linkTitle.trim(), projectId);
       setLinks((cur) => [...cur, created]);
       setLinkUrl("");
       setLinkTitle("");
@@ -189,7 +189,7 @@ export function TaskResultPanel({ task, onClose, onShowToast }: TaskResultPanelP
     const prev = links;
     setLinks((cur) => cur.filter((l) => l.id !== id));
     try {
-      await deleteTaskResultLink(task.id, id, user.id, projectId);
+      await deleteTaskResultLink(task.id, id, projectId);
     } catch (e) {
       setLinks(prev);
       onShowToast(errorMessage(e, "링크 삭제에 실패했습니다."));

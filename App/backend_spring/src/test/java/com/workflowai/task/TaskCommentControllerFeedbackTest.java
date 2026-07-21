@@ -10,15 +10,20 @@ import com.workflowai.common.DemoDataService;
 import com.workflowai.project.ProjectMember;
 import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.project.ProjectRole;
+import com.workflowai.security.UserPrincipal;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -44,6 +49,21 @@ class TaskCommentControllerFeedbackTest {
     @MockitoBean
     private ProjectMemberRepository projectMemberRepository;
 
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
+    }
+
+    // 실제 요청에서는 JwtAuthenticationFilter가 이 인증 정보를 채운다. 로그인 사용자의 DB id만이
+    // 작성자/팀장 판정 근거이므로, 요청 바디의 authorId를 조작해 팀장 명의로 글을 남길 수 없다.
+    private void authenticateAs(long userId) {
+        SecurityContextHolder.getContext().setAuthentication(
+            new UsernamePasswordAuthenticationToken(
+                new UserPrincipal(userId, "user" + userId + "@workflow.ai", "테스트유저"), null, List.of()
+            )
+        );
+    }
+
     private Task existingTask() {
         return new Task(
             1L, "로그인 API 구현", "backend", "done", 1L,
@@ -54,9 +74,9 @@ class TaskCommentControllerFeedbackTest {
 
     @Test
     void leaderCanPostFeedback() throws Exception {
+        authenticateAs(100L);
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(42L)).thenReturn(Optional.of(existingTask()));
-        when(demoDataService.resolveUserId("1")).thenReturn(100L);
         when(projectMemberRepository.findByProjectIdAndUserId(1L, 100L))
             .thenReturn(Optional.of(new ProjectMember(1L, 100L, ProjectRole.LEADER)));
         when(taskCommentRepository.save(any(TaskComment.class)))
@@ -67,7 +87,7 @@ class TaskCommentControllerFeedbackTest {
         mockMvc.perform(post("/api/v1/projects/demo-project/tasks/42/comments")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"authorId":"1","content":"화면 반응형 처리 다시 확인해주세요","type":"FEEDBACK"}
+                    {"content":"화면 반응형 처리 다시 확인해주세요","type":"FEEDBACK"}
                     """))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.success").value(true))
@@ -76,16 +96,16 @@ class TaskCommentControllerFeedbackTest {
 
     @Test
     void nonLeaderCannotPostFeedback() throws Exception {
+        authenticateAs(200L);
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(42L)).thenReturn(Optional.of(existingTask()));
-        when(demoDataService.resolveUserId("2")).thenReturn(200L);
         when(projectMemberRepository.findByProjectIdAndUserId(1L, 200L))
             .thenReturn(Optional.of(new ProjectMember(1L, 200L, ProjectRole.MEMBER)));
 
         mockMvc.perform(post("/api/v1/projects/demo-project/tasks/42/comments")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"authorId":"2","content":"제가 피드백 남길게요","type":"FEEDBACK"}
+                    {"content":"제가 피드백 남길게요","type":"FEEDBACK"}
                     """))
             .andExpect(status().isForbidden())
             .andExpect(jsonPath("$.error.code").value("FORBIDDEN_NOT_LEADER"));
@@ -93,16 +113,16 @@ class TaskCommentControllerFeedbackTest {
 
     @Test
     void nonMemberCannotPostFeedback() throws Exception {
+        authenticateAs(300L);
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(42L)).thenReturn(Optional.of(existingTask()));
-        when(demoDataService.resolveUserId("3")).thenReturn(300L);
         when(projectMemberRepository.findByProjectIdAndUserId(1L, 300L))
             .thenReturn(Optional.empty());
 
         mockMvc.perform(post("/api/v1/projects/demo-project/tasks/42/comments")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"authorId":"3","content":"피드백입니다","type":"FEEDBACK"}
+                    {"content":"피드백입니다","type":"FEEDBACK"}
                     """))
             .andExpect(status().isForbidden())
             .andExpect(jsonPath("$.error.code").value("FORBIDDEN_NOT_LEADER"));
@@ -110,9 +130,9 @@ class TaskCommentControllerFeedbackTest {
 
     @Test
     void defaultsToCommentTypeWhenOmitted() throws Exception {
+        authenticateAs(200L);
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(42L)).thenReturn(Optional.of(existingTask()));
-        when(demoDataService.resolveUserId("2")).thenReturn(200L);
         when(taskCommentRepository.save(any(TaskComment.class)))
             .thenAnswer(inv -> inv.getArgument(0));
         when(userRepository.findById(200L))
@@ -121,7 +141,7 @@ class TaskCommentControllerFeedbackTest {
         mockMvc.perform(post("/api/v1/projects/demo-project/tasks/42/comments")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"authorId":"2","content":"확인했습니다"}
+                    {"content":"확인했습니다"}
                     """))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.type").value("COMMENT"));

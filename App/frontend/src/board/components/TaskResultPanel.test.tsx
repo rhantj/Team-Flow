@@ -77,7 +77,7 @@ describe("TaskResultPanel", () => {
     await userEvent.type(screen.getByPlaceholderText("이번 작업에서 무엇을 했는지 작성해주세요."), "새 작업 내용");
     await userEvent.click(screen.getByText("생성"));
 
-    await waitFor(() => expect(saveTaskResult).toHaveBeenCalledWith("TF-01", 5, "새 작업 내용", 1));
+    await waitFor(() => expect(saveTaskResult).toHaveBeenCalledWith("TF-01", "새 작업 내용", 1));
     expect(onShowToast).toHaveBeenCalledWith("작업 내용을 저장했습니다.");
     expect(await screen.findByText("수정")).toBeInTheDocument();
   });
@@ -113,7 +113,7 @@ describe("TaskResultPanel", () => {
     await userEvent.upload(input, file);
 
     expect(await screen.findByText("schema_documentation.docx")).toBeInTheDocument();
-    expect(uploadTaskResultFile).toHaveBeenCalledWith("TF-01", 5, file, 1);
+    expect(uploadTaskResultFile).toHaveBeenCalledWith("TF-01", file, 1);
   });
 
   it("100MB를 초과하는 파일은 업로드를 시도하지 않고 토스트만 띄운다", async () => {
@@ -151,7 +151,7 @@ describe("TaskResultPanel", () => {
     const deleteBtn = row.querySelectorAll("button")[1] as HTMLElement;
     await userEvent.click(deleteBtn);
 
-    await waitFor(() => expect(deleteTaskResultFile).toHaveBeenCalledWith("TF-01", "9", 5, 1));
+    await waitFor(() => expect(deleteTaskResultFile).toHaveBeenCalledWith("TF-01", "9", 1));
     expect(screen.queryByText("meeting_result.pdf")).not.toBeInTheDocument();
   });
 
@@ -164,7 +164,7 @@ describe("TaskResultPanel", () => {
     await userEvent.click(screen.getByText("추가"));
 
     expect(await screen.findByText("PR #42")).toBeInTheDocument();
-    expect(addTaskResultLink).toHaveBeenCalledWith("TF-01", 5, "https://github.com/teamflow-ai/backend/pull/42", "PR #42", 1);
+    expect(addTaskResultLink).toHaveBeenCalledWith("TF-01", "https://github.com/teamflow-ai/backend/pull/42", "PR #42", 1);
   });
 
   it("링크 삭제 시 API를 호출하고 목록에서 제거된다", async () => {
@@ -177,7 +177,7 @@ describe("TaskResultPanel", () => {
     const deleteBtn = row.querySelectorAll("button")[1] as HTMLElement;
     await userEvent.click(deleteBtn);
 
-    await waitFor(() => expect(deleteTaskResultLink).toHaveBeenCalledWith("TF-01", "2", 5, 1));
+    await waitFor(() => expect(deleteTaskResultLink).toHaveBeenCalledWith("TF-01", "2", 1));
     expect(screen.queryByText("PR #42")).not.toBeInTheDocument();
   });
 

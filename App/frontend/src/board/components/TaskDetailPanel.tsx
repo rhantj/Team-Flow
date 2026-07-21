@@ -303,7 +303,7 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
     setSendingComment(true);
     const type = feedbackMode ? "FEEDBACK" : "COMMENT";
     try {
-      const created = await createTaskComment(task.id, CURRENT_USER.id, text, projectId, type);
+      const created = await createTaskComment(task.id, text, projectId, type);
       setTaskComments((cur) => [...cur, created]);
       const assignee = MEMBERS.find((mm) => mm.id === task.assignee);
       if (assignee) {

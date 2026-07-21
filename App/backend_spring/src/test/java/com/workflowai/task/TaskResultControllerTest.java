@@ -1,6 +1,7 @@
 package com.workflowai.task;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -15,15 +16,19 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.workflowai.common.DemoDataService;
+import com.workflowai.security.UserPrincipal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -51,6 +56,22 @@ class TaskResultControllerTest {
 
     @MockitoBean
     private SupabaseStorageClient storageClient;
+
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
+    }
+
+    // 실제 요청에서는 JwtAuthenticationFilter가 이 인증 정보를 채운다. 이 인증 컨텍스트만이
+    // CurrentUser.id()의 유일한 근거이므로, 클라이언트가 보내는 값(예전의 userId 파라미터)으로는
+    // 더 이상 담당자 신분을 흉내낼 수 없다는 것을 이 테스트들이 검증한다.
+    private void authenticateAs(long userId) {
+        SecurityContextHolder.getContext().setAuthentication(
+            new UsernamePasswordAuthenticationToken(
+                new UserPrincipal(userId, "user" + userId + "@workflow.ai", "테스트유저"), null, List.of()
+            )
+        );
+    }
 
     private Task taskWithAssignee(Long assigneeId) {
         return new Task(
@@ -86,6 +107,7 @@ class TaskResultControllerTest {
 
     @Test
     void assigneeCanSaveContent() throws Exception {
+        authenticateAs(5L);
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(42L)).thenReturn(Optional.of(taskWithAssignee(5L)));
         when(taskResultRepository.findByTaskId(42L)).thenReturn(Optional.empty());
@@ -96,7 +118,7 @@ class TaskResultControllerTest {
         mockMvc.perform(put("/api/v1/projects/demo-project/tasks/42/result")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"userId":5,"content":"API 명세 초안을 작성했습니다."}
+                    {"content":"API 명세 초안을 작성했습니다."}
                     """))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.content").value("API 명세 초안을 작성했습니다."));
@@ -104,13 +126,14 @@ class TaskResultControllerTest {
 
     @Test
     void nonAssigneeCannotSaveContent() throws Exception {
+        authenticateAs(9L);
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(42L)).thenReturn(Optional.of(taskWithAssignee(5L)));
 
         mockMvc.perform(put("/api/v1/projects/demo-project/tasks/42/result")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"userId":9,"content":"제가 대신 씁니다"}
+                    {"content":"제가 대신 씁니다"}
                     """))
             .andExpect(status().isForbidden())
             .andExpect(jsonPath("$.error.code").value("FORBIDDEN_NOT_ASSIGNEE"));
@@ -120,6 +143,7 @@ class TaskResultControllerTest {
 
     @Test
     void assigneeCanAddLink() throws Exception {
+        authenticateAs(5L);
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(42L)).thenReturn(Optional.of(taskWithAssignee(5L)));
         when(taskResultLinkRepository.save(any(TaskResultLink.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -127,7 +151,7 @@ class TaskResultControllerTest {
         mockMvc.perform(post("/api/v1/projects/demo-project/tasks/42/result/links")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"userId":5,"url":"https://github.com/teamflow-ai/backend/pull/42","title":"PR #42"}
+                    {"url":"https://github.com/teamflow-ai/backend/pull/42","title":"PR #42"}
                     """))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.title").value("PR #42"))
@@ -136,13 +160,14 @@ class TaskResultControllerTest {
 
     @Test
     void nonAssigneeCannotAddLink() throws Exception {
+        authenticateAs(9L);
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(42L)).thenReturn(Optional.of(taskWithAssignee(5L)));
 
         mockMvc.perform(post("/api/v1/projects/demo-project/tasks/42/result/links")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"userId":9,"url":"https://github.com/x/y","title":"제목"}
+                    {"url":"https://x.com/y","title":"제목"}
                     """))
             .andExpect(status().isForbidden())
             .andExpect(jsonPath("$.error.code").value("FORBIDDEN_NOT_ASSIGNEE"));
@@ -151,45 +176,77 @@ class TaskResultControllerTest {
     }
 
     @Test
+    void addLinkRejectsUrlOverMaxLength() throws Exception {
+        authenticateAs(5L);
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        String hugeUrl = "https://x.com/" + "a".repeat(2000);
+
+        mockMvc.perform(post("/api/v1/projects/demo-project/tasks/42/result/links")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"url\":\"" + hugeUrl + "\",\"title\":\"제목\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("URL_TOO_LONG"));
+
+        verify(taskResultLinkRepository, never()).save(any());
+    }
+
+    @Test
     void assigneeCanDeleteLink() throws Exception {
+        authenticateAs(5L);
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(42L)).thenReturn(Optional.of(taskWithAssignee(5L)));
         when(taskResultLinkRepository.findById(7L)).thenReturn(Optional.of(new TaskResultLink(42L, "https://x.com", "제목")));
 
-        mockMvc.perform(delete("/api/v1/projects/demo-project/tasks/42/result/links/7").param("userId", "5"))
+        mockMvc.perform(delete("/api/v1/projects/demo-project/tasks/42/result/links/7"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.success").value(true));
     }
 
     @Test
     void assigneeCanUploadFile() throws Exception {
+        authenticateAs(5L);
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(42L)).thenReturn(Optional.of(taskWithAssignee(5L)));
         when(taskResultFileRepository.save(any(TaskResultFile.class))).thenAnswer(inv -> inv.getArgument(0));
         MockMultipartFile file = new MockMultipartFile("file", "meeting_result.pdf", "application/pdf", "hello".getBytes());
 
         mockMvc.perform(multipart("/api/v1/projects/demo-project/tasks/42/result/files")
-                .file(file)
-                .param("userId", "5"))
+                .file(file))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.fileName").value("meeting_result.pdf"));
 
-        verify(storageClient).upload(anyString(), any(byte[].class), eq("application/pdf"));
+        verify(storageClient).upload(anyString(), any(), anyLong(), eq("application/pdf"));
     }
 
     @Test
     void nonAssigneeCannotUploadFile() throws Exception {
+        authenticateAs(9L);
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(42L)).thenReturn(Optional.of(taskWithAssignee(5L)));
         MockMultipartFile file = new MockMultipartFile("file", "meeting_result.pdf", "application/pdf", "hello".getBytes());
 
         mockMvc.perform(multipart("/api/v1/projects/demo-project/tasks/42/result/files")
-                .file(file)
-                .param("userId", "9"))
+                .file(file))
             .andExpect(status().isForbidden())
             .andExpect(jsonPath("$.error.code").value("FORBIDDEN_NOT_ASSIGNEE"));
 
-        verify(storageClient, never()).upload(anyString(), any(byte[].class), any());
+        verify(storageClient, never()).upload(anyString(), any(), anyLong(), any());
+    }
+
+    @Test
+    void uploadFileCleansUpStorageObjectWhenMetadataSaveFails() throws Exception {
+        authenticateAs(5L);
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(taskRepository.findById(42L)).thenReturn(Optional.of(taskWithAssignee(5L)));
+        when(taskResultFileRepository.save(any(TaskResultFile.class))).thenThrow(new RuntimeException("db down"));
+        MockMultipartFile file = new MockMultipartFile("file", "meeting_result.pdf", "application/pdf", "hello".getBytes());
+
+        mockMvc.perform(multipart("/api/v1/projects/demo-project/tasks/42/result/files")
+                .file(file))
+            .andExpect(status().isInternalServerError())
+            .andExpect(jsonPath("$.error.code").value("FILE_SAVE_FAILED"));
+
+        verify(storageClient).delete(anyString());
     }
 
     @Test
