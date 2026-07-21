@@ -44,7 +44,7 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
   const isMobile = useIsMobile();
   const [searchOpen, setSearchOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const { currentProject, currentProjectId, logout } = useAuth();
+  const { isAuthenticated, currentProject, currentProjectId, logout } = useAuth();
   const presenceUsers = usePresence(currentProjectId);
   const projectDetail = useProject(currentProjectId);
   const currentProjectName = currentProject?.projectTitle ?? null;
@@ -56,7 +56,7 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
   // 실시간 푸시(SSE/WebSocket)가 아직 없어 안 읽은 개수만 주기적으로 폴링한다.
   // 목록 자체는 벨을 열 때만 불러온다(불필요한 요청을 줄이기 위함).
   useEffect(() => {
-    if (!user) return;
+    if (!isAuthenticated) return;
     let cancelled = false;
     const loadUnreadCount = () => {
       fetchUnreadNotificationCount().then((count) => {
@@ -69,7 +69,7 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
       cancelled = true;
       clearInterval(interval);
     };
-  }, [user]);
+  }, [isAuthenticated]);
 
   const handleToggleNotifications = () => {
     const opening = !notifOpen;
