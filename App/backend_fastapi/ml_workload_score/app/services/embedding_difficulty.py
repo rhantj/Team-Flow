@@ -31,14 +31,29 @@ EMBEDDING_DIFFICULTY_WEIGHT = 0.3
 _anchor_cache: dict[str, list[float]] = {}
 
 
-@traceable(run_type="llm", name="ollama_embed")
+def _summarize_embed_outputs(outputs: list[float]) -> dict:
+    """LangSmith 트레이스에 임베딩 벡터 원본 전체 대신 차원 수만 기록한다."""
+    return {"embedding_dim": len(outputs)}
+
+
+@traceable(run_type="llm", name="ollama_embed", process_outputs=_summarize_embed_outputs)
 async def _embed(text_value: str) -> list[float]:
     client = ollama.AsyncClient(host=OLLAMA_HOST)
     response = await client.embeddings(model=EMBEDDING_MODEL, prompt=text_value)
     return response["embedding"]
 
 
-@traceable(run_type="chain", name="get_anchor_embeddings")
+def _summarize_get_anchor_embeddings_outputs(outputs: tuple[list[float], list[float]]) -> dict:
+    """LangSmith 트레이스에 HARD/EASY 앵커 임베딩 벡터 원본 전체 대신 차원 수만 기록한다."""
+    hard, easy = outputs
+    return {"hard_dim": len(hard), "easy_dim": len(easy)}
+
+
+@traceable(
+    run_type="chain",
+    name="get_anchor_embeddings",
+    process_outputs=_summarize_get_anchor_embeddings_outputs,
+)
 async def get_anchor_embeddings() -> tuple[list[float], list[float]]:
     """HARD/EASY 앵커 임베딩을 프로세스당 한 번만 계산해 캐싱한다."""
     if "hard" not in _anchor_cache:
@@ -94,7 +109,31 @@ def _query_similarity_adjustments(
             engine.dispose()
 
 
-@traceable(run_type="chain", name="compute_embedding_adjustments")
+def _summarize_compute_embedding_adjustments_inputs(inputs: dict) -> dict:
+    """LangSmith 트레이스에 task_ids 전체 목록 대신 개수/project_id만 기록한다."""
+    task_ids = inputs.get("task_ids") or []
+    return {
+        "task_ids_count": len(task_ids),
+        "project_id": inputs.get("project_id"),
+    }
+
+
+def _summarize_compute_embedding_adjustments_outputs(outputs: dict[int, float]) -> dict:
+    """LangSmith 트레이스에 task_id별 보정치 전체 dict 대신 개수/최솟값/최댓값만 기록한다."""
+    values = list(outputs.values())
+    return {
+        "adjustments_count": len(outputs),
+        "adjustments_min": min(values) if values else None,
+        "adjustments_max": max(values) if values else None,
+    }
+
+
+@traceable(
+    run_type="chain",
+    name="compute_embedding_adjustments",
+    process_inputs=_summarize_compute_embedding_adjustments_inputs,
+    process_outputs=_summarize_compute_embedding_adjustments_outputs,
+)
 async def compute_embedding_adjustments(task_ids: list[int], project_id: int) -> dict[int, float]:
     """
     document_chunks에 이미 임베딩된 task만 대상으로 난이도 보정치를 계산한다.

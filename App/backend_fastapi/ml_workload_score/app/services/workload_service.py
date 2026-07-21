@@ -20,7 +20,24 @@ from ml_workload_score.app.schema.workload_schema import (
 logger = logging.getLogger(__name__)
 
 
-@traceable(run_type="chain", name="get_workload_score")
+def _summarize_get_workload_score_outputs(outputs: WorkloadScoreData) -> dict:
+    """LangSmith 트레이스에 팀원별 개인 데이터(WorkloadMemberResult) 전체 대신
+    프로젝트 단위 요약 통계만 기록한다."""
+    return {
+        "project_id": outputs.project_id,
+        "source": outputs.source,
+        "method": outputs.method,
+        "member_count": len(outputs.members),
+        "anomaly_count": sum(1 for m in outputs.members if m.is_anomaly),
+        "note": outputs.note,
+    }
+
+
+@traceable(
+    run_type="chain",
+    name="get_workload_score",
+    process_outputs=_summarize_get_workload_score_outputs,
+)
 async def get_workload_score(project_id: int, use_synthetic_fallback: bool = False) -> WorkloadScoreData:
     """
     프로젝트의 팀원별 업무 편중(과부하/저활동) 점수를 계산한다.

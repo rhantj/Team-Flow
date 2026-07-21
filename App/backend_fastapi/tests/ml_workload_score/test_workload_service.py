@@ -5,7 +5,14 @@ from unittest.mock import AsyncMock, patch
 import pandas as pd
 import pytest
 
-from ml_workload_score.app.services.workload_service import get_workload_score
+from ml_workload_score.app.services.workload_service import (
+    _summarize_get_workload_score_outputs,
+    get_workload_score,
+)
+from ml_workload_score.app.schema.workload_schema import (
+    WorkloadMemberResult,
+    WorkloadScoreData,
+)
 
 
 def _fake_tasks_df() -> pd.DataFrame:
@@ -65,3 +72,54 @@ async def test_get_workload_score_synthetic_fallback_still_works():
 def test_get_workload_score_name_preserved_after_traceable():
     from ml_workload_score.app.services.workload_service import get_workload_score
     assert get_workload_score.__name__ == "get_workload_score"
+
+
+# ============================================================
+# process_outputs 요약 reducer 테스트
+# (LangSmith 트레이스에 팀원별 개인 데이터 전체 대신 요약 통계만 기록되는지 검증)
+# ============================================================
+def test_summarize_get_workload_score_outputs_with_anomalies():
+    data = WorkloadScoreData(
+        project_id=7,
+        source="db",
+        method="MAD (소규모 팀)",
+        members=[
+            WorkloadMemberResult(
+                assignee_id="1", task_count_total=5, completion_rate=0.4,
+                overload_score=92.5, is_anomaly=True, anomaly_type="과부하 의심",
+            ),
+            WorkloadMemberResult(
+                assignee_id="2", task_count_total=2, completion_rate=0.9,
+                overload_score=10.0, is_anomaly=False, anomaly_type="정상",
+            ),
+        ],
+        note=None,
+    )
+    result = _summarize_get_workload_score_outputs(data)
+    assert result == {
+        "project_id": 7,
+        "source": "db",
+        "method": "MAD (소규모 팀)",
+        "member_count": 2,
+        "anomaly_count": 1,
+        "note": None,
+    }
+
+
+def test_summarize_get_workload_score_outputs_empty_members():
+    data = WorkloadScoreData(
+        project_id=3,
+        source="db",
+        method="N/A",
+        members=[],
+        note="배정된 업무가 없어 편중 점수를 계산할 수 없습니다.",
+    )
+    result = _summarize_get_workload_score_outputs(data)
+    assert result == {
+        "project_id": 3,
+        "source": "db",
+        "method": "N/A",
+        "member_count": 0,
+        "anomaly_count": 0,
+        "note": "배정된 업무가 없어 편중 점수를 계산할 수 없습니다.",
+    }
