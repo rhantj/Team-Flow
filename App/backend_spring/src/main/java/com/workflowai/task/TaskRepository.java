@@ -9,9 +9,9 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface TaskRepository extends JpaRepository<Task, Long> {
-    List<Task> findByProjectIdOrderByStatusAscPositionAsc(Long projectId);
-
     List<Task> findByProjectIdOrderByCreatedAtDesc(Long projectId);
+
+    List<Task> findByProjectIdOrderByStatusAscPositionAsc(Long projectId);
 
     Optional<Task> findFirstBySourceMeetingIdAndTitleAndAssigneeIdAndDueDate(
         Long sourceMeetingId,

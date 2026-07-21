@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 
 from ml_delay_risk.models import delay_model
 from ml_delay_risk.schema.delay_schema import HealthResponse, TaskDelayPredictResponse
-from ml_delay_risk.services.task_delay_service import run_delay_risk_for_project
+from ml_delay_risk.services.delay_service import run_delay_risk_for_project
 
 router = APIRouter(prefix="/ai/predict/delay", tags=["delay-risk"])
 

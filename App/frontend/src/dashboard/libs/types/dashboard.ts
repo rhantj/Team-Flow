@@ -15,14 +15,32 @@ export interface WorkloadEntryDto {
   assigneeName: string | null;
   total: number;
   done: number;
+  todo: number;
+  inProgress: number;
+  blocked: number;
 }
 
 export interface ActivityItemDto {
   id: string;
   type: string;
   actorName: string | null;
+  message: string | null;
   targetId: string | null;
   createdAt: string | null;
+}
+
+export interface DashboardTaskDto {
+  id: string;
+  title: string;
+  category: string | null;
+  status: string;
+  assigneeId: string | null;
+  assigneeName: string | null;
+  dueDate: string | null;
+  priority: string | null;
+  description: string | null;
+  sourceType: string | null;
+  position: number;
 }
 
 export interface DashboardSummaryResponse {

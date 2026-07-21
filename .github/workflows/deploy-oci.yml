@@ -1,0 +1,84 @@
+name: Deploy to OCI
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-oci
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.OCI_SSH_KEY }}" > ~/.ssh/oci_deploy_key
+          chmod 600 ~/.ssh/oci_deploy_key
+          ssh-keyscan -H "${{ secrets.OCI_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy (git fetch + reset --hard origin/main + docker compose up -d --build)
+        id: deploy
+        run: |
+          ssh -i ~/.ssh/oci_deploy_key "${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }}" '
+            set -e
+            cd /home/ubuntu/work-flow
+            git tag -f deploy-previous HEAD
+            git fetch origin main
+            git reset --hard origin/main
+            cd App
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+          '
+
+      - name: Health check
+        id: health_check
+        if: steps.deploy.outcome == 'success'
+        run: |
+          for i in $(seq 1 20); do
+            code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' "https://${{ secrets.OCI_DOMAIN }}/api/v1/health" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "healthy (attempt $i)"
+              exit 0
+            fi
+            echo "not healthy yet (attempt $i, code=$code) — retrying in 10s"
+            sleep 10
+          done
+          echo "health check failed after retries"
+          exit 1
+
+      - name: Rollback to previous commit on deploy or health check failure
+        id: rollback
+        if: always() && (steps.deploy.outcome == 'failure' || steps.health_check.outcome == 'failure')
+        run: |
+          ssh -i ~/.ssh/oci_deploy_key "${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }}" '
+            set -e
+            cd /home/ubuntu/work-flow
+            echo "rolling back to $(git rev-parse deploy-previous)"
+            git reset --hard deploy-previous
+            cd App
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+          '
+
+      - name: Verify rollback health
+        if: always() && steps.rollback.outcome == 'success'
+        run: |
+          for i in $(seq 1 20); do
+            code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' "https://${{ secrets.OCI_DOMAIN }}/api/v1/health" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "rollback restored healthy state (attempt $i)"
+              exit 0
+            fi
+            echo "still not healthy after rollback (attempt $i, code=$code) — retrying in 10s"
+            sleep 10
+          done
+          echo "rollback did NOT restore a healthy state — manual intervention required immediately"
+          exit 1
+
+      - name: Notify Slack on deploy failure
+        if: always() && (steps.deploy.outcome == 'failure' || steps.health_check.outcome == 'failure')
+        run: |
+          curl -s -m 10 -X POST -H 'Content-Type: application/json' \
+            -d "{\"text\": \":rotating_light: OCI 배포 실패 (run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) — rollback outcome: ${{ steps.rollback.outcome }}. 롤백 후에도 비정상이면 즉시 수동 개입 필요.\"}" \
+            "${{ secrets.SLACK_WEBHOOK_URL }}"

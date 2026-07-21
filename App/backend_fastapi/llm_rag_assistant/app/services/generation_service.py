@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from ollama import AsyncClient
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 
 from core.config import get_settings
 
@@ -13,7 +14,9 @@ _SYSTEM_PROMPT = (
 
 async def generate_answer(question: str, sources: list[dict]) -> str:
     settings = get_settings()
-    client = AsyncClient(host=settings.ollama_host)
+
+    if not settings.hf_token:
+        raise RuntimeError("HF_TOKEN is not configured.")
 
     if not sources:
         context = "(관련 자료 없음)"
@@ -23,11 +26,14 @@ async def generate_answer(question: str, sources: list[dict]) -> str:
             for i, s in enumerate(sources)
         )
 
-    response = await client.chat(
-        model=settings.generation_model,
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": f"컨텍스트:\n{context}\n\n질문: {question}"},
-        ],
+    llm = HuggingFaceEndpoint(
+        repo_id=settings.hf_rag_generation_model, huggingfacehub_api_token=settings.hf_token
     )
-    return response["message"]["content"]
+    chat_model = ChatHuggingFace(llm=llm)
+    response = await chat_model.ainvoke(
+        [
+            SystemMessage(content=_SYSTEM_PROMPT),
+            HumanMessage(content=f"컨텍스트:\n{context}\n\n질문: {question}"),
+        ]
+    )
+    return response.content
