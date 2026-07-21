@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import {
-  Activity,
   AlertCircle,
   ArrowLeft,
   Award,
@@ -11,7 +10,6 @@ import {
   Download,
   Eye,
   EyeOff,
-  FileText,
   MessageSquare,
   RefreshCw,
   Search,
@@ -21,7 +19,6 @@ import {
 } from "lucide-react";
 import {
   CONTRIB_REPORTS,
-  REVIEWER_ACTIVITIES,
   REVIEWER_TEAMS,
 } from "../../global/lib/mock/reviewer";
 import { fetchAttendanceSummary, type MeetingAttendanceSummaryDto } from "../../meetings/libs/utils/meetingAiApi";
@@ -368,20 +365,45 @@ export function ContributorsView() {
                 </div>
               </section>
 
-              <section className="bg-card border border-border rounded-lg p-4 shadow-sm">
-                <div className="flex items-center gap-2 mb-3">
-                  <Activity className="w-4 h-4 text-blue-600" />
-                  <h3 className="text-sm font-bold text-foreground">최근 평가 활동</h3>
-                </div>
-                <div className="space-y-2.5">
-                  {REVIEWER_ACTIVITIES.slice(0, 4).map((activity, index) => (
-                    <div key={`${activity.team}-${activity.action}-${index}`} className="flex items-start gap-2.5">
-                      <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center shrink-0">
-                        <FileText className="w-3 h-3 text-muted-foreground" />
+              <section className="bg-card border border-border rounded-lg shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-border">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div
+                        className="w-11 h-11 rounded-full flex items-center justify-center text-white text-base font-bold shrink-0"
+                        style={{ background: selectedMember.color }}
+                      >
+                        {selectedMember.name[0]}
                       </div>
                       <div className="min-w-0">
-                        <div className="text-xs font-semibold text-foreground truncate">{activity.action}</div>
-                        <div className="text-[11px] text-muted-foreground">{activity.team} · {activity.date}</div>
+                        <div className="text-base font-bold text-foreground truncate">{selectedMember.name}</div>
+                        <div className="text-xs text-muted-foreground">{selectedMember.role}</div>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-3xl font-bold" style={{ color: selectedTone.color }}>{selectedMember.score}</div>
+                      <div
+                        className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                        style={{ color: selectedTone.color, background: selectedTone.bg }}
+                      >
+                        {selectedTone.label}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 space-y-3">
+                  {Object.entries(selectedMember.categories).map(([key, value]) => (
+                    <div key={key}>
+                      <div className="flex items-center justify-between text-xs mb-1">
+                        <span className="text-muted-foreground">{CATEGORY_LABELS[key as CategoryKey]}</span>
+                        <span className="font-bold text-foreground">{value}</span>
+                      </div>
+                      <div className="h-2 rounded-full bg-muted overflow-hidden">
+                        <div
+                          className="h-full rounded-full"
+                          style={{ width: `${value}%`, background: selectedMember.color }}
+                        />
                       </div>
                     </div>
                   ))}
