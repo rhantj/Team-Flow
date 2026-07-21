@@ -182,7 +182,31 @@ def generate_synthetic_tasks(n_members: int = 7, seed: int = RANDOM_SEED) -> pd.
 # ============================================================
 # 2. 피처 엔지니어링 (실제 DB 연결 시 이 함수 입력만 실제 tasks df로 교체)
 # ============================================================
-@traceable(run_type="tool", name="build_features")
+def _summarize_build_features_inputs(inputs: dict) -> dict:
+    """LangSmith 트레이스에 tasks_df 전체 대신 행 수/컬럼명 요약만 기록한다."""
+    tasks_df = inputs.get("tasks_df")
+    embedding_adjustments = inputs.get("embedding_adjustments")
+    return {
+        "tasks_df_rows": len(tasks_df),
+        "tasks_df_columns": list(tasks_df.columns),
+        "embedding_adjustments_count": len(embedding_adjustments) if embedding_adjustments else 0,
+    }
+
+
+def _summarize_build_features_outputs(outputs: pd.DataFrame) -> dict:
+    """LangSmith 트레이스에 feature_df 전체 대신 행 수/컬럼명 요약만 기록한다."""
+    return {
+        "feature_df_rows": len(outputs),
+        "feature_df_columns": list(outputs.columns),
+    }
+
+
+@traceable(
+    run_type="tool",
+    name="build_features",
+    process_inputs=_summarize_build_features_inputs,
+    process_outputs=_summarize_build_features_outputs,
+)
 def build_features(
     tasks_df: pd.DataFrame,
     today: pd.Timestamp = None,
@@ -294,7 +318,32 @@ def detect_overload_anomalies_robust(feature_df: pd.DataFrame, z_threshold: floa
     return result.sort_values("overload_score_0_100", ascending=False)
 
 
-@traceable(run_type="tool", name="detect_overload_anomalies_auto")
+def _summarize_detect_overload_inputs(inputs: dict) -> dict:
+    """LangSmith 트레이스에 feature_df 전체 대신 행 수/임계값 요약만 기록한다."""
+    feature_df = inputs.get("feature_df")
+    return {
+        "feature_df_rows": len(feature_df),
+        "small_team_threshold": inputs.get("small_team_threshold"),
+    }
+
+
+def _summarize_detect_overload_outputs(outputs: pd.DataFrame) -> dict:
+    """LangSmith 트레이스에 result df 전체 대신 이상치 개수/상위 점수 요약만 기록한다."""
+    top_score = outputs["overload_score_0_100"].max() if len(outputs) > 0 else None
+    return {
+        "result_rows": len(outputs),
+        "anomaly_count": int(outputs["is_anomaly"].sum()),
+        "top_score": float(top_score) if top_score is not None else None,
+        "method_used": outputs.attrs.get("method_used"),
+    }
+
+
+@traceable(
+    run_type="tool",
+    name="detect_overload_anomalies_auto",
+    process_inputs=_summarize_detect_overload_inputs,
+    process_outputs=_summarize_detect_overload_outputs,
+)
 def detect_overload_anomalies_auto(feature_df: pd.DataFrame, small_team_threshold: int = 15) -> pd.DataFrame:
     """
     팀 규모에 따라 자동으로 방법을 선택.
