@@ -12,6 +12,7 @@ import {
 import { StatusBadge } from "../../global/component/StatusBadge";
 import { DelivBadge } from "../../deliverables/components/DelivBadge";
 import { SectionTitle } from "../../global/component/SectionTitle";
+import { ProjectSettingsSection } from "./ProjectSettingsSection";
 import {
   MEMBER_USER, MY_FEEDBACKS, PUBLIC_SCORE,
 } from "../libs/mock/mypage";
@@ -218,6 +219,8 @@ function MemberMyPage({ name, email, onLogout, projectId, userId }: { name: stri
                   )}
                 </div>
               </div>
+
+              <ProjectSettingsSection />
 
               {/* Public score (if revealed) */}
               {PUBLIC_SCORE.revealed && (

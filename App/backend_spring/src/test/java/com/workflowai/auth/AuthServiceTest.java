@@ -56,7 +56,7 @@ class AuthServiceTest {
     }
 
     @Test
-    void signup_reviewer_doesNotIssueTokens() {
+    void signup_reviewer_doesNotIssueTokens_andMarksPending() {
         when(userRepository.existsByEmail("prof@example.com")).thenReturn(false);
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -64,6 +64,36 @@ class AuthServiceTest {
 
         assertThat(response.status()).isEqualTo("PENDING_REVIEWER_APPROVAL");
         assertThat(response.tokens()).isNull();
+
+        ArgumentCaptor<User> savedUser = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(savedUser.capture());
+        assertThat(savedUser.getValue().getReviewerStatus()).isEqualTo("PENDING");
+    }
+
+    @Test
+    void loginWithPassword_pendingReviewer_isBlocked() {
+        String hash = passwordEncoder.encode("12345678");
+        User pendingReviewer = new User("prof@example.com", "고교수", "local", "prof@example.com", hash);
+        pendingReviewer.setReviewerStatus("PENDING");
+        when(userRepository.findByEmail("prof@example.com")).thenReturn(Optional.of(pendingReviewer));
+
+        assertThatThrownBy(() -> authService.loginWithPassword("prof@example.com", "12345678"))
+            .isInstanceOf(ReviewerApprovalPendingException.class);
+    }
+
+    @Test
+    void loginWithPassword_approvedReviewer_issuesTokens() {
+        String hash = passwordEncoder.encode("12345678");
+        User approvedReviewer = new User("prof@example.com", "고교수", "local", "prof@example.com", hash);
+        approvedReviewer.setReviewerStatus("APPROVED");
+        when(userRepository.findByEmail("prof@example.com")).thenReturn(Optional.of(approvedReviewer));
+        when(jwtService.issueAccessToken(approvedReviewer)).thenReturn("access-token");
+        when(jwtService.issueRefreshToken(approvedReviewer)).thenReturn("refresh-token");
+        when(jwtService.accessTokenTtlSeconds()).thenReturn(1800L);
+
+        AuthTokenResponse tokens = authService.loginWithPassword("prof@example.com", "12345678");
+
+        assertThat(tokens.accessToken()).isEqualTo("access-token");
     }
 
     @Test

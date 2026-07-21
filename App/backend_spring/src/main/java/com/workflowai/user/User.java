@@ -30,6 +30,9 @@ public class User {
     @Column(name = "password_hash", length = 255)
     private String passwordHash;
 
+    @Column(name = "reviewer_status", length = 20)
+    private String reviewerStatus;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -90,6 +93,14 @@ public class User {
 
     public String getPasswordHash() {
         return passwordHash;
+    }
+
+    public String getReviewerStatus() {
+        return reviewerStatus;
+    }
+
+    public void setReviewerStatus(String reviewerStatus) {
+        this.reviewerStatus = reviewerStatus;
     }
 
     public LocalDateTime getCreatedAt() {

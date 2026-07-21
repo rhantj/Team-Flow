@@ -15,7 +15,7 @@ import {
 import { AuthBrandPanel } from "../components/AuthBrandPanel";
 import { useAuth } from "../../global/hooks/useAuth";
 import type { ProjectRoleKo, ProjectRoleSummary } from "../../global/api/authTypes";
-import { createProject } from "../../global/api/projectsApi";
+import { joinProjectByCode } from "../../global/api/projectsApi";
 import { REVIEWER_ACTIVITIES, REVIEWER_TEAMS } from "../../global/lib/mock/reviewer";
 
 const PROJECT_META: Record<number, { type: string; deadline: string; progress: number }> = {};
@@ -39,10 +39,8 @@ export function ProjectEntryScreen() {
   const navigate = useNavigate();
   const { user, projectRoles, currentProject, selectProject, addLocalProjectRole, refreshMe, logout } = useAuth();
   const [inviteCode, setInviteCode] = useState("");
-  const [projectName, setProjectName] = useState("");
   const [message, setMessage] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
+  const [joining, setJoining] = useState(false);
   const [judgeProjects, setJudgeProjects] = useState<JudgeProject[]>([...REVIEWER_TEAMS]);
   const [judgeProjectCode, setJudgeProjectCode] = useState("");
   const [judgeMessage, setJudgeMessage] = useState<string | null>(null);
@@ -67,46 +65,26 @@ export function ProjectEntryScreen() {
     navigate("/dashboard");
   };
 
-  const handleCreateProject = async () => {
-    if (creating) return;
-    const name = projectName.trim();
-    if (!name) {
-      setCreateError("프로젝트명을 입력해주세요.");
+  const handleJoinByCode = async () => {
+    const rawCode = inviteCode.trim();
+    if (!rawCode) {
+      setMessage("초대 URL 또는 코드를 입력해주세요.");
       return;
     }
-    setCreating(true);
-    setCreateError(null);
+    // 초대 URL로 붙여넣었을 수 있으니 마지막 경로 조각만 코드로 사용한다.
+    const code = rawCode.split("/").filter(Boolean).pop() ?? rawCode;
+    setJoining(true);
+    setMessage(null);
     try {
-      const project = await createProject({ title: name, type: "캡스톤디자인" });
+      const project = await joinProjectByCode(code);
       await refreshMe();
       selectProject(project.id);
       navigate("/dashboard");
     } catch (error) {
-      const projectId = addLocalProjectRole(name, "팀장");
-      selectProject(projectId);
-      setCreateError(
-        error instanceof Error
-          ? `서버 생성은 실패했지만 시연용 프로젝트로 진입합니다. (${error.message})`
-          : "서버 생성은 실패했지만 시연용 프로젝트로 진입합니다.",
-      );
-      navigate("/dashboard");
+      setMessage(error instanceof Error ? error.message : "참여에 실패했습니다.");
     } finally {
-      setCreating(false);
+      setJoining(false);
     }
-  };
-
-  const handleJoinByCode = () => {
-    const code = inviteCode.trim();
-    if (!code) {
-      setMessage("초대 URL 또는 코드를 입력해주세요.");
-      return;
-    }
-    const name = code.includes("parking") || code.includes("gX4mKp")
-      ? "스마트 주차 관리 시스템"
-      : "초대받은 팀 프로젝트";
-    const projectId = addLocalProjectRole(name, "팀원");
-    selectProject(projectId);
-    navigate("/dashboard");
   };
 
   const enterJudgeProject = (project: JudgeProject) => {
@@ -366,21 +344,13 @@ export function ProjectEntryScreen() {
                     <p className="text-xs text-muted-foreground">생성 즉시 팀장 권한으로 시작합니다.</p>
                   </div>
                 </div>
-                <input
-                  value={projectName}
-                  onChange={(event) => setProjectName(event.target.value)}
-                  className="w-full rounded-xl border border-border bg-input-background px-3 py-2.5 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                  placeholder="프로젝트명을 입력하세요"
-                />
-                {createError && <div className="mt-2 text-xs text-amber-600 leading-relaxed">{createError}</div>}
                 <button
-                  onClick={() => void handleCreateProject()}
-                  disabled={creating}
-                  className="mt-3 w-full py-2.5 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-60"
+                  onClick={() => navigate("/onboarding")}
+                  className="w-full py-2.5 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2 hover:opacity-90 transition-opacity"
                   style={{ background: "linear-gradient(135deg, #3B5BDB 0%, #4F6EF7 100%)" }}
                 >
                   <Crown className="w-4 h-4" />
-                  {creating ? "생성 중..." : "팀장으로 프로젝트 시작"}
+                  프로젝트 정보 입력하고 시작하기
                 </button>
               </div>
 
@@ -402,12 +372,13 @@ export function ProjectEntryScreen() {
                 />
                 {message && <div className="mt-2 text-xs text-red-500">{message}</div>}
                 <button
-                  onClick={handleJoinByCode}
-                  className="mt-3 w-full py-2.5 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2 hover:opacity-90 transition-opacity"
+                  onClick={() => void handleJoinByCode()}
+                  disabled={joining}
+                  className="mt-3 w-full py-2.5 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-60"
                   style={{ background: "#10B981" }}
                 >
                   <UserRound className="w-4 h-4" />
-                  팀원으로 참여
+                  {joining ? "참여 중..." : "팀원으로 참여"}
                 </button>
               </div>
             </section>

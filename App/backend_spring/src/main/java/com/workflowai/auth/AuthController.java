@@ -169,6 +169,10 @@ public class AuthController {
     )
     @PostMapping("/test-login")
     public ResponseEntity<ApiResponse<AuthTokenResponse>> testLogin(@RequestBody TestLoginRequest request) {
+        if (!devLoginEnabled) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.fail("DEV_LOGIN_DISABLED", "개발용 로그인이 비활성화되어 있습니다."));
+        }
         try {
             return ResponseEntity.ok(ApiResponse.ok(testLoginService.login(request.username(), request.password())));
         } catch (TestAccountAlreadyActiveException e) {
@@ -240,6 +244,8 @@ public class AuthController {
             return ResponseEntity.ok(ApiResponse.ok(authService.loginWithPassword(request.email(), request.password())));
         } catch (GoogleAccountRequiredException e) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ApiResponse.fail("GOOGLE_ACCOUNT_REQUIRED", e.getMessage()));
+        } catch (ReviewerApprovalPendingException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.fail("REVIEWER_APPROVAL_PENDING", e.getMessage()));
         } catch (InvalidCredentialsException e) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ApiResponse.fail("INVALID_CREDENTIALS", e.getMessage()));
         }

@@ -14,6 +14,7 @@ public class AuthService {
     private static final String PROVIDER_DEMO = "demo";
     private static final String PROVIDER_LOCAL = "local";
     private static final String ROLE_TYPE_REVIEWER = "REVIEWER";
+    private static final String REVIEWER_STATUS_PENDING = "PENDING";
     private static final int MIN_PASSWORD_LENGTH = 8;
 
     private final GoogleOAuthService googleOAuthService;
@@ -67,15 +68,23 @@ public class AuthService {
         }
 
         String passwordHash = passwordEncoder.encode(password);
-        User user = userRepository.save(new User(email, name, PROVIDER_LOCAL, email, passwordHash));
+        boolean isReviewerApplication = ROLE_TYPE_REVIEWER.equalsIgnoreCase(roleType);
+        User newUser = new User(email, name, PROVIDER_LOCAL, email, passwordHash);
+        if (isReviewerApplication) {
+            newUser.setReviewerStatus(REVIEWER_STATUS_PENDING);
+        }
+        User user = userRepository.save(newUser);
 
-        if (ROLE_TYPE_REVIEWER.equalsIgnoreCase(roleType)) {
+        if (isReviewerApplication) {
             return SignupResponse.pendingReviewerApproval();
         }
         return SignupResponse.active(issueTokens(user));
     }
 
-    /** 이메일/비밀번호 로그인. Google 전용 계정(password_hash 없음)은 별도 안내 메시지로 거부한다. */
+    /**
+     * 이메일/비밀번호 로그인. Google 전용 계정(password_hash 없음)은 별도 안내 메시지로 거부하고,
+     * 아직 승인되지 않은 REVIEWER 신청 계정(reviewer_status=PENDING)은 로그인 자체를 막는다.
+     */
     public AuthTokenResponse loginWithPassword(String email, String password) {
         User user = userRepository.findByEmail(email)
             .orElseThrow(InvalidCredentialsException::new);
@@ -84,6 +93,9 @@ public class AuthService {
         }
         if (!passwordEncoder.matches(password, user.getPasswordHash())) {
             throw new InvalidCredentialsException();
+        }
+        if (REVIEWER_STATUS_PENDING.equals(user.getReviewerStatus())) {
+            throw new ReviewerApprovalPendingException();
         }
         return issueTokens(user);
     }
