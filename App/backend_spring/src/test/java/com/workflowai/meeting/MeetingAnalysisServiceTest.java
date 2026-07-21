@@ -386,4 +386,35 @@ class MeetingAnalysisServiceTest {
         assertThat(summary.get(0).totalMeetings()).isEqualTo(2);
         assertThat(summary.get(0).attendanceRate()).isEqualTo(100);
     }
+
+    @Test
+    void attendanceDetailMarksAttendedAndAbsentMeetingsSortedByDate() {
+        mockMember(1L);
+        Meeting laterMeeting = new Meeting(1L, "12.11 스프린트 리뷰", "document", null, "completed", LocalDate.of(2026, 12, 11), "정기회의", "b.txt", null, 1L);
+        Meeting earlierMeeting = new Meeting(1L, "12.10 팀 정기 회의", "document", null, "completed", LocalDate.of(2026, 12, 10), "정기회의", "a.txt", null, 1L);
+        when(meetingRepository.findByProjectIdOrderByCreatedAtDesc(1L)).thenReturn(List.of(laterMeeting, earlierMeeting));
+        when(meetingAttendeeRepository.findByMeetingIdIn(any())).thenReturn(List.of(
+            new MeetingAttendee(null, 2L)
+        ));
+        MeetingAnalysisService service = newService();
+
+        List<MeetingAttendanceDetail> detail = service.attendanceDetail("demo-project", 2L);
+
+        assertThat(detail).hasSize(2);
+        assertThat(detail.get(0).title()).isEqualTo("12.10 팀 정기 회의");
+        assertThat(detail.get(0).attended()).isFalse();
+        assertThat(detail.get(1).title()).isEqualTo("12.11 스프린트 리뷰");
+        assertThat(detail.get(1).attended()).isFalse();
+    }
+
+    @Test
+    void attendanceDetailReturnsEmptyListWhenNoMeetings() {
+        mockMember(1L);
+        when(meetingRepository.findByProjectIdOrderByCreatedAtDesc(1L)).thenReturn(List.of());
+        MeetingAnalysisService service = newService();
+
+        List<MeetingAttendanceDetail> detail = service.attendanceDetail("demo-project", 2L);
+
+        assertThat(detail).isEmpty();
+    }
 }
