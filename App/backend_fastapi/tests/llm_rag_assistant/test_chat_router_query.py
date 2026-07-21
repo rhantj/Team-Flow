@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import aiohttp
 import pytest
+import requests
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -39,11 +40,11 @@ def test_query_endpoint_returns_answer_with_sources() -> None:
     assert called_args[1] == 1
 
 
-def test_query_endpoint_returns_503_when_llm_unavailable() -> None:
+def test_query_endpoint_returns_503_when_connection_fails() -> None:
     _override_pool()
     with patch(
         "llm_rag_assistant.app.routers.chat_router.answer_question",
-        new=AsyncMock(side_effect=httpx.ConnectError("connection refused")),
+        new=AsyncMock(side_effect=aiohttp.ClientConnectionError("connection refused")),
     ):
         client = TestClient(app)
         response = client.post("/ai/rag/query", json={"project_id": 1, "question": "질문"})
@@ -72,14 +73,11 @@ def test_different_project_ids_are_forwarded_unmodified_to_service() -> None:
     app.dependency_overrides.clear()
 
 
-def test_query_endpoint_returns_503_when_huggingface_returns_error_status() -> None:
+def test_query_endpoint_returns_503_when_huggingface_returns_http_error() -> None:
     _override_pool()
-    error_response = httpx.Response(status_code=503, request=httpx.Request("POST", "https://router.huggingface.co/v1/chat/completions"))
     with patch(
         "llm_rag_assistant.app.routers.chat_router.answer_question",
-        new=AsyncMock(
-            side_effect=httpx.HTTPStatusError("service unavailable", request=error_response.request, response=error_response)
-        ),
+        new=AsyncMock(side_effect=requests.exceptions.HTTPError("503 Service Unavailable")),
     ):
         client = TestClient(app)
         response = client.post("/ai/rag/query", json={"project_id": 1, "question": "질문"})
