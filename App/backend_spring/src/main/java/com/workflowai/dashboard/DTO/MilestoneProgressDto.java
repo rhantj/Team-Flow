@@ -1,4 +1,4 @@
-package dashboard.DTO;
+package com.workflowai.dashboard.DTO;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 

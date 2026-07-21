@@ -12,8 +12,6 @@ import {
   Eye,
   EyeOff,
   FileText,
-  GitCommit,
-  GitPullRequest,
   MessageSquare,
   RefreshCw,
   Search,
@@ -277,9 +275,9 @@ export function ContributorsView() {
                     <div>순위</div>
                     <div>이름/역할</div>
                     <div>기여 점수</div>
-                    <div>업무</div>
-                    <div>회의</div>
-                    <div>개발</div>
+                    <div>업무 수행</div>
+                    <div>회의 참여</div>
+                    <div>workload</div>
                     <div>공개</div>
                   </div>
 
@@ -324,21 +322,18 @@ export function ContributorsView() {
                         <div className="text-[10px] text-muted-foreground">{taskRate}%</div>
                       </div>
                       <div className="text-xs text-foreground">
-                        <span className="font-bold">{attendanceByMemberId[report.memberId]?.meetingsAttended ?? report.meetings}</span>
-                        <span className="text-muted-foreground">회</span>
-                        {attendanceByMemberId[report.memberId] && (
-                          <div className="text-[10px] text-muted-foreground">참석률 {attendanceByMemberId[report.memberId].attendanceRate}%</div>
+                        {attendanceByMemberId[report.memberId] ? (
+                          <>
+                            <span className="font-bold">{attendanceByMemberId[report.memberId].meetingsAttended}</span>
+                            <span className="text-muted-foreground">/{attendanceByMemberId[report.memberId].totalMeetings}회</span>
+                            <div className="text-[10px] text-muted-foreground">{attendanceByMemberId[report.memberId].attendanceRate}%</div>
+                          </>
+                        ) : (
+                          <span className="font-bold">{report.meetings}회</span>
                         )}
                       </div>
                       <div className="text-xs text-foreground">
-                        <div className="flex items-center gap-1">
-                          <GitCommit className="w-3 h-3 text-muted-foreground" />
-                          <span className="font-bold">{report.commits}</span>
-                        </div>
-                        <div className="flex items-center gap-1 mt-0.5 text-[10px] text-muted-foreground">
-                          <GitPullRequest className="w-3 h-3" />
-                          {report.prs} PR
-                        </div>
+                        <span className="font-bold">{report.categories.workload}</span>
                       </div>
                       <div>
                         <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full ${

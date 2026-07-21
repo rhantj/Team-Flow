@@ -1,4 +1,4 @@
-package dashboard.controller;
+package com.workflowai.dashboard.controller;
 
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -7,9 +7,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import dashboard.DTO.DashboardSummaryResponse;
-import dashboard.DTO.ProgressDetailResponse;
-import dashboard.service.DashboardService;
+import com.workflowai.dashboard.DTO.DashboardSummaryResponse;
+import com.workflowai.dashboard.DTO.ProgressDetailResponse;
+import com.workflowai.dashboard.service.DashboardService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

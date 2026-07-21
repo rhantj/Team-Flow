@@ -1,11 +1,11 @@
-package dashboard.controller;
+package com.workflowai.dashboard.controller;
 
 import com.workflowai.common.ApiResponse;
-import dashboard.DTO.ActivityItemDto;
-import dashboard.DTO.DashboardTaskDto;
-import dashboard.DTO.DashboardSummaryResponse;
-import dashboard.DTO.ProgressDetailResponse;
-import dashboard.service.DashboardService;
+import com.workflowai.dashboard.DTO.ActivityItemDto;
+import com.workflowai.dashboard.DTO.DashboardTaskDto;
+import com.workflowai.dashboard.DTO.DashboardSummaryResponse;
+import com.workflowai.dashboard.DTO.ProgressDetailResponse;
+import com.workflowai.dashboard.service.DashboardService;
 import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;

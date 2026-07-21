@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import httpx
-import ollama
+import aiohttp
 from fastapi import APIRouter, Depends, HTTPException
+from requests.exceptions import HTTPError as RequestsHTTPError
 
 from core.db import get_pool
 from llm_rag_assistant.app.schema.chat_schema import (
@@ -30,5 +30,5 @@ async def query(request: RagQueryRequest, pool=Depends(get_pool)) -> RagQueryRes
     # 실제 세션의 프로젝트 멤버십을 검증하도록 교체할 것 (보안 고려사항 #1)
     try:
         return await answer_question(pool, request.project_id, request.question)
-    except (httpx.ConnectError, httpx.TimeoutException, ollama.ResponseError) as exc:
+    except (aiohttp.ClientError, RequestsHTTPError) as exc:
         raise HTTPException(status_code=503, detail={"error": "llm_unavailable"}) from exc
