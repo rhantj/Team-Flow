@@ -47,6 +47,7 @@ jobs:
           exit 1
 
       - name: Rollback to previous commit on health check failure
+        id: rollback
         if: failure() && steps.health_check.outcome == 'failure'
         run: |
           ssh -i ~/.ssh/oci_deploy_key "${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }}" '
@@ -58,4 +59,18 @@ jobs:
             cd App
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
           '
-          echo "rolled back to previous commit — investigate the failed deploy before retrying"
+
+      - name: Verify rollback health
+        if: steps.rollback.outcome == 'success'
+        run: |
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://${{ secrets.OCI_DOMAIN }}/api/v1/health" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "rollback restored healthy state (attempt $i)"
+              exit 0
+            fi
+            echo "still not healthy after rollback (attempt $i, code=$code) — retrying in 10s"
+            sleep 10
+          done
+          echo "rollback did NOT restore a healthy state — manual intervention required immediately"
+          exit 1
