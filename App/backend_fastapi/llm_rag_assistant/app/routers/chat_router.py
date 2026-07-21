@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import httpx
-import ollama
 from fastapi import APIRouter, Depends, HTTPException
 
 from core.db import get_pool
@@ -30,5 +29,5 @@ async def query(request: RagQueryRequest, pool=Depends(get_pool)) -> RagQueryRes
     # 실제 세션의 프로젝트 멤버십을 검증하도록 교체할 것 (보안 고려사항 #1)
     try:
         return await answer_question(pool, request.project_id, request.question)
-    except (httpx.ConnectError, httpx.TimeoutException, ollama.ResponseError) as exc:
+    except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as exc:
         raise HTTPException(status_code=503, detail={"error": "llm_unavailable"}) from exc
