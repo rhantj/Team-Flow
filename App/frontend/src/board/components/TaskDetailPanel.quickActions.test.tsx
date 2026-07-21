@@ -1,12 +1,13 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { TaskDetailPanel } from "./TaskDetailPanel";
-import { addNotification } from "../libs/utils/activityStore";
+import { sendTaskNudge } from "../libs/utils/taskApi";
 import type { Task, TaskStatus } from "../libs/types/task";
 
+const mockUseAuth = vi.fn();
 vi.mock("../../global/hooks/useAuth", () => ({
-  useAuth: () => ({ currentProjectId: 1, currentProject: { projectId: 1, projectTitle: "데모", role: "팀원" } }),
+  useAuth: () => mockUseAuth(),
 }));
 
 vi.mock("../libs/utils/checklistApi", () => ({
@@ -28,8 +29,9 @@ vi.mock("../libs/utils/activityApi", () => ({
   fetchTaskActivity: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock("../libs/utils/activityStore", () => ({
-  addNotification: vi.fn(),
+vi.mock("../libs/utils/taskApi", () => ({
+  DEMO_PROJECT_ID: 1,
+  sendTaskNudge: vi.fn().mockResolvedValue(undefined),
 }));
 
 function makeTask(status: TaskStatus): Task {
@@ -64,7 +66,9 @@ async function openMenu() {
 
 describe("TaskDetailPanel 점세개 메뉴 - 신규 구현 액션", () => {
   beforeEach(() => {
-    vi.mocked(addNotification).mockClear();
+    vi.mocked(sendTaskNudge).mockClear();
+    // 넛지(시작 알림 등)는 팀장 전용이라, 이 파일의 기존 테스트들이 계속 통과하도록 기본값은 팀장으로 둔다.
+    mockUseAuth.mockReturnValue({ currentProjectId: 1, currentProject: { projectId: 1, projectTitle: "데모", role: "팀장" } });
   });
 
   it("todo: 담당자 변경 클릭 시 준비중 배지 없이 onEditTask를 연다", async () => {
@@ -89,8 +93,8 @@ describe("TaskDetailPanel 점세개 메뉴 - 신규 구현 액션", () => {
     const item = await screen.findByText("시작 알림");
     expect(item.closest("button")?.textContent).not.toContain("준비 중");
     await userEvent.click(item);
-    expect(addNotification).toHaveBeenCalledWith("1", "'테스트 업무' 업무를 시작해주세요.", "TF-01");
-    expect(onShowToast).toHaveBeenCalledWith("시작 알림을 보냈습니다.");
+    await waitFor(() => expect(sendTaskNudge).toHaveBeenCalledWith("TF-01", "START", 1));
+    await waitFor(() => expect(onShowToast).toHaveBeenCalledWith("시작 알림을 보냈습니다."));
   });
 
   it("inprogress: 블로커 등록 클릭 시 준비중 배지 없이 onQuickAction을 호출한다 (PR 연결/AI 지연 분석은 숨김)", async () => {
@@ -108,7 +112,7 @@ describe("TaskDetailPanel 점세개 메뉴 - 신규 구현 액션", () => {
     renderPanel("inprogress");
     await openMenu();
     await userEvent.click(await screen.findByText("진행상황 요청"));
-    expect(addNotification).toHaveBeenCalledWith("1", "'테스트 업무' 업무의 진행상황을 공유해주세요.", "TF-01");
+    await waitFor(() => expect(sendTaskNudge).toHaveBeenCalledWith("TF-01", "PROGRESS", 1));
   });
 
   it("blocked: 담당자 재배정 클릭 시 onEditTask를 연다 (AI 해결안 보기/영향 업무 확인은 숨김)", async () => {
@@ -124,7 +128,7 @@ describe("TaskDetailPanel 점세개 메뉴 - 신규 구현 액션", () => {
     renderPanel("blocked");
     await openMenu();
     await userEvent.click(await screen.findByText("긴급 알림"));
-    expect(addNotification).toHaveBeenCalledWith("1", "'테스트 업무' 업무가 보류 중입니다. 빠른 확인이 필요합니다.", "TF-01");
+    await waitFor(() => expect(sendTaskNudge).toHaveBeenCalledWith("TF-01", "URGENT", 1));
   });
 
   it("done: 다시 열기 클릭 시 준비중 배지 없이 onQuickAction을 호출한다 (결과물 보기/AI 완료 요약은 숨김)", async () => {
@@ -143,5 +147,12 @@ describe("TaskDetailPanel 점세개 메뉴 - 신규 구현 액션", () => {
     renderPanel("todo", { onOpenWorkResult });
     await userEvent.click(screen.getByTitle("작업 내용 작성"));
     expect(onOpenWorkResult).toHaveBeenCalledTimes(1);
+  });
+
+  it("팀원에게는 넛지(시작 알림/진행상황 요청/긴급 알림) 메뉴가 보이지 않는다", async () => {
+    mockUseAuth.mockReturnValue({ currentProjectId: 1, currentProject: { projectId: 1, projectTitle: "데모", role: "팀원" } });
+    renderPanel("todo");
+    await openMenu();
+    expect(screen.queryByText("시작 알림")).not.toBeInTheDocument();
   });
 });

@@ -3,6 +3,8 @@ package com.workflowai.task;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -10,6 +12,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.workflowai.activity.ActivityService;
 import com.workflowai.common.DemoDataService;
+import com.workflowai.notification.NotificationService;
+import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.user.UserRepository;
 import java.time.LocalDate;
 import java.util.Optional;
@@ -37,12 +41,21 @@ class TaskControllerUpdateTest {
     @Mock
     private ActivityService activityService;
 
+    @Mock
+    private NotificationService notificationService;
+
+    @Mock
+    private ProjectMemberRepository projectMemberRepository;
+
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders
-            .standaloneSetup(new TaskController(taskRepository, userRepository, demoDataService, activityService))
+            .standaloneSetup(new TaskController(
+                taskRepository, userRepository, demoDataService, activityService,
+                notificationService, projectMemberRepository
+            ))
             .build();
     }
 
@@ -72,7 +85,8 @@ class TaskControllerUpdateTest {
             .andExpect(jsonPath("$.data.category").value("backend"))
             .andExpect(jsonPath("$.data.priority").value("high"))
             .andExpect(jsonPath("$.data.dueDate").value("2026-08-01"))
-            .andExpect(jsonPath("$.data.assigneeId").value("5"));
+            .andExpect(jsonPath("$.data.assigneeId").value("5"))
+            .andExpect(jsonPath("$.data.description").value("새 설명"));
     }
 
     @Test
@@ -107,5 +121,49 @@ class TaskControllerUpdateTest {
                 .content("{\"title\":\"아무거나\"}"))
             .andExpect(status().isNotFound())
             .andExpect(jsonPath("$.error.code").value("TASK_NOT_FOUND"));
+    }
+
+    @Test
+    void notifiesNewAssigneeWhenAssigneeChanges() throws Exception {
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(taskRepository.findById(anyLong())).thenReturn(Optional.of(existingTask()));
+        when(demoDataService.resolveUserId(eq("2"))).thenReturn(5L);
+        when(taskRepository.save(any(Task.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        mockMvc.perform(patch("/api/v1/projects/demo-project/tasks/42")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"assigneeId\":\"2\"}"))
+            .andExpect(status().isOk());
+
+        verify(notificationService).notify(eq(5L), eq("TASK_ASSIGNED"), any(), any(), eq("task"), any());
+    }
+
+    @Test
+    void notifiesAssigneeWhenOtherFieldsChange() throws Exception {
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(taskRepository.findById(anyLong())).thenReturn(Optional.of(existingTask()));
+        when(taskRepository.save(any(Task.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        mockMvc.perform(patch("/api/v1/projects/demo-project/tasks/42")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"title\":\"새 제목\"}"))
+            .andExpect(status().isOk());
+
+        // existingTask()의 담당자는 3L
+        verify(notificationService).notify(eq(3L), eq("TASK_UPDATED"), any(), any(), eq("task"), any());
+    }
+
+    @Test
+    void doesNotNotifyWhenNothingChanges() throws Exception {
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(taskRepository.findById(anyLong())).thenReturn(Optional.of(existingTask()));
+        when(taskRepository.save(any(Task.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        mockMvc.perform(patch("/api/v1/projects/demo-project/tasks/42")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+            .andExpect(status().isOk());
+
+        verify(notificationService, never()).notify(any(), any(), any(), any(), any(), any());
     }
 }

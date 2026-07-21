@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { STATUS_ACTIONS, visibleSecondaryActions, quickMoveTargetStatus } from "./taskActions";
+import { STATUS_ACTIONS, visibleSecondaryActions, quickMoveTargetStatus, canMoveTask } from "./taskActions";
+import type { Task } from "../types/task";
 
 describe("visibleSecondaryActions", () => {
   const doneSecondary = STATUS_ACTIONS.done.filter((a) => !a.primary);
@@ -25,9 +26,19 @@ describe("visibleSecondaryActions", () => {
     const inprogressSecondary = STATUS_ACTIONS.inprogress.filter((a) => !a.primary);
     const blockedSecondary = STATUS_ACTIONS.blocked.filter((a) => !a.primary);
 
-    expect(visibleSecondaryActions(todoSecondary, false).map((a) => a.label)).toEqual(["담당자 변경", "시작 알림"]);
-    expect(visibleSecondaryActions(inprogressSecondary, false).map((a) => a.label)).toEqual(["블로커 등록", "진행상황 요청"]);
-    expect(visibleSecondaryActions(blockedSecondary, false).map((a) => a.label)).toEqual(["긴급 알림", "담당자 재배정"]);
+    expect(visibleSecondaryActions(todoSecondary, true).map((a) => a.label)).toEqual(["담당자 변경", "시작 알림"]);
+    expect(visibleSecondaryActions(inprogressSecondary, true).map((a) => a.label)).toEqual(["블로커 등록", "진행상황 요청"]);
+    expect(visibleSecondaryActions(blockedSecondary, true).map((a) => a.label)).toEqual(["긴급 알림", "담당자 재배정"]);
+  });
+
+  it("hides 넛지(시작 알림/진행상황 요청/긴급 알림) for non-leaders", () => {
+    const todoSecondary = STATUS_ACTIONS.todo.filter((a) => !a.primary);
+    const inprogressSecondary = STATUS_ACTIONS.inprogress.filter((a) => !a.primary);
+    const blockedSecondary = STATUS_ACTIONS.blocked.filter((a) => !a.primary);
+
+    expect(visibleSecondaryActions(todoSecondary, false).map((a) => a.label)).toEqual(["담당자 변경"]);
+    expect(visibleSecondaryActions(inprogressSecondary, false).map((a) => a.label)).toEqual(["블로커 등록"]);
+    expect(visibleSecondaryActions(blockedSecondary, false).map((a) => a.label)).toEqual(["담당자 재배정"]);
   });
 });
 
@@ -47,5 +58,30 @@ describe("quickMoveTargetStatus", () => {
   it("returns null when status doesn't match the label's expected origin", () => {
     expect(quickMoveTargetStatus("다시 열기", "inprogress")).toBeNull();
     expect(quickMoveTargetStatus("블로커 등록", "done")).toBeNull();
+  });
+});
+
+describe("canMoveTask", () => {
+  const task: Task = {
+    id: "1", title: "제목", status: "todo", priority: "medium",
+    assignee: "3", dueDate: "", labels: [], category: "other", position: 0,
+  };
+
+  it("allows leaders to move any task", () => {
+    expect(canMoveTask(true, task, 999)).toBe(true);
+    expect(canMoveTask(true, task, null)).toBe(true);
+  });
+
+  it("allows a member to move their own task", () => {
+    expect(canMoveTask(false, task, 3)).toBe(true);
+  });
+
+  it("blocks a member from moving someone else's task", () => {
+    expect(canMoveTask(false, task, 2)).toBe(false);
+  });
+
+  it("blocks a non-leader with no known user id", () => {
+    expect(canMoveTask(false, task, null)).toBe(false);
+    expect(canMoveTask(false, task, undefined)).toBe(false);
   });
 });

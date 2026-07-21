@@ -46,6 +46,18 @@ public class ProjectAccess {
         }
     }
 
+    /**
+     * 프론트가 경로에 그대로 쓰는 projectId 문자열("demo-project" 등)용 오버로드.
+     * DemoDataService.resolveProjectId로 실제 project.id(Long)로 바꾼 뒤 역할을 검사한다.
+     */
+    public boolean hasRole(String projectIdParam, String role) {
+        try {
+            return hasRole(demoDataService.resolveProjectId(projectIdParam), role);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     private Long currentUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.getPrincipal() instanceof UserPrincipal principal) {

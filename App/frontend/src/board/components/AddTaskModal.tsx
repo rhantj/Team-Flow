@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Sparkles, X, Check, ArrowRight, ArrowLeft, CheckCircle2 } from "lucide-react";
+import { X, Check, ArrowRight, ArrowLeft, CheckCircle2 } from "lucide-react";
 import { CatTag } from "./CatTag";
 import { CATEGORIES } from "../libs/mock/tasks";
 import { getCat } from "../libs/utils/taskService";
@@ -226,10 +226,6 @@ export function AddTaskModal({ open, initialStatus, onClose, onCreated }: AddTas
                       <input placeholder={placeholder} className="w-full rounded-xl border border-border bg-input-background px-4 py-2.5 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100" />
                     </div>
                   ))}
-                </div>
-                <div className="mt-5 p-3.5 rounded-xl border border-purple-200 flex items-center justify-between" style={{ background: "rgba(112,72,232,0.05)" }}>
-                  <div className="text-xs text-purple-800"><span className="font-semibold">AI 추천:</span> 체크리스트와 완료 기준을 자동으로 생성해드릴 수 있어요.</div>
-                  <button className="text-xs font-semibold px-2.5 py-1.5 rounded-lg flex items-center gap-1 hover:opacity-80 transition-opacity" style={{ background: "rgba(112,72,232,0.15)", color: "#7048E8" }}><Sparkles className="w-3 h-3" />자동 생성</button>
                 </div>
               </div>
             )}
