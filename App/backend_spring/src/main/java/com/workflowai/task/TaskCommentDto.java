@@ -8,6 +8,7 @@ public record TaskCommentDto(
     @Schema(description = "작성자 mock id (\"1\"~\"4\")", example = "1") String authorId,
     @Schema(description = "작성자 이름", example = "김민준") String authorName,
     @Schema(description = "내용") String content,
+    @Schema(description = "구분 (\"COMMENT\" | \"FEEDBACK\")", example = "COMMENT") String type,
     @Schema(description = "작성 시각 (ISO-8601)") String createdAt
 ) {
     public static TaskCommentDto from(TaskComment comment, String authorName, String authorMockId) {
@@ -16,6 +17,7 @@ public record TaskCommentDto(
             authorMockId,
             authorName,
             comment.getContent(),
+            comment.getType(),
             comment.getCreatedAt().toString()
         );
     }

@@ -7,6 +7,9 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -29,17 +32,23 @@ public class ChecklistController {
     private final TaskRepository taskRepository;
     private final DemoDataService demoDataService;
     private final ActivityService activityService;
+    private final ChecklistGenerator checklistGenerator;
+    // 업무 ID별 락. 같은 업무에 대한 자동 생성 요청이 동시에 들어와도 조회-후-저장 사이에
+    // 끼어들어 같은 항목이 중복 저장되는 것을 막는다(단일 인스턴스 배포 기준).
+    private final ConcurrentHashMap<Long, Object> generateLocks = new ConcurrentHashMap<>();
 
     public ChecklistController(
         ChecklistRepository checklistRepository,
         TaskRepository taskRepository,
         DemoDataService demoDataService,
-        ActivityService activityService
+        ActivityService activityService,
+        ChecklistGenerator checklistGenerator
     ) {
         this.checklistRepository = checklistRepository;
         this.taskRepository = taskRepository;
         this.demoDataService = demoDataService;
         this.activityService = activityService;
+        this.checklistGenerator = checklistGenerator;
     }
 
     private Task resolveTaskOrNull(String projectId, Long taskId) {
@@ -93,6 +102,38 @@ public class ChecklistController {
             "체크리스트 '" + checklist.getTitle() + "'을(를) 추가했습니다."
         );
         return ResponseEntity.ok(ApiResponse.ok(ChecklistItemDto.from(checklist)));
+    }
+
+    @Operation(summary = "체크리스트 자동 생성", description = "업무 정보를 바탕으로 체크리스트 항목을 자동 생성해 기존 목록에 추가합니다.")
+    @PostMapping("/generate")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
+    public ResponseEntity<ApiResponse<List<ChecklistItemDto>>> generateChecklist(
+        @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
+        @Parameter(description = "업무 ID") @PathVariable Long taskId
+    ) {
+        Task task = resolveTaskOrNull(projectId, taskId);
+        if (task == null) {
+            return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
+        }
+        List<Checklist> saved;
+        synchronized (generateLocks.computeIfAbsent(taskId, id -> new Object())) {
+            List<Checklist> existing = checklistRepository.findByTaskIdOrderByCreatedAtAsc(taskId);
+            Set<String> existingTitles = existing.stream().map(Checklist::getTitle).collect(Collectors.toSet());
+            List<String> titles = checklistGenerator.generate(task).stream()
+                .filter(title -> !existingTitles.contains(title))
+                .toList();
+            saved = titles.stream()
+                .map(title -> checklistRepository.save(new Checklist(taskId, title)))
+                .toList();
+        }
+        if (!saved.isEmpty()) {
+            activityService.record(
+                task.getProjectId(), currentActorId(), "CHECKLIST_CREATED", taskId,
+                "체크리스트 " + saved.size() + "개를 자동 생성했습니다."
+            );
+        }
+        List<ChecklistItemDto> dtos = saved.stream().map(ChecklistItemDto::from).toList();
+        return ResponseEntity.ok(ApiResponse.ok(dtos));
     }
 
     @Operation(summary = "체크리스트 항목 수정", description = "체크리스트 항목의 내용 또는 완료 여부를 부분 수정합니다.")
