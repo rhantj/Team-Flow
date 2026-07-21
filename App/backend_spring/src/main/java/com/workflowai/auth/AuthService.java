@@ -93,10 +93,11 @@ public class AuthService {
         try {
             user = userRepository.saveAndFlush(newUser);
         } catch (DataIntegrityViolationException e) {
-            if (userRepository.existsByEmail(normalizedEmail)) {
-                throw new EmailAlreadyExistsException();
-            }
-            throw e;
+            // PostgreSQL은 제약조건 위반 시 트랜잭션을 abort 상태로 만들어, 같은 트랜잭션 안에서
+            // 재조회 쿼리를 날리면 "current transaction is aborted"로 500이 난다. users 테이블의
+            // 유니크 제약(uq_users_email, uq_users_provider)은 로컬 가입 시 전부 email 기준이라
+            // 재조회 없이 바로 중복 이메일로 판단한다.
+            throw new EmailAlreadyExistsException();
         }
 
         if (isReviewerApplication) {
