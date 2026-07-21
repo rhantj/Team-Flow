@@ -1,4 +1,4 @@
-package dashboard.entity;
+package com.workflowai.dashboard.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
