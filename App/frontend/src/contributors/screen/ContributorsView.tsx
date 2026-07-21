@@ -23,6 +23,9 @@ import {
 } from "../../global/lib/mock/reviewer";
 import { fetchAttendanceSummary, type MeetingAttendanceSummaryDto } from "../../meetings/libs/utils/meetingAiApi";
 import { fetchContributionReport, fetchContributionScore, type MemberContributionDto, type ContributionMemberScoreDto } from "../libs/utils/contributorsApi";
+import { fetchTasks } from "../../board/libs/utils/taskApi";
+import type { Task } from "../../board/libs/types/task";
+import { MemberDrilldownPanel } from "../components/MemberDrilldownPanel";
 import { useAuth } from "../../global/hooks/useAuth";
 
 type Team = (typeof REVIEWER_TEAMS)[number];
@@ -72,6 +75,16 @@ export function ContributorsView() {
     () => Object.fromEntries(attendanceSummaries.map((summary) => [String(summary.userId), summary])),
     [attendanceSummaries],
   );
+  // 업무 수행 드릴다운 패널용 프로젝트 전체 업무 목록. 실패하면 빈 배열로 폴백(패널은 빈 상태로 표시).
+  const [projectTasks, setProjectTasks] = useState<Task[]>([]);
+  useEffect(() => {
+    if (currentProjectId == null) {
+      setProjectTasks([]);
+      return;
+    }
+    fetchTasks(currentProjectId).then(setProjectTasks).catch(() => setProjectTasks([]));
+  }, [currentProjectId]);
+  const [drilldown, setDrilldown] = useState<{ mode: "tasks" | "meetings"; memberId: string } | null>(null);
   // 실제 기여 점수로 목업 score/categories를 보강한다. 실패하면 목업 값을 그대로 쓴다.
   const [contributionScores, setContributionScores] = useState<ContributionMemberScoreDto[]>([]);
   useEffect(() => {
@@ -284,11 +297,18 @@ export function ContributorsView() {
                       const tone = scoreTone(report.score);
                       const taskRate = percent(report.todoDone, report.todoTotal);
                       return (
-                        <button
+                        <div
                           key={report.memberId}
-                          type="button"
+                          role="button"
+                          tabIndex={0}
                           onClick={() => setSelectedMemberId(report.memberId)}
-                          className={`grid grid-cols-[76px_1fr_98px_90px_90px_84px_86px] w-full items-center px-5 py-3 text-left transition-colors ${
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              setSelectedMemberId(report.memberId);
+                            }
+                          }}
+                          className={`grid grid-cols-[76px_1fr_98px_90px_90px_84px_86px] w-full items-center px-5 py-3 text-left transition-colors cursor-pointer ${
                             isSelected ? "bg-blue-50" : "hover:bg-muted/40"
                           }`}
                         >
@@ -313,12 +333,28 @@ export function ContributorsView() {
                         <div className="text-lg font-bold" style={{ color: tone.color }}>{report.score}</div>
                         <div className="text-[10px] font-semibold" style={{ color: tone.color }}>{tone.label}</div>
                       </div>
-                      <div className="text-xs text-foreground text-center">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedMemberId(report.memberId);
+                          setDrilldown({ mode: "tasks", memberId: report.memberId });
+                        }}
+                        className="w-full bg-transparent border-0 p-0 text-xs text-foreground text-center hover:underline cursor-pointer"
+                      >
                         <span className="font-bold">{report.todoDone}</span>
                         <span className="text-muted-foreground">/{report.todoTotal}</span>
                         <div className="text-[10px] text-muted-foreground">{taskRate}%</div>
-                      </div>
-                      <div className="text-xs text-foreground text-center">
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedMemberId(report.memberId);
+                          setDrilldown({ mode: "meetings", memberId: report.memberId });
+                        }}
+                        className="w-full bg-transparent border-0 p-0 text-xs text-foreground text-center hover:underline cursor-pointer"
+                      >
                         {attendanceByMemberId[report.memberId] ? (
                           <>
                             <span className="font-bold">{attendanceByMemberId[report.memberId].meetingsAttended}</span>
@@ -328,7 +364,7 @@ export function ContributorsView() {
                         ) : (
                           <span className="font-bold">{report.meetings}회</span>
                         )}
-                      </div>
+                      </button>
                       <div className="text-xs text-foreground text-center">
                         <span className="font-bold">{report.categories.workload}</span>
                       </div>
@@ -342,7 +378,7 @@ export function ContributorsView() {
                           {publicFlags[report.memberId] ? "공개" : "비공개"}
                         </span>
                       </div>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -459,30 +495,6 @@ export function ContributorsView() {
             </section>
 
             <section className="bg-card border border-border rounded-lg p-4 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <ClipboardCheck className="w-4 h-4 text-emerald-600" />
-                  <h3 className="text-sm font-bold text-foreground">분석 근거</h3>
-                </div>
-                <span className="text-[10px] text-muted-foreground">{selectedMember.evidence.length}개</span>
-              </div>
-              <div className="space-y-2">
-                {selectedMember.evidence.map((evidence, index) => (
-                  <button
-                    key={evidence}
-                    type="button"
-                    className="w-full flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-left hover:border-blue-300 hover:bg-blue-50 transition-colors"
-                  >
-                    <span className="w-5 h-5 rounded-md bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground shrink-0">
-                      {index + 1}
-                    </span>
-                    <span className="text-xs font-medium text-foreground">{evidence}</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <section className="bg-card border border-border rounded-lg p-4 shadow-sm">
               <div className="flex items-center gap-2 mb-3">
                 <MessageSquare className="w-4 h-4 text-blue-600" />
                 <h3 className="text-sm font-bold text-foreground">심사 코멘트</h3>
@@ -517,6 +529,16 @@ export function ContributorsView() {
           </aside>
         </section>
       </div>
+      {drilldown && currentProjectId != null && (
+        <MemberDrilldownPanel
+          mode={drilldown.mode}
+          memberName={mergedReports.find((report) => report.memberId === drilldown.memberId)?.name ?? ""}
+          memberTasks={projectTasks.filter((task) => task.assignee === drilldown.memberId)}
+          projectId={currentProjectId}
+          userId={Number(drilldown.memberId)}
+          onClose={() => setDrilldown(null)}
+        />
+      )}
     </div>
   );
 }
