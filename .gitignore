@@ -278,6 +278,7 @@ docs/fs7_naming_convention.md
 # superpowers 로컬 작업 산출물 (커밋 대상 아님)
 docs/superpowers/
 .worktrees/
+.superpowers/
 
 # FS-3 ml_delay_risk: 학습된 바이너리 모델 산출물 (재현 불가 + 저장소 비대화)
 # `python -m ml_delay_risk.train`으로 로컬에서 재생성할 것.
