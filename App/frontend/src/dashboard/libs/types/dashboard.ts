@@ -41,6 +41,8 @@ export interface DashboardTaskDto {
   description: string | null;
   sourceType: string | null;
   position: number;
+  createdAt: string | null;
+  updatedAt: string | null;
 }
 
 export interface DashboardSummaryResponse {
@@ -91,4 +93,6 @@ export interface ProgressDetailResponse {
   categoryBreakdown: CategoryProgressDto[];
   delayRisks: DelayRiskDto[];
   hasPredictions: boolean;
+  projectDeadline: string | null;
+  projectCreatedAt: string | null;
 }
