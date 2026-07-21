@@ -16,6 +16,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -37,7 +38,7 @@ class AuthServiceTest {
     @Test
     void signup_savesBcryptHashedPassword_andIssuesTokensForMember() {
         when(userRepository.existsByEmail("new@example.com")).thenReturn(false);
-        when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(jwtService.issueAccessToken(any())).thenReturn("access-token");
         when(jwtService.issueRefreshToken(any())).thenReturn("refresh-token");
         when(jwtService.accessTokenTtlSeconds()).thenReturn(1800L);
@@ -45,7 +46,7 @@ class AuthServiceTest {
         SignupResponse response = authService.signup("new@example.com", "12345678", "홍길동", "MEMBER");
 
         ArgumentCaptor<User> savedUser = ArgumentCaptor.forClass(User.class);
-        verify(userRepository).save(savedUser.capture());
+        verify(userRepository).saveAndFlush(savedUser.capture());
         assertThat(savedUser.getValue().getPasswordHash()).isNotEqualTo("12345678");
         assertThat(passwordEncoder.matches("12345678", savedUser.getValue().getPasswordHash())).isTrue();
         assertThat(savedUser.getValue().getProvider()).isEqualTo("local");
@@ -58,7 +59,7 @@ class AuthServiceTest {
     @Test
     void signup_reviewer_doesNotIssueTokens_andMarksPending() {
         when(userRepository.existsByEmail("prof@example.com")).thenReturn(false);
-        when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         SignupResponse response = authService.signup("prof@example.com", "12345678", "고교수", "REVIEWER");
 
@@ -66,7 +67,7 @@ class AuthServiceTest {
         assertThat(response.tokens()).isNull();
 
         ArgumentCaptor<User> savedUser = ArgumentCaptor.forClass(User.class);
-        verify(userRepository).save(savedUser.capture());
+        verify(userRepository).saveAndFlush(savedUser.capture());
         assertThat(savedUser.getValue().getReviewerStatus()).isEqualTo("PENDING");
     }
 
@@ -101,6 +102,15 @@ class AuthServiceTest {
         when(userRepository.existsByEmail("dup@example.com")).thenReturn(true);
 
         assertThatThrownBy(() -> authService.signup("dup@example.com", "12345678", "이름", "MEMBER"))
+            .isInstanceOf(EmailAlreadyExistsException.class);
+    }
+
+    @Test
+    void signup_duplicateEmailRace_throwsConflictDomainException() {
+        when(userRepository.existsByEmail("race@example.com")).thenReturn(false, true);
+        when(userRepository.saveAndFlush(any(User.class))).thenThrow(new DataIntegrityViolationException("duplicate email"));
+
+        assertThatThrownBy(() -> authService.signup("race@example.com", "12345678", "이름", "MEMBER"))
             .isInstanceOf(EmailAlreadyExistsException.class);
     }
 

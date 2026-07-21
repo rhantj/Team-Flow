@@ -376,6 +376,28 @@ def test_analyze_json_uses_rule_based_only_when_provider_is_rule(monkeypatch):
     mock_ollama.assert_not_called()
 
 
+def test_analyze_json_auto_skips_huggingface_when_token_is_missing(monkeypatch):
+    monkeypatch.delenv("MEETING_ANALYSIS_PROVIDER", raising=False)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGINGFACEHUB_API_TOKEN", raising=False)
+    fake_result = analyze_meeting(
+        AnalyzeRequest(title="정기회의", meeting_date="2026-07-15", text="내용", participants=["김민준"])
+    )
+    client = TestClient(app)
+    with (
+        patch("app.main.analyze_meeting_with_huggingface") as mock_hf,
+        patch("app.main.analyze_meeting_with_ollama", return_value=fake_result) as mock_ollama,
+    ):
+        response = client.post(
+            "/api/v1/meetings/analyze-json",
+            json={"title": "정기회의", "meeting_date": "2026-07-15", "text": "내용", "participants": ["김민준"]},
+        )
+
+    assert response.status_code == 200
+    mock_hf.assert_not_called()
+    mock_ollama.assert_called_once()
+
+
 def test_analyze_json_uses_ollama_result_when_available(monkeypatch):
     monkeypatch.setenv("MEETING_ANALYSIS_PROVIDER", "ollama")
     fake_result = analyze_meeting(

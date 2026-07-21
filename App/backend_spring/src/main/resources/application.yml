@@ -38,6 +38,10 @@ spring:
     properties:
       hibernate:
         format_sql: true
+  flyway:
+    enabled: ${SPRING_FLYWAY_ENABLED:true}
+    baseline-on-migrate: true
+    locations: classpath:db/migration
 
 workflow:
   ai:
@@ -62,6 +66,6 @@ workflow:
     force-secure-cookies: ${WORKFLOW_FORCE_SECURE_COOKIES:false}
   demo:
     seed-enabled: ${WORKFLOW_DEMO_SEED_ENABLED:true}
-    dev-login-enabled: ${WORKFLOW_DEMO_DEV_LOGIN_ENABLED:true}
+    dev-login-enabled: ${WORKFLOW_DEMO_DEV_LOGIN_ENABLED:false}
   uploads:
     dir: ${WORKFLOW_UPLOADS_DIR:uploads}

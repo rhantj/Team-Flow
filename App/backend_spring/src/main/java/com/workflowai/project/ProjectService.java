@@ -9,6 +9,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class ProjectService {
     private static final String INVITE_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     private static final int INVITE_CODE_LENGTH = 8;
+    private static final int INVITE_CODE_MAX_ATTEMPTS = 20;
     private static final String TASK_STATUS_DONE = "완료";
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -41,10 +43,7 @@ public class ProjectService {
         if (request.title() == null || request.title().isBlank()) {
             throw new IllegalArgumentException("프로젝트명은 필수입니다.");
         }
-        if (request.deadline() == null) {
-            throw new IllegalArgumentException("최종 마감일은 필수입니다.");
-        }
-        if (request.startDate() != null && request.startDate().isAfter(request.deadline())) {
+        if (request.startDate() != null && request.deadline() != null && request.startDate().isAfter(request.deadline())) {
             throw new IllegalArgumentException("시작일은 종료일보다 이전이어야 합니다.");
         }
         if (request.memberLimit() != null && request.memberLimit() < 1) {
@@ -62,11 +61,21 @@ public class ProjectService {
             request.deliverables(),
             request.techStack(),
             request.goals(),
-            generateInviteCode(),
+            generateUniqueInviteCode(),
             creatorUserId
         ));
         projectMemberRepository.save(new ProjectMember(project.getId(), creatorUserId, ProjectRole.LEADER));
         return toResponse(project);
+    }
+
+    private String generateUniqueInviteCode() {
+        for (int attempt = 0; attempt < INVITE_CODE_MAX_ATTEMPTS; attempt++) {
+            String code = generateInviteCode();
+            if (!projectRepository.existsByInviteCode(code)) {
+                return code;
+            }
+        }
+        throw new DataIntegrityViolationException("프로젝트 초대 코드 생성에 실패했습니다.");
     }
 
     private String generateInviteCode() {
@@ -190,9 +199,9 @@ public class ProjectService {
             project.getId(),
             project.getTitle(),
             project.getType(),
+            project.getDeadline(),
             project.getDescription(),
             project.getStartDate(),
-            project.getDeadline(),
             project.getMidCheckDate(),
             project.getMemberLimit(),
             project.getDeliverables(),

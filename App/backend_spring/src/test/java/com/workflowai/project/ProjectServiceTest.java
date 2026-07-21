@@ -62,13 +62,17 @@ class ProjectServiceTest {
     }
 
     @Test
-    void create_missingDeadline_throws() {
+    void create_missingDeadline_isAllowedForBackwardCompatibility() {
         CreateProjectRequest request = new CreateProjectRequest(
             "제목", "캡스톤디자인", null, null, null, null, null, null, null, null
         );
+        when(projectRepository.save(any(Project.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(taskRepository.findByProjectIdOrderByCreatedAtDesc(any())).thenReturn(List.of());
+        when(projectMemberRepository.findAllByProjectId(any())).thenReturn(List.of());
 
-        assertThatThrownBy(() -> projectService.create(1L, request))
-            .isInstanceOf(IllegalArgumentException.class);
+        ProjectResponse response = projectService.create(1L, request);
+
+        assertThat(response.deadline()).isNull();
     }
 
     @Test
@@ -147,5 +151,18 @@ class ProjectServiceTest {
 
         assertThatThrownBy(() -> projectService.joinByCode(5L, "badcode1"))
             .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void create_retriesInviteCodeWhenCollisionOccurs() {
+        when(projectRepository.existsByInviteCode(any())).thenReturn(true, false);
+        when(projectRepository.save(any(Project.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(taskRepository.findByProjectIdOrderByCreatedAtDesc(any())).thenReturn(List.of());
+        when(projectMemberRepository.findAllByProjectId(any())).thenReturn(List.of());
+
+        ProjectResponse response = projectService.create(1L, validRequest());
+
+        assertThat(response.inviteCode()).isNotBlank();
+        verify(projectRepository, org.mockito.Mockito.times(2)).existsByInviteCode(any());
     }
 }

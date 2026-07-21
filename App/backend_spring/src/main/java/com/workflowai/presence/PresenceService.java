@@ -15,30 +15,61 @@ import org.springframework.stereotype.Component;
 public class PresenceService {
     private static final Duration TTL = Duration.ofSeconds(40);
 
-    private final Map<Long, Instant> lastSeenByUserId = new ConcurrentHashMap<>();
+    private final Map<Long, Map<String, Instant>> lastSeenByUserIdAndSessionId = new ConcurrentHashMap<>();
 
     /** 테스트 로그인 시도. 다른 곳에서 이미 접속 중(TTL 이내)이면 false를 반환하고 상태를 바꾸지 않는다. */
-    public boolean tryAcquire(Long userId) {
+    public boolean tryAcquire(Long userId, String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return false;
+        }
         Instant now = Instant.now();
-        Instant previous = lastSeenByUserId.merge(userId, now, (existing, candidate) ->
-            isFresh(existing, candidate) ? existing : candidate
-        );
-        return previous.equals(now);
+        Map<String, Instant> sessions = lastSeenByUserIdAndSessionId.computeIfAbsent(userId, ignored -> new ConcurrentHashMap<>());
+        removeExpiredSessions(sessions, now);
+        boolean hasOtherActiveSession = sessions.keySet().stream().anyMatch(activeSessionId -> !activeSessionId.equals(sessionId));
+        if (hasOtherActiveSession) {
+            return false;
+        }
+        sessions.put(sessionId, now);
+        return true;
     }
 
     /** 로그인 유지(heartbeat). 세션이 만료되어 있었더라도 다시 활성화한다. */
-    public void touch(Long userId) {
-        lastSeenByUserId.put(userId, Instant.now());
+    public void touch(Long userId, String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+        lastSeenByUserIdAndSessionId
+            .computeIfAbsent(userId, ignored -> new ConcurrentHashMap<>())
+            .put(sessionId, Instant.now());
     }
 
-    /** 로그아웃 시 접속 상태 제거. */
-    public void release(Long userId) {
-        lastSeenByUserId.remove(userId);
+    /** 로그아웃 시 현재 테스트 세션의 접속 상태만 제거한다. */
+    public void release(Long userId, String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+        Map<String, Instant> sessions = lastSeenByUserIdAndSessionId.get(userId);
+        if (sessions == null) {
+            return;
+        }
+        sessions.remove(sessionId);
+        if (sessions.isEmpty()) {
+            lastSeenByUserIdAndSessionId.remove(userId);
+        }
     }
 
     public boolean isActive(Long userId) {
-        Instant lastSeen = lastSeenByUserId.get(userId);
-        return lastSeen != null && isFresh(lastSeen, Instant.now());
+        Map<String, Instant> sessions = lastSeenByUserIdAndSessionId.get(userId);
+        if (sessions == null) {
+            return false;
+        }
+        Instant now = Instant.now();
+        removeExpiredSessions(sessions, now);
+        if (sessions.isEmpty()) {
+            lastSeenByUserIdAndSessionId.remove(userId);
+            return false;
+        }
+        return true;
     }
 
     /** 주어진 후보 유저 중 현재 활성 상태인 유저 id만 반환한다. */
@@ -48,5 +79,9 @@ public class PresenceService {
 
     private boolean isFresh(Instant lastSeen, Instant now) {
         return Duration.between(lastSeen, now).compareTo(TTL) < 0;
+    }
+
+    private void removeExpiredSessions(Map<String, Instant> sessions, Instant now) {
+        sessions.entrySet().removeIf(entry -> !isFresh(entry.getValue(), now));
     }
 }

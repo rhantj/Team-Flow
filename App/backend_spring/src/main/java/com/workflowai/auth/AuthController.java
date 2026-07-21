@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 @Tag(name = "인증", description = "Google OAuth 로그인/회원가입, JWT 발급 및 재발급")
@@ -51,7 +52,7 @@ public class AuthController {
         PresenceService presenceService,
         @Value("${workflow.frontend.base-url}") String frontendBaseUrl,
         @Value("${workflow.security.force-secure-cookies:false}") boolean forceSecureCookies,
-        @Value("${workflow.demo.dev-login-enabled:true}") boolean devLoginEnabled
+        @Value("${workflow.demo.dev-login-enabled:false}") boolean devLoginEnabled
     ) {
         this.googleOAuthService = googleOAuthService;
         this.authService = authService;
@@ -187,8 +188,10 @@ public class AuthController {
         description = "테스트 계정 로그아웃 시 호출해 접속 상태를 즉시 제거한다. Authorization 헤더가 없거나 유효하지 않아도 200을 반환한다(idempotent)."
     )
     @PostMapping("/test-logout")
-    public ApiResponse<Void> testLogout() {
-        releaseCurrentTestSession();
+    public ApiResponse<Void> testLogout(
+        @RequestHeader(name = "X-Workflow-Test-Session-Id", required = false) String testSessionId
+    ) {
+        releaseCurrentTestSession(testSessionId);
         return ApiResponse.ok(null);
     }
 
@@ -197,18 +200,20 @@ public class AuthController {
         description = "프론트가 로그인 중 주기적으로 호출해 접속 상태를 갱신한다(TTL 40초). 호출이 끊기면 자동으로 접속 종료 처리된다."
     )
     @PostMapping("/test-session/heartbeat")
-    public ApiResponse<Void> heartbeat() {
+    public ApiResponse<Void> heartbeat(
+        @RequestHeader(name = "X-Workflow-Test-Session-Id", required = false) String testSessionId
+    ) {
         try {
-            presenceService.touch(CurrentUser.id());
+            presenceService.touch(CurrentUser.id(), testSessionId);
         } catch (RuntimeException e) {
             log.debug("heartbeat 무시: 인증 정보 없음");
         }
         return ApiResponse.ok(null);
     }
 
-    private void releaseCurrentTestSession() {
+    private void releaseCurrentTestSession(String testSessionId) {
         try {
-            presenceService.release(CurrentUser.id());
+            presenceService.release(CurrentUser.id(), testSessionId);
         } catch (RuntimeException e) {
             log.debug("test-logout 무시: 인증 정보 없음");
         }

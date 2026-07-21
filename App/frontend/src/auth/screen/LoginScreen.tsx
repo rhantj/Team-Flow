@@ -53,7 +53,7 @@ export function LoginScreen() {
             body: JSON.stringify({ username: id, password }),
           });
       tokenStore.clear();
-      tokenStore.setTokens(tokens.accessToken, tokens.refreshToken);
+      tokenStore.setTokens(tokens.accessToken, tokens.refreshToken, tokens.testSessionId ?? null);
       await refreshMe();
       navigate("/projects", { replace: true });
     } catch (error) {

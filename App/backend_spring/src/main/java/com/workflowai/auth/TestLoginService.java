@@ -3,6 +3,7 @@ package com.workflowai.auth;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.presence.PresenceService;
 import java.util.Map;
+import java.util.UUID;
 import org.springframework.stereotype.Service;
 
 /**
@@ -45,14 +46,22 @@ public class TestLoginService {
             throw new InvalidTestCredentialsException();
         }
 
-        if (!presenceService.tryAcquire(userId)) {
+        String sessionId = UUID.randomUUID().toString();
+        if (!presenceService.tryAcquire(userId, sessionId)) {
             throw new TestAccountAlreadyActiveException();
         }
 
         try {
-            return authService.devLogin(demoUserId);
+            AuthTokenResponse tokens = authService.devLogin(demoUserId);
+            return new AuthTokenResponse(
+                tokens.accessToken(),
+                tokens.refreshToken(),
+                tokens.expiresIn(),
+                tokens.user(),
+                sessionId
+            );
         } catch (RuntimeException e) {
-            presenceService.release(userId);
+            presenceService.release(userId, sessionId);
             throw new InvalidTestCredentialsException();
         }
     }

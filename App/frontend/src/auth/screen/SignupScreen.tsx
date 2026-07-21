@@ -61,7 +61,7 @@ export function SignupScreen() {
       throw new Error(body.error?.message ?? "회원가입 처리에 실패했습니다.");
     }
     tokenStore.clear();
-    tokenStore.setTokens(body.data.accessToken, body.data.refreshToken);
+    tokenStore.setTokens(body.data.accessToken, body.data.refreshToken, null);
     await refreshMe();
   };
 
@@ -87,7 +87,7 @@ export function SignupScreen() {
 
       if (response.tokens) {
         tokenStore.clear();
-        tokenStore.setTokens(response.tokens.accessToken, response.tokens.refreshToken);
+        tokenStore.setTokens(response.tokens.accessToken, response.tokens.refreshToken, null);
         await refreshMe();
       }
       navigate("/projects", { replace: true });

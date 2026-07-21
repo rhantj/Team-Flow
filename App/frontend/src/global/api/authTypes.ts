@@ -22,6 +22,7 @@ export interface AuthTokenResponse {
   refreshToken: string;
   expiresIn: number;
   user: UserSummary;
+  testSessionId?: string | null;
 }
 
 export interface SignupResponse {

@@ -37,7 +37,7 @@ public class ProjectController {
     @Operation(
         summary = "프로젝트 생성 (온보딩)",
         description = "생성한 사용자는 자동으로 팀장(LEADER)이 되어 project_members에 등록된다. "
-            + "프로젝트명/최종 마감일은 필수이며, 유효성 검사 실패 시 400을 반환한다."
+            + "프로젝트명은 필수이며, 일정/산출물/기술스택 정보는 선택 입력이다. 유효성 검사 실패 시 400을 반환한다."
     )
     @PostMapping
     public ResponseEntity<ApiResponse<ProjectResponse>> create(@Valid @RequestBody CreateProjectRequest request) {

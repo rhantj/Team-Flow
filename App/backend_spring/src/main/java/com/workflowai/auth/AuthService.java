@@ -5,6 +5,7 @@ import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
 import io.jsonwebtoken.Claims;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -73,7 +74,15 @@ public class AuthService {
         if (isReviewerApplication) {
             newUser.setReviewerStatus(REVIEWER_STATUS_PENDING);
         }
-        User user = userRepository.save(newUser);
+        User user;
+        try {
+            user = userRepository.saveAndFlush(newUser);
+        } catch (DataIntegrityViolationException e) {
+            if (userRepository.existsByEmail(email)) {
+                throw new EmailAlreadyExistsException();
+            }
+            throw e;
+        }
 
         if (isReviewerApplication) {
             return SignupResponse.pendingReviewerApproval();

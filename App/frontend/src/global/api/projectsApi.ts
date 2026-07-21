@@ -5,9 +5,9 @@ export interface ProjectResponse {
   id: number;
   title: string;
   type: string | null;
+  deadline: string | null;
   description: string | null;
   startDate: string | null;
-  deadline: string | null;
   midCheckDate: string | null;
   memberLimit: number | null;
   deliverables: string[] | null;
@@ -24,7 +24,7 @@ export interface CreateProjectRequest {
   type?: string;
   description?: string;
   startDate?: string;
-  deadline: string;
+  deadline?: string;
   midCheckDate?: string;
   memberLimit?: number;
   deliverables?: string[];

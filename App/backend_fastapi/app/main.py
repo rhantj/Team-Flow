@@ -115,22 +115,19 @@ def health():
 
 @app.post("/api/v1/meetings/analyze-json", response_model=MeetingAnalysisResult)
 def analyze_json(request: AnalyzeRequest):
-    provider = os.getenv("MEETING_ANALYSIS_PROVIDER", "huggingface").lower()
-    if provider in {"huggingface", "hf"}:
+    provider = os.getenv("MEETING_ANALYSIS_PROVIDER", "auto").lower()
+    if provider in {"auto", "huggingface", "hf"} and _huggingface_configured():
         try:
             return analyze_meeting_with_huggingface(request)
         except Exception:
             logger.exception("Hugging Face 회의록 분석 실패, Ollama/규칙 기반 분석으로 대체합니다.")
+    elif provider in {"huggingface", "hf"}:
+        logger.warning("MEETING_ANALYSIS_PROVIDER=%s 이지만 HF_TOKEN이 없어 Ollama/규칙 기반 분석으로 대체합니다.", provider)
+
+    if provider in {"auto", "huggingface", "hf", "ollama"}:
         try:
             return analyze_meeting_with_ollama(request)
         except Exception:
-            logger.exception("Ollama 회의록 분석 실패, 규칙 기반 분석으로 대체합니다.")
-    elif provider == "ollama":
-        try:
-            return analyze_meeting_with_ollama(request)
-        except Exception:
-            # Ollama 미실행/모델 없음/timeout/JSON 파싱 실패/Pydantic 검증 실패 등
-            # 원인이 다양하지만 전부 동일하게 규칙 기반 분석으로 대체해야 하므로 광범위하게 잡는다.
             logger.exception("Ollama 회의록 분석 실패, 규칙 기반 분석으로 대체합니다.")
     return analyze_meeting(request)
 
@@ -281,6 +278,10 @@ def analyze_meeting_with_huggingface(request: AnalyzeRequest) -> MeetingAnalysis
     result = parse_ollama_analysis_response(raw, request)
     logger.info("Hugging Face 회의록 분석 성공. model=%s", model)
     return result
+
+
+def _huggingface_configured() -> bool:
+    return bool(os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN"))
 
 
 def build_ollama_prompt(request: AnalyzeRequest) -> str:
