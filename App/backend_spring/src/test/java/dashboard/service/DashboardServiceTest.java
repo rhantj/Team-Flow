@@ -10,6 +10,7 @@ import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.task.Task;
 import com.workflowai.task.TaskRepository;
 import com.workflowai.user.UserRepository;
+import dashboard.DTO.DashboardTaskDto;
 import dashboard.DTO.DelayRiskDto;
 import dashboard.entity.MlPrediction;
 import dashboard.repository.MilestoneRepository;
@@ -114,5 +115,20 @@ class DashboardServiceTest {
         List<DelayRiskDto> result = newService().getMyDelayRisks("demo-project", 5L);
 
         assertThat(result).isEmpty();
+    }
+
+    @Test
+    void getTasksIncludesCreatedAtAndUpdatedAt() {
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        Task task = taskWithId(10L, 5L);
+        ReflectionTestUtils.setField(task, "createdAt", LocalDateTime.of(2026, 7, 1, 9, 0));
+        ReflectionTestUtils.setField(task, "updatedAt", LocalDateTime.of(2026, 7, 19, 15, 30));
+        when(taskRepository.findByProjectIdOrderByStatusAscPositionAsc(1L)).thenReturn(List.of(task));
+
+        List<DashboardTaskDto> result = newService().getTasks("demo-project");
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).createdAt()).isEqualTo("2026-07-01T09:00:00");
+        assertThat(result.get(0).updatedAt()).isEqualTo("2026-07-19T15:30:00");
     }
 }

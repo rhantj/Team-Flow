@@ -334,7 +334,9 @@ public class DashboardService {
             task.getPriority(),
             task.getDescription(),
             task.getSourceType(),
-            task.getPosition()
+            task.getPosition(),
+            task.getCreatedAt() == null ? null : task.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
+            task.getUpdatedAt() == null ? null : task.getUpdatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         );
     }
 

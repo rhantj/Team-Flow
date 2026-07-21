@@ -146,6 +146,14 @@ public class Task {
         return position;
     }
 
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
     /** 칸반 드래그앤드롭: 카드를 다른 컬럼/다른 위치로 옮긴다. */
     public void moveTo(String status, double position) {
         this.status = status;
