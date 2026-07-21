@@ -5,9 +5,12 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from ml_workload_score.app.schema.workload_schema import WorkloadScoreResponse
+from ml_workload_score.app.services.tracing import setup_langsmith
 from ml_workload_score.app.services.workload_service import get_workload_score
 
 logger = logging.getLogger(__name__)
+
+setup_langsmith()
 
 router = APIRouter(prefix="/ai/score", tags=["workload"])
 

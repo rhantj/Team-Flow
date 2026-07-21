@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from langsmith import traceable
+
 from ml_workload_score.app.services import workload_db as db
 from ml_workload_score.app.services.embedding_difficulty import compute_embedding_adjustments
 from ml_workload_score.app.services.workload_model import (
@@ -18,6 +20,7 @@ from ml_workload_score.app.schema.workload_schema import (
 logger = logging.getLogger(__name__)
 
 
+@traceable(run_type="chain", name="get_workload_score")
 async def get_workload_score(project_id: int, use_synthetic_fallback: bool = False) -> WorkloadScoreData:
     """
     프로젝트의 팀원별 업무 편중(과부하/저활동) 점수를 계산한다.

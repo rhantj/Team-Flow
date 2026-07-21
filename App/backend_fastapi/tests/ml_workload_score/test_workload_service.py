@@ -60,3 +60,8 @@ async def test_get_workload_score_synthetic_fallback_still_works():
     assert result.source == "synthetic_fallback"
     assert len(result.members) > 0
     mock_adjustments.assert_not_called()
+
+
+def test_get_workload_score_name_preserved_after_traceable():
+    from ml_workload_score.app.services.workload_service import get_workload_score
+    assert get_workload_score.__name__ == "get_workload_score"
