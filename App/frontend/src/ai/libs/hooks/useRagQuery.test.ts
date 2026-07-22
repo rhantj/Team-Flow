@@ -30,6 +30,7 @@ describe("useRagQuery", () => {
     expect(apiFetch).toHaveBeenCalledWith("/ai/rag/query", {
       method: "POST",
       body: JSON.stringify({ project_id: 1, question: "질문입니다" }),
+      signal: expect.any(AbortSignal),
     });
     expect(result.current.answer?.content).toBe("테스트 답변");
     expect(result.current.answer?.sources).toHaveLength(1);
