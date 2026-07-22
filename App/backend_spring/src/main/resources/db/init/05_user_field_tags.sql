@@ -7,9 +7,18 @@
 -- ============================================================================
 
 -- 기존 단일 문자열 값은 1개짜리 배열로 감싸서 보존한다.
-ALTER TABLE users
-    ALTER COLUMN field TYPE JSONB
-    USING (CASE WHEN field IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(field) END);
+-- data_type 체크로 감싸서 재실행해도 안전하게 한다(이미 JSONB면 건너뛴다).
+DO $$
+BEGIN
+    IF (
+        SELECT data_type FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'field'
+    ) IS DISTINCT FROM 'jsonb' THEN
+        ALTER TABLE users
+            ALTER COLUMN field TYPE JSONB
+            USING (CASE WHEN field IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(field) END);
+    END IF;
+END $$;
 
 ALTER TABLE users ALTER COLUMN field SET DEFAULT '[]'::jsonb;
 ALTER TABLE users ALTER COLUMN field SET NOT NULL;

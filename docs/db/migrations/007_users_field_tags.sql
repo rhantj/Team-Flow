@@ -8,9 +8,19 @@
 -- 컬럼 타입 불일치로 기동 실패한다. 팀원 전체가 이 커밋(User.java의 List<String> 매핑 포함)으로
 -- 업데이트한 뒤에, 또는 다들 로컬 db 서비스를 쓰는 시점에 맞춰 적용할 것.
 
-ALTER TABLE users
-    ALTER COLUMN field TYPE JSONB
-    USING (CASE WHEN field IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(field) END);
+-- data_type 체크로 감싸서 재실행해도 안전하게 한다. 이미 JSONB인 상태에서 그대로 다시 실행하면
+-- jsonb_build_array가 배열을 한 겹 더 감싸 데이터가 이중 중첩되므로, 실제로 VARCHAR일 때만 변환한다.
+DO $$
+BEGIN
+    IF (
+        SELECT data_type FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'field'
+    ) IS DISTINCT FROM 'jsonb' THEN
+        ALTER TABLE users
+            ALTER COLUMN field TYPE JSONB
+            USING (CASE WHEN field IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(field) END);
+    END IF;
+END $$;
 
 ALTER TABLE users ALTER COLUMN field SET DEFAULT '[]'::jsonb;
 ALTER TABLE users ALTER COLUMN field SET NOT NULL;

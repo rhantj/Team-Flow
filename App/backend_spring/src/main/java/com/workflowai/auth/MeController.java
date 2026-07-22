@@ -13,15 +13,17 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -129,9 +131,12 @@ public class MeController {
             return ResponseEntity.badRequest()
                 .body(ApiResponse.fail("FILE_TOO_LARGE", "파일 용량은 최대 10MB까지 업로드할 수 있습니다."));
         }
-        // Content-Type 헤더는 클라이언트가 임의로 지정할 수 있으므로, 실제 바이트가 디코딩 가능한
-        // 이미지인지 검증한다 — /uploads/**는 인증 없이 공개되므로 위장 파일이 그대로 서빙되는 것을 막는다.
-        if (!isDecodableImage(file)) {
+        // Content-Type 헤더는 클라이언트가 임의로 지정할 수 있고, ImageIO는 PNG/JPEG 외에
+        // GIF/BMP 등도 디코딩할 수 있으므로, ImageReader가 실제로 인식한 포맷이 PNG/JPEG인지까지
+        // 확인한다 — /uploads/**는 인증 없이 공개되므로 위장/오분류 파일이 그대로 서빙되는 것을 막는다.
+        // 저장 확장자도 이 감지된 포맷을 그대로 쓴다 (Content-Type 헤더를 신뢰하지 않는다).
+        String detectedFormat = detectImageFormat(file);
+        if (detectedFormat == null) {
             return ResponseEntity.badRequest()
                 .body(ApiResponse.fail("INVALID_FILE_TYPE", "PNG 또는 JPG 파일만 업로드할 수 있습니다."));
         }
@@ -140,7 +145,7 @@ public class MeController {
             .orElseThrow(() -> new IllegalStateException("사용자를 찾을 수 없습니다."));
 
         try {
-            user.setProfileImagePath(storeAvatar(user.getId(), file));
+            user.setProfileImagePath(storeAvatar(user.getId(), file, detectedFormat));
         } catch (IOException e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.fail("UPLOAD_FAILED", "이미지 업로드에 실패했습니다."));
@@ -167,32 +172,57 @@ public class MeController {
         return ApiResponse.ok(List.of());
     }
 
-    /** Content-Type 헤더가 아니라 실제 픽셀 데이터로 디코딩 가능한지 확인한다 (헤더 위장 방지). */
-    private boolean isDecodableImage(MultipartFile file) {
-        try (InputStream in = file.getInputStream()) {
-            return ImageIO.read(in) != null;
+    /**
+     * ImageIO의 ImageReader가 실제로 인식한 포맷 이름을 기준으로 판단한다 — Content-Type 헤더는
+     * 신뢰하지 않고, ImageIO가 디코딩은 가능하지만 PNG/JPEG가 아닌 포맷(GIF, BMP 등)도 걸러낸다.
+     * 반환값은 저장 시 그대로 확장자로 쓰인다 ("png" 또는 "jpg"), 판별 불가/미허용 포맷이면 null.
+     */
+    private String detectImageFormat(MultipartFile file) {
+        try (ImageInputStream iis = ImageIO.createImageInputStream(file.getInputStream())) {
+            if (iis == null) {
+                return null;
+            }
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(iis);
+            if (!readers.hasNext()) {
+                return null;
+            }
+            ImageReader reader = readers.next();
+            try {
+                String formatName = reader.getFormatName().toLowerCase();
+                if (formatName.equals("png")) {
+                    return "png";
+                }
+                if (formatName.equals("jpeg") || formatName.equals("jpg")) {
+                    return "jpg";
+                }
+                return null;
+            } finally {
+                reader.dispose();
+            }
         } catch (IOException e) {
-            return false;
+            return null;
         }
     }
 
     /**
-     * 사용자당 파일 하나만 유지한다: avatars/{userId}.{ext}에 저장한다.
-     * 임시 파일에 먼저 쓰고 성공했을 때만 원자적으로 교체하며, 확장자가 바뀌어 남는 이전 파일은
-     * 새 파일 저장이 완전히 끝난 뒤에만 지운다 — 저장 도중 실패해도 기존 사진이 유실되지 않게 한다.
+     * 사용자당 파일 하나만 유지한다: avatars/{userId}.{ext}에 저장한다 (ext는 detectImageFormat이
+     * 실제로 감지한 포맷). 임시 파일에 먼저 쓰고 성공했을 때만 교체하며, 확장자가 바뀌어 남는
+     * 이전 파일은 새 파일 저장이 완전히 끝난 뒤에만 지운다 — 저장 도중 실패해도 기존 사진이
+     * 유실되지 않게 한다. ATOMIC_MOVE는 요구하지 않는다 — 이를 지원하지 않는 파일시스템(일부
+     * 컨테이너/네트워크 볼륨)에서는 AtomicMoveNotSupportedException으로 업로드가 항상 실패하는데,
+     * 같은 디렉터리 안에서의 REPLACE_EXISTING만으로도 이 용도로는 충분하다.
      */
-    private String storeAvatar(Long userId, MultipartFile file) throws IOException {
+    private String storeAvatar(Long userId, MultipartFile file, String extension) throws IOException {
         Path dir = Path.of(uploadsDir, "avatars").toAbsolutePath().normalize();
         Files.createDirectories(dir);
 
-        String extension = file.getContentType().equals("image/png") ? "png" : "jpg";
         String fileName = userId + "." + extension;
         Path target = dir.resolve(fileName);
 
         Path tmp = dir.resolve("upload-" + userId + "-" + System.nanoTime() + ".tmp");
         try {
             file.transferTo(tmp);
-            Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
         } finally {
             Files.deleteIfExists(tmp);
         }
