@@ -5,7 +5,6 @@ import { PriorityBadge } from "../../board/components/PriorityBadge";
 import { getCat } from "../../board/libs/utils/taskService";
 import { getStoredMeetings, getSavedMeetings, saveSavedMeetings, getStoredTasks, saveStoredTasks, saveStoredMeetings, getDeletedMeetingIds, markDeletedMeeting } from "../../board/libs/utils/localStore";
 import { addActivity } from "../../board/libs/utils/activityStore";
-import { MEMBERS } from "../../global/lib/mock/members";
 import { CATEGORIES } from "../../board/libs/mock/tasks";
 import type { Meeting, UploadFlow, UploadType, GenTodo, SavedMeetingRecord } from "../libs/types/meeting";
 import type { CatId, Priority, Task } from "../../board/libs/types/task";
@@ -397,7 +396,7 @@ export function MeetingsView() {
   const [newTodoTitle, setNewTodoTitle] = useState("");
   const [newTodoDesc, setNewTodoDesc] = useState("");
   const [newTodoCategory, setNewTodoCategory] = useState<CatId>("other");
-  const [newTodoAssignee, setNewTodoAssignee] = useState(MEMBERS[0].id);
+  const [newTodoAssignee, setNewTodoAssignee] = useState("");
   const [newTodoDueDate, setNewTodoDueDate] = useState("");
   const [newTodoPriority, setNewTodoPriority] = useState<Priority>("medium");
   const [newTodoError, setNewTodoError] = useState<string | null>(null);
@@ -708,7 +707,8 @@ export function MeetingsView() {
   const groupedMeetingTodos = meeting?.todos ? groupMeetingTodoLines(meeting.todos) : [];
   const isMeetingTodosRegistered = Boolean(meeting?.todos?.length) && meeting!.todos!.every(line => {
     const parsed = parseMeetingTodoLine(line);
-    const assigneeId = MEMBERS.find(m => m.name === parsed.assigneeName)?.id ?? "";
+    const matchedMember = projectMembers.find(m => m.name === parsed.assigneeName);
+    const assigneeId = matchedMember ? String(matchedMember.userId) : "";
     const key = buildTodoRegistrationKey(meetingIdentifier, parsed.title, assigneeId, parsed.dueDate);
     return getStoredTasks().some(task => buildTodoRegistrationKey(task.sourceMeetingTitle ?? "", task.title, task.assignee, task.dueDate) === key);
   });
@@ -734,7 +734,7 @@ export function MeetingsView() {
     setSelTodos(prev => [...prev, todo.id]);
     setShowAddTodo(false);
     setNewTodoTitle(""); setNewTodoDesc(""); setNewTodoCategory("other");
-    setNewTodoAssignee(MEMBERS[0].id); setNewTodoDueDate(""); setNewTodoPriority("medium");
+    setNewTodoAssignee(""); setNewTodoDueDate(""); setNewTodoPriority("medium");
     setNewTodoError(null);
   };
 
@@ -1157,7 +1157,8 @@ export function MeetingsView() {
 
     const parsedTodos = meeting.todos.map(line => {
       const parsed = parseMeetingTodoLine(line);
-      const assigneeId = MEMBERS.find(m => m.name === parsed.assigneeName)?.id ?? "";
+      const matchedMember = projectMembers.find(m => m.name === parsed.assigneeName);
+      const assigneeId = matchedMember ? String(matchedMember.userId) : "";
       return { ...parsed, assigneeId };
     });
 
@@ -1519,7 +1520,8 @@ export function MeetingsView() {
             </div>
             {groupedGeneratedTodos.map(todo => {
               const assigneeId = getAssignee(todo);
-              const m = MEMBERS.find(me => me.id === assigneeId);
+              const m = projectMembers.find(me => String(me.userId) === assigneeId);
+              const mColor = m ? PARTICIPANT_COLORS[m.userId % PARTICIPANT_COLORS.length] : undefined;
               return (
                 <div key={todo.id} className={`bg-card rounded-xl p-4 border shadow-sm ${!todo.assigned ? "border-amber-300" : "border-border"}`}>
                   <div className="flex items-start justify-between gap-2 mb-2">
@@ -1534,7 +1536,7 @@ export function MeetingsView() {
                   <div className="flex items-center justify-between text-xs">
                     <div className="flex items-center gap-1.5">
                       {m ? (
-                        <div className="flex items-center gap-1"><div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold" style={{ background:m.color }}>{m.initials}</div><span className="text-muted-foreground">{m.name}</span></div>
+                        <div className="flex items-center gap-1"><div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold" style={{ background:mColor }}>{m.name.slice(0,1)}</div><span className="text-muted-foreground">{m.name}</span></div>
                       ) : <span className="text-amber-600 font-medium">담당자 미배정</span>}
                     </div>
                     <span className="text-muted-foreground">마감 {todo.dueDate}</span>
@@ -1597,7 +1599,7 @@ export function MeetingsView() {
           <ul style={{ fontSize: "13px", lineHeight: 1.7, margin: 0, paddingLeft: "20px" }}>
             {reviewTodos.length
               ? reviewTodos.map(t => {
-                  const assigneeName = MEMBERS.find(m => m.id === getAssignee(t))?.name ?? "미배정";
+                  const assigneeName = projectMembers.find(m => String(m.userId) === getAssignee(t))?.name ?? "미배정";
                   return <li key={t.id}>{t.title} - {assigneeName} ({getDueDate(t) || "마감일 미정"})</li>;
                 })
               : <li>생성된 업무가 없습니다.</li>}
@@ -1733,7 +1735,7 @@ export function MeetingsView() {
                         <select value={assigneeId} onChange={e => setTodoAssignees(p => ({ ...p, [todo.id]: e.target.value }))}
                           className={`text-xs rounded-lg border px-2 py-1.5 outline-none focus:border-blue-400 cursor-pointer ${isUnassigned ? "border-amber-300 bg-amber-50 text-amber-700" : "border-border bg-card text-foreground"}`}>
                           <option value="">⚠ 미배정</option>
-                          {MEMBERS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                          {projectMembers.map(m => <option key={m.userId} value={String(m.userId)}>{m.name}</option>)}
                         </select>
                       </td>
                       <td className="px-3 py-3">
@@ -1791,7 +1793,8 @@ export function MeetingsView() {
                       <label className="text-xs font-semibold text-foreground block mb-1.5">담당자 <span className="text-red-500">*</span></label>
                       <select value={newTodoAssignee} onChange={e => setNewTodoAssignee(e.target.value)}
                         className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-xs outline-none focus:border-blue-400">
-                        {MEMBERS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                        <option value="">담당자 선택</option>
+                        {projectMembers.map(m => <option key={m.userId} value={String(m.userId)}>{m.name}</option>)}
                       </select>
                     </div>
                     <div>
