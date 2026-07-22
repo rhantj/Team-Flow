@@ -41,12 +41,12 @@ async def search_similar_chunks(
     embedding_literal = to_vector_literal(query_embedding)
 
     if assignee_id is not None:
+        # 담당 업무가 하나도 없어도 프로젝트 전체 검색으로 대체하지 않는다. 대체하면 다른
+        # 사람의 업무가 컨텍스트에 섞여, LLM이 그걸 질문자 본인의 담당 업무처럼 답할 위험이
+        # 있다 (개인화 질문에서는 정확한 "없음"이 잘못된 "있음"보다 안전하다).
         async with pool.acquire() as conn:
             assignee_rows = await conn.fetch(_SEARCH_BY_ASSIGNEE_SQL, embedding_literal, project_id, assignee_id, top_k)
-        assignee_result = [dict(row) for row in assignee_rows]
-        # 담당 업무가 하나도 없으면 "근거 없음"보다는 프로젝트 전체 검색으로 대체한다.
-        if assignee_result:
-            return assignee_result
+        return [dict(row) for row in assignee_rows]
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(_SEARCH_SQL, embedding_literal, project_id, top_k)

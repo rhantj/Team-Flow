@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from llm_rag_assistant.app.schema.chat_schema import RagQueryResponse, RagSource
 from llm_rag_assistant.app.services.embedding_service import embed_text
 from llm_rag_assistant.app.services.generation_service import generate_answer
@@ -12,12 +14,15 @@ _SNIPPET_MAX_LEN = 200
 # assignee_id 필터 검색으로 전환한다.
 # 부분 문자열로 비교하면 "문제 ", "과제 ", "안내 " 같은 무관한 단어에 "제 "가 포함돼 오탐한다
 # (예: "이 문제 알려줘"가 개인화 질문으로 잘못 분류됨) - 공백으로 나눈 토큰 단위로 정확히
-# 일치할 때만 개인화 의도로 판단한다.
-_PERSONAL_INTENT_TOKENS = {"내가", "제가", "나의", "저의", "나한테", "저한테", "내", "제"}
+# 일치할 때만 개인화 의도로 판단한다. 토큰 끝에 붙는 문장부호(?,!,~ 등)는 비교 전에 제거한다
+# (그렇지 않으면 "내가?"처럼 조사 뒤에 문장부호가 붙은 흔한 표현을 놓친다).
+_PERSONAL_INTENT_TOKENS = {"내가", "제가", "나는", "저는", "나의", "저의", "나한테", "저한테", "내", "제"}
+_TRAILING_PUNCTUATION_PATTERN = re.compile(r"[,.?!~…\"'“”‘’]+$")
 
 
 def _is_personal_intent(question: str) -> bool:
-    return bool(_PERSONAL_INTENT_TOKENS & set(question.split()))
+    tokens = {_TRAILING_PUNCTUATION_PATTERN.sub("", token) for token in question.split()}
+    return bool(_PERSONAL_INTENT_TOKENS & tokens)
 
 
 async def answer_question(pool, project_id: int, question: str, user_id: int | None = None) -> RagQueryResponse:

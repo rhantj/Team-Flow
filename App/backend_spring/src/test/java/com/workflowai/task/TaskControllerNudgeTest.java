@@ -14,6 +14,7 @@ import com.workflowai.activity.ActivityService;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.NotificationService;
 import com.workflowai.project.ProjectMemberRepository;
+import com.workflowai.rag.RagIngestService;
 import com.workflowai.security.UserPrincipal;
 import com.workflowai.user.UserRepository;
 import java.time.LocalDate;
@@ -52,6 +53,9 @@ class TaskControllerNudgeTest {
     @Mock
     private ProjectMemberRepository projectMemberRepository;
 
+    @Mock
+    private RagIngestService ragIngestService;
+
     private MockMvc mockMvc;
 
     @BeforeEach
@@ -59,7 +63,7 @@ class TaskControllerNudgeTest {
         mockMvc = MockMvcBuilders
             .standaloneSetup(new TaskController(
                 taskRepository, userRepository, demoDataService, activityService,
-                notificationService, projectMemberRepository
+                notificationService, projectMemberRepository, ragIngestService
             ))
             .build();
     }

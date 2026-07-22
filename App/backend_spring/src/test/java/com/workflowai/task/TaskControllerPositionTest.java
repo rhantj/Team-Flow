@@ -16,6 +16,7 @@ import com.workflowai.notification.NotificationService;
 import com.workflowai.project.ProjectMember;
 import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.project.ProjectRole;
+import com.workflowai.rag.RagIngestService;
 import com.workflowai.security.UserPrincipal;
 import com.workflowai.user.UserRepository;
 import java.time.LocalDate;
@@ -54,6 +55,9 @@ class TaskControllerPositionTest {
     @Mock
     private ProjectMemberRepository projectMemberRepository;
 
+    @Mock
+    private RagIngestService ragIngestService;
+
     private MockMvc mockMvc;
 
     @BeforeEach
@@ -61,7 +65,7 @@ class TaskControllerPositionTest {
         mockMvc = MockMvcBuilders
             .standaloneSetup(new TaskController(
                 taskRepository, userRepository, demoDataService, activityService,
-                notificationService, projectMemberRepository
+                notificationService, projectMemberRepository, ragIngestService
             ))
             .build();
     }

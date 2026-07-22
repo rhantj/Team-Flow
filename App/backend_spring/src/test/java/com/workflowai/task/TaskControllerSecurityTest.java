@@ -13,6 +13,7 @@ import com.workflowai.activity.ActivityService;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.NotificationService;
 import com.workflowai.project.ProjectMemberRepository;
+import com.workflowai.rag.RagIngestService;
 import com.workflowai.security.ProjectAccess;
 import com.workflowai.user.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -58,6 +59,9 @@ class TaskControllerSecurityTest {
 
     @MockitoBean
     private ProjectMemberRepository projectMemberRepository;
+
+    @MockitoBean
+    private RagIngestService ragIngestService;
 
     @MockitoBean(name = "projectAccess")
     private ProjectAccess projectAccess;

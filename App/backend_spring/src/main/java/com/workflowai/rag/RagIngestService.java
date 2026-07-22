@@ -31,4 +31,17 @@ public class RagIngestService {
             log.warn("RAG ingest 실패 (무시): sourceType={}, sourceId={}", sourceType, sourceId, e);
         }
     }
+
+    // 담당자만 재배정된 경우(내용 변경 없음) - 이미 인제스트된 청크를 재임베딩하지 않고
+    // assignee_id 메타데이터만 갱신한다. RAG 인제스트 자체가 안 됐던 소스(source_id)라면
+    // FastAPI 쪽 UPDATE가 0건에 그칠 뿐이라 안전하다.
+    @Async("ragIngestExecutor")
+    public void syncAssigneeBestEffort(Long projectId, String sourceType, Long sourceId, Long assigneeId) {
+        if (projectId == null || sourceId == null) return;
+        try {
+            fastApiRagClient.syncAssignee(new RagAssigneeSyncRequest(projectId, sourceType, sourceId, assigneeId));
+        } catch (Exception e) {
+            log.warn("RAG assignee 동기화 실패 (무시): sourceType={}, sourceId={}", sourceType, sourceId, e);
+        }
+    }
 }

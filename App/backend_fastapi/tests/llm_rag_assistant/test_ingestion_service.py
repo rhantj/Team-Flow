@@ -4,12 +4,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from llm_rag_assistant.app.services.ingestion_service import ingest_content
+from llm_rag_assistant.app.services.ingestion_service import ingest_content, sync_assignee
 
 
 class _FakeConn:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
+        self.executed: list[tuple] = []
         self._next_id = 1
 
     async def fetchrow(self, query: str, *args):
@@ -17,6 +18,9 @@ class _FakeConn:
         row = {"id": self._next_id}
         self._next_id += 1
         return row
+
+    async def execute(self, query: str, *args):
+        self.executed.append((query, args))
 
     async def __aenter__(self):
         return self
@@ -74,6 +78,31 @@ async def test_ingest_content_stores_assignee_id_when_given() -> None:
 
     _, args = conn.calls[0]
     assert args[5] == 42
+
+
+@pytest.mark.asyncio
+async def test_sync_assignee_updates_existing_chunks_without_reembedding() -> None:
+    conn = _FakeConn()
+    pool = _FakePool(conn)
+
+    await sync_assignee(pool, project_id=1, source_type="task", source_id=7, assignee_id=99)
+
+    assert len(conn.executed) == 1
+    query, args = conn.executed[0]
+    assert "UPDATE document_chunks" in query
+    assert "SET assignee_id" in query
+    assert args == (99, 1, "task", 7)
+
+
+@pytest.mark.asyncio
+async def test_sync_assignee_can_clear_assignee_to_none() -> None:
+    conn = _FakeConn()
+    pool = _FakePool(conn)
+
+    await sync_assignee(pool, project_id=1, source_type="task", source_id=7, assignee_id=None)
+
+    _, args = conn.executed[0]
+    assert args[0] is None
 
 
 @pytest.mark.asyncio

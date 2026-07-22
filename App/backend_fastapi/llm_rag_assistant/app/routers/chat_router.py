@@ -6,13 +6,14 @@ from requests.exceptions import HTTPError as RequestsHTTPError
 
 from core.db import get_pool
 from llm_rag_assistant.app.schema.chat_schema import (
+    RagAssigneeSyncRequest,
     RagIngestRequest,
     RagIngestResponse,
     RagQueryRequest,
     RagQueryResponse,
 )
 from llm_rag_assistant.app.services.chat_service import answer_question
-from llm_rag_assistant.app.services.ingestion_service import ingest_content
+from llm_rag_assistant.app.services.ingestion_service import ingest_content, sync_assignee
 
 router = APIRouter(prefix="/ai/rag", tags=["rag"])
 
@@ -22,6 +23,13 @@ async def ingest(request: RagIngestRequest, pool=Depends(get_pool)) -> RagIngest
     return await ingest_content(
         pool, request.project_id, request.source_type, request.source_id, request.content, request.assignee_id
     )
+
+
+@router.post("/assignee-sync", status_code=204)
+async def assignee_sync(request: RagAssigneeSyncRequest, pool=Depends(get_pool)) -> None:
+    # 담당자가 재배정된 뒤 기존 청크의 assignee_id가 낡은 채로 남아 개인화 검색이
+    # 옛 담당자에게 계속 걸리지 않도록, 콘텐츠/임베딩 재계산 없이 메타데이터만 갱신한다.
+    await sync_assignee(pool, request.project_id, request.source_type, request.source_id, request.assignee_id)
 
 
 @router.post("/query", response_model=RagQueryResponse)

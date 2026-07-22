@@ -47,4 +47,13 @@ public class FastApiRagClient {
             .retrieve()
             .body(RagIngestResponse.class);
     }
+
+    public void syncAssignee(RagAssigneeSyncRequest request) {
+        restClient.post()
+            .uri("/ai/rag/assignee-sync")
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(request)
+            .retrieve()
+            .toBodilessEntity();
+    }
 }

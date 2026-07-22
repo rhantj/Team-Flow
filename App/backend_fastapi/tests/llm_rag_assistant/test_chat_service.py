@@ -131,3 +131,18 @@ def test_is_personal_intent_does_not_false_positive_on_substring_matches(questio
 )
 def test_is_personal_intent_detects_standalone_personal_pronoun_tokens(question: str) -> None:
     assert _is_personal_intent(question) is True
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "내가? 무슨 업무 맡았지",
+        "제가, 담당한 업무가 뭐예요",
+        "나는 할 일이 뭐야?",
+        "저는 뭘 해야 하나요~",
+    ],
+)
+def test_is_personal_intent_handles_trailing_punctuation_and_topic_particle_forms(question: str) -> None:
+    """'내가?'처럼 조사 뒤에 문장부호가 붙거나, '나는/저는'처럼 목록에 없던 흔한 표현도
+    개인화 질문으로 인식해야 한다."""
+    assert _is_personal_intent(question) is True

@@ -18,6 +18,13 @@ class RagIngestResponse(BaseModel):
     chunk_count: int
 
 
+class RagAssigneeSyncRequest(BaseModel):
+    project_id: int
+    source_type: Literal["task", "action_item"]
+    source_id: int
+    assignee_id: int | None = None
+
+
 class RagQueryRequest(BaseModel):
     project_id: int
     question: str
