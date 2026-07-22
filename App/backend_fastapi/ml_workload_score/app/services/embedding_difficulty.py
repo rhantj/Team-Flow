@@ -31,12 +31,29 @@ EMBEDDING_DIFFICULTY_WEIGHT = 0.3
 _anchor_cache: dict[str, list[float]] = {}
 
 
+def _summarize_embed_inputs(inputs: dict) -> dict:
+    """LangSmith 트레이스에 원본 텍스트(text_value) 전체 대신 글자 수만 기록한다.
+
+    process_inputs가 없으면 @traceable이 함수 인자를 가공 없이 그대로 로깅하므로,
+    이 함수를 앵커 문자열이 아닌 실제 업무 원문으로 호출하는 경로가 생기더라도
+    본문이 외부(LangSmith)로 그대로 전송되지 않도록 처음부터 방어한다
+    (리뷰 지적사항 - 현재는 HARD_ANCHOR/EASY_ANCHOR 고정 문자열로만 호출되지만,
+    _embed는 임의 텍스트를 받는 범용 함수라 이 보장이 함수 시그니처만으론 드러나지 않는다)."""
+    text_value = inputs.get("text_value") or ""
+    return {"text_length": len(text_value)}
+
+
 def _summarize_embed_outputs(outputs: list[float]) -> dict:
     """LangSmith 트레이스에 임베딩 벡터 원본 전체 대신 차원 수만 기록한다."""
     return {"embedding_dim": len(outputs)}
 
 
-@traceable(run_type="llm", name="ollama_embed", process_outputs=_summarize_embed_outputs)
+@traceable(
+    run_type="llm",
+    name="ollama_embed",
+    process_inputs=_summarize_embed_inputs,
+    process_outputs=_summarize_embed_outputs,
+)
 async def _embed(text_value: str) -> list[float]:
     client = ollama.AsyncClient(host=OLLAMA_HOST)
     response = await client.embeddings(model=EMBEDDING_MODEL, prompt=text_value)
