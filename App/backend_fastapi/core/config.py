@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     generation_model: str = "gemma4:e2b"
 
     hf_token: str | None = None
-    hf_embedding_model: str = "BAAI/bge-m3"
+    hf_embedding_model: str = "rhantj/bge-m3-workflow-query-robust"
     hf_rag_generation_model: str = Field(
         default="Qwen/Qwen3-4B-Instruct-2507",
         validation_alias="HF_MEETING_ANALYSIS_MODEL",

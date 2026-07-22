@@ -28,7 +28,7 @@ def test_settings_defaults_hf_embedding_model(monkeypatch: pytest.MonkeyPatch) -
 
     settings = Settings(_env_file=None)
 
-    assert settings.hf_embedding_model == "BAAI/bge-m3"
+    assert settings.hf_embedding_model == "rhantj/bge-m3-workflow-query-robust"
 
 
 def test_settings_defaults_hf_rag_generation_model(monkeypatch: pytest.MonkeyPatch) -> None:

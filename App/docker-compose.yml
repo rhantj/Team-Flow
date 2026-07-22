@@ -101,6 +101,8 @@ services:
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       GENERATION_MODEL: ${GENERATION_MODEL:-gemma2}
+      # RAG 챗봇 임베딩 모델 (embedding_service.py, 컨테이너 내부 로컬 추론)
+      HF_EMBEDDING_MODEL: ${HF_EMBEDDING_MODEL:-rhantj/bge-m3-workflow-query-robust}
       # 회의록 AI 분석 전용 (RAG Assistant의 GENERATION_MODEL과 분리)
       MEETING_ANALYSIS_PROVIDER: ${MEETING_ANALYSIS_PROVIDER:-auto}
       MEETING_ANALYSIS_MODEL: ${MEETING_ANALYSIS_MODEL:-qwen2.5:1.5b}
