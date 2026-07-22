@@ -179,3 +179,41 @@ def test_is_personal_intent_detects_compact_pronoun_task_compounds(question: str
 def test_is_personal_intent_compact_pattern_does_not_false_positive(question: str) -> None:
     """압축형 탐지가 '내년'/'내용'/'제안'/'제출'/'제목' 같은 무관한 단어까지 오탐하면 안 된다."""
     assert _is_personal_intent(question) is False
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "내가할일줘",
+        "제가맡은거 뭐야",
+        "todo 알려줘",
+        "task 목록 보여줘",
+    ],
+)
+def test_is_personal_intent_detects_particle_attached_compact_forms(question: str) -> None:
+    assert _is_personal_intent(question) is True
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "내년 계획 알려줘",
+        "내용 요약해줘",
+        "제안서 검토해줘",
+        "제출 기한이 언제야",
+    ],
+)
+def test_is_personal_intent_particle_pattern_does_not_false_positive(question: str) -> None:
+    assert _is_personal_intent(question) is False
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "일요일에 회의 있어?",
+        "일단 확인해볼게",
+        "제일 중요한 건 뭐야",
+    ],
+)
+def test_is_personal_intent_il_suffix_does_not_false_positive(question: str) -> None:
+    assert _is_personal_intent(question) is False
