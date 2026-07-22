@@ -217,3 +217,18 @@ def test_is_personal_intent_particle_pattern_does_not_false_positive(question: s
 )
 def test_is_personal_intent_il_suffix_does_not_false_positive(question: str) -> None:
     assert _is_personal_intent(question) is False
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "“내업무 확인해줘”",
+        "“제할일 뭐야”",
+        "“내담당 태스크 보여줄래”",
+    ],
+)
+def test_is_personal_intent_detects_curly_quoted_compact_forms(question: str) -> None:
+    """Korean-style curly double quotes (U+201C/U+201D) wrapping compact personal-intent
+    forms should still be recognized as personal intent. Regression test for missing
+    curly quote support in _COMPACT_PERSONAL_TASK_PATTERN leading boundary."""
+    assert _is_personal_intent(question) is True
