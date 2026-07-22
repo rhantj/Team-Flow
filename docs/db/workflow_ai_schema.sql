@@ -4,7 +4,9 @@
 --       (supabase db dump --schema public, 2026-07-22 기준)
 -- 스코프: 실사용 스키마 전체 (27개 테이블)
 -- 용도: 실제 서비스 스택(PostgreSQL/Supabase)에 직접 실행 가능한 DDL
--- 요구 버전: PostgreSQL 13+ (실 운영: PostgreSQL 17)
+-- 요구 버전: PostgreSQL 13+ (실 운영: PostgreSQL 17, Supabase 관리형 인스턴스로 pgvector 사전 번들)
+--       자체 호스팅 PostgreSQL에서는 pgvector가 기본 포함되지 않으므로 CREATE EXTENSION 실행
+--       전에 서버에 pgvector 확장을 별도로 설치해야 한다 (예: apt install postgresql-17-pgvector).
 -- 주의: document_chunks.embedding은 pgvector VECTOR(1024) 사용 중 (BAAI/bge-m3 기반
 --       쿼리 노이즈 강건성 파인튜닝 모델 차원). 아래 CREATE EXTENSION vector 구문 포함.
 -- 주의: 이 파일은 "빈 DB에 처음 실행하는" 스냅샷 DDL이다. 이미 데이터가 있는 기존 DB에
@@ -161,7 +163,7 @@ COMMENT ON COLUMN tasks.category IS '기획/프론트엔드/백엔드/AI-ML 등 
 COMMENT ON COLUMN tasks.status IS '할 일/진행 중/보류-블로커/완료';
 COMMENT ON COLUMN tasks.assignee_id IS '미배정 가능';
 COMMENT ON COLUMN tasks.source_type IS '회의록 액션 아이템에서 생성된 경우 출처 구분';
-COMMENT ON COLUMN tasks."position" IS '보드 내 드래그 정렬 순서(부동소수 기반)';
+COMMENT ON COLUMN tasks."position" IS '보드 내 드래그 정렬 순서(부동소수 기반). DEFAULT 없는 NOT NULL — INSERT 시 애플리케이션이 반드시 값을 계산해 넣어야 함';
 
 CREATE TRIGGER trg_tasks_updated_at
     BEFORE UPDATE ON tasks
@@ -340,7 +342,7 @@ CREATE TABLE activities (
 COMMENT ON TABLE activities IS '프로젝트 활동 로그';
 COMMENT ON COLUMN activities.type IS '업무 변경/GitHub/회의록/산출물 등';
 COMMENT ON COLUMN activities.target_id IS '폴리모픽 대상 id (FK 제약 없음)';
-COMMENT ON COLUMN activities.message IS '활동 로그 표시 문구';
+COMMENT ON COLUMN activities.message IS '활동 로그 표시 문구. DEFAULT 없는 NOT NULL — INSERT 시 애플리케이션이 반드시 값을 채워야 함';
 
 CREATE INDEX idx_activities_target ON activities (target_id);
 
