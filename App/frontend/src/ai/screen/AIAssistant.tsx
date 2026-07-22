@@ -3,7 +3,7 @@ import { Sparkles, X, Send } from "lucide-react";
 import { buildChatInit, QUICK_QUESTIONS } from "../libs/mock/chat";
 import { useRagQuery } from "../libs/hooks/useRagQuery";
 import { useAuth } from "../../global/hooks/useAuth";
-import type { ChatMsg } from "../libs/types/chat";
+import type { ChatMsg, RagSource } from "../libs/types/chat";
 
 const NO_PROJECT_MESSAGE = "아직 연결된 프로젝트가 없습니다. 프로젝트를 만들고 회의록을 업로드한 뒤 다시 질문해주세요.";
 
@@ -16,12 +16,22 @@ function buildSessionKey(userId: number | undefined, projectId: number | null): 
   return `${CHAT_SESSION_KEY_PREFIX}:${userId ?? "anon"}:${projectId ?? "none"}`;
 }
 
+function isRagSource(value: unknown): value is RagSource {
+  if (typeof value !== "object" || value === null) return false;
+  const source = value as Record<string, unknown>;
+  if (source.sourceType !== "meeting" && source.sourceType !== "task") return false;
+  if (typeof source.sourceId !== "number") return false;
+  if (typeof source.contentSnippet !== "string") return false;
+  if (typeof source.similarity !== "number") return false;
+  return true;
+}
+
 function isChatMsg(value: unknown): value is ChatMsg {
   if (typeof value !== "object" || value === null) return false;
   const msg = value as Record<string, unknown>;
   if (msg.role !== "user" && msg.role !== "assistant") return false;
   if (typeof msg.content !== "string") return false;
-  if (msg.sources !== undefined && !Array.isArray(msg.sources)) return false;
+  if (msg.sources !== undefined && (!Array.isArray(msg.sources) || !msg.sources.every(isRagSource))) return false;
   return true;
 }
 
@@ -37,7 +47,8 @@ function loadSavedMessages(key: string): ChatMsg[] | null {
   if (!raw) return null;
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (!isChatSession(parsed) || Date.now() - parsed.savedAt > CHAT_SESSION_TTL_MS) {
+    const now = Date.now();
+    if (!isChatSession(parsed) || parsed.savedAt > now || now - parsed.savedAt > CHAT_SESSION_TTL_MS) {
       sessionStorage.removeItem(key);
       return null;
     }
@@ -50,7 +61,11 @@ function loadSavedMessages(key: string): ChatMsg[] | null {
 
 function saveSession(key: string, messages: ChatMsg[]): void {
   const session: ChatSession = { messages, savedAt: Date.now() };
-  sessionStorage.setItem(key, JSON.stringify(session));
+  try {
+    sessionStorage.setItem(key, JSON.stringify(session));
+  } catch {
+    // sessionStorage 용량 초과·비공개 모드 제한 등 - 대화 저장은 best-effort라 실패해도 무시한다.
+  }
 }
 
 export function AIAssistant({ onClose }: { onClose: () => void }) {
@@ -61,37 +76,44 @@ export function AIAssistant({ onClose }: { onClose: () => void }) {
     () => loadSavedMessages(sessionKey) ?? buildChatInit(user?.name ?? "회원")
   );
   const [input, setInput] = useState("");
-  const { status, answer, error, ask } = useRagQuery();
+  const { status, answer, error, ask, cancel } = useRagQuery();
   const loading = status === "loading";
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+  // 응답을 요청한 시점의 세션 키. 응답이 도착했을 때 이 값이 현재 세션 키와 다르면
+  // (그사이 계정/프로젝트가 전환됨) 다른 세션의 대화창에 답변이 섞이지 않도록 무시한다.
+  const askedForKeyRef = useRef<string | null>(null);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-  // 대화 도중 사용자·프로젝트가 바뀌면(계정 전환, 프로젝트 전환) 이전 세션을 그 키로 저장하고
-  // 새 키에 해당하는 대화로 교체해 다른 사용자/프로젝트의 대화가 섞이지 않게 한다.
+  // 대화 도중 사용자·프로젝트가 바뀌면(계정 전환, 프로젝트 전환) 진행 중이던 요청을 취소하고
+  // 이전 세션을 그 키로 저장한 뒤, 새 키에 해당하는 대화로 교체해 다른 사용자/프로젝트의
+  // 대화·출처가 섞이지 않게 한다.
   useEffect(() => {
     if (sessionKeyRef.current === sessionKey) return;
+    cancel();
     saveSession(sessionKeyRef.current, messagesRef.current);
     sessionKeyRef.current = sessionKey;
     setMessages(loadSavedMessages(sessionKey) ?? buildChatInit(user?.name ?? "회원"));
-  }, [sessionKey, user?.name]);
+  }, [sessionKey, user?.name, cancel]);
 
   useEffect(() => {
     return () => {
+      cancel();
       saveSession(sessionKeyRef.current, messagesRef.current);
     };
-  }, []);
+  }, [cancel]);
 
   useEffect(() => {
+    if (askedForKeyRef.current !== sessionKey) return;
     if (status === "success" && answer) {
       setMessages(prev => [...prev, { role: "assistant", content: answer.content, sources: answer.sources }]);
     }
     if (status === "error" && error) {
       setMessages(prev => [...prev, { role: "assistant", content: error }]);
     }
-  }, [status, answer, error]);
+  }, [status, answer, error, sessionKey]);
 
   const send = (text: string) => {
     if (!text.trim() || loading) return;
@@ -101,6 +123,7 @@ export function AIAssistant({ onClose }: { onClose: () => void }) {
       setTimeout(() => setInput(""), 0);
       return;
     }
+    askedForKeyRef.current = sessionKey;
     ask(currentProjectId, text);
     // 한글 등 IME 조합 완료 이벤트가 keydown 이후 뒤늦게 들어와 입력창을 다시 채우는 것을 피하기 위해
     // 조합 이벤트가 먼저 처리되도록 한 틱 미뤄서 비운다.
