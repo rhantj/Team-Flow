@@ -23,3 +23,8 @@ def _encode(text: str) -> list[float]:
 
 async def embed_text(text: str) -> list[float]:
     return await asyncio.to_thread(_encode, text)
+
+
+async def preload_embedding_model() -> None:
+    """앱 기동 시 모델을 미리 로드해 첫 RAG 요청이 모델 다운로드/로딩 지연을 떠안지 않게 한다."""
+    await asyncio.to_thread(_get_model)

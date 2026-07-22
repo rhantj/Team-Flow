@@ -21,8 +21,9 @@ joblib==1.5.3
 matplotlib==3.10.0
 
 # RAG 챗봇 임베딩 로컬 추론 (embedding_service.py, 쿼리 노이즈 강건성 파인튜닝 모델을
-# HF Inference API가 서빙하지 않아 컨테이너 내부에서 직접 로드/추론) - CPU 빌드
-torch==2.6.0
+# HF Inference API가 서빙하지 않아 컨테이너 내부에서 직접 로드/추론). torch는 CPU 전용 휠로
+# Dockerfile에서 별도 인덱스로 먼저 설치한다(GPU 빌드가 딸려오면 이미지가 수 GB 커짐) - 여기 명시하면
+# 기본 PyPI 인덱스에서 재설치되어 그 목적이 무효화되므로 sentence-transformers만 적는다.
 sentence-transformers==3.4.1
 
 # LLM (6.6, RAG 챗봇은 LangChain으로 전환됨. 회의록 분석/기여도 보고서는 아직 직접 호출)
