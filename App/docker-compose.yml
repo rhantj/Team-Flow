@@ -67,6 +67,7 @@ services:
       SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-root}
       WORKFLOW_AI_FASTAPI_URL: http://backend-fastapi:8000
+      RAG_INTERNAL_API_KEY: ${RAG_INTERNAL_API_KEY}
       JWT_SECRET: ${JWT_SECRET}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
@@ -98,6 +99,9 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: redis://redis:6379/0
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # Spring(RagController) 외의 직접 호출로부터 /ai/rag/* 를 보호하는 서비스 간 공유 시크릿.
+      # backend-spring과 반드시 같은 값이어야 한다 (llm_rag_assistant/app/security.py 참고).
+      RAG_INTERNAL_API_KEY: ${RAG_INTERNAL_API_KEY}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       GENERATION_MODEL: ${GENERATION_MODEL:-gemma2}

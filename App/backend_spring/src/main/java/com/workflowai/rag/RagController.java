@@ -1,6 +1,7 @@
 package com.workflowai.rag;
 
 import com.workflowai.common.ApiResponse;
+import com.workflowai.security.CurrentUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
@@ -37,7 +38,12 @@ public class RagController {
         }
 
         try {
-            RagQueryResponse response = fastApiRagClient.query(request);
+            // user_id는 요청 바디를 신뢰하지 않고 인증 세션에서 직접 채운다 (본인 아닌 다른 사람의
+            // user_id를 흉내내 담당 업무를 조회하는 것을 방지).
+            RagQueryRequest authenticatedRequest = new RagQueryRequest(
+                request.project_id(), request.question(), CurrentUser.id()
+            );
+            RagQueryResponse response = fastApiRagClient.query(authenticatedRequest);
             return ResponseEntity.ok(ApiResponse.ok(response));
         } catch (Exception ex) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)

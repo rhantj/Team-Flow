@@ -51,6 +51,7 @@ spring:
 workflow:
   ai:
     base-url: ${WORKFLOW_AI_FASTAPI_URL:http://localhost:8000}
+    internal-key: ${RAG_INTERNAL_API_KEY}
   cors:
     allowed-origins: ${WORKFLOW_CORS_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
   jwt:

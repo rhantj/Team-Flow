@@ -6,14 +6,20 @@ from llm_rag_assistant.app.services.embedding_service import embed_text
 from llm_rag_assistant.app.services.vector_utils import to_vector_literal
 
 _INSERT_CHUNK_SQL = """
-INSERT INTO document_chunks (project_id, source_type, source_id, content, embedding)
-VALUES ($1, $2, $3, $4, $5::vector)
+INSERT INTO document_chunks (project_id, source_type, source_id, content, embedding, assignee_id)
+VALUES ($1, $2, $3, $4, $5::vector, $6)
 RETURNING id
+"""
+
+_UPDATE_ASSIGNEE_SQL = """
+UPDATE document_chunks
+SET assignee_id = $1
+WHERE project_id = $2 AND source_type = $3 AND source_id = $4
 """
 
 
 async def ingest_content(
-    pool, project_id: int, source_type: str, source_id: int, content: str
+    pool, project_id: int, source_type: str, source_id: int, content: str, assignee_id: int | None = None
 ) -> RagIngestResponse:
     chunks = chunk_text(content)
     if not chunks:
@@ -30,7 +36,15 @@ async def ingest_content(
                 source_id,
                 chunk,
                 to_vector_literal(embedding),
+                assignee_id,
             )
             chunk_ids.append(row["id"])
 
     return RagIngestResponse(chunk_ids=chunk_ids, chunk_count=len(chunk_ids))
+
+
+async def sync_assignee(pool, project_id: int, source_type: str, source_id: int, assignee_id: int | None) -> None:
+    """담당자가 바뀐 뒤에도 document_chunks.assignee_id가 낡은 채로 남아있지 않도록,
+    기존 청크(내용/임베딩은 그대로) 메타데이터만 갱신한다. 재임베딩이 필요 없어 저렴하다."""
+    async with pool.acquire() as conn:
+        await conn.execute(_UPDATE_ASSIGNEE_SQL, assignee_id, project_id, source_type, source_id)

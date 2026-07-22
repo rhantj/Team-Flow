@@ -427,7 +427,7 @@ public class MeetingAnalysisService {
             createdBy,
             position
         ));
-        ragIngestService.ingestBestEffort(task.getProjectId(), "task", task.getId(), buildTaskIngestContent(task));
+        ragIngestService.ingestBestEffort(task.getProjectId(), "task", task.getId(), buildTaskIngestContent(task), task.getAssigneeId());
 
         MeetingActionItem item = existingItem.orElseGet(() -> new MeetingActionItem(
             meetingId, todo.title(), todo.description(), todo.category(),
