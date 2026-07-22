@@ -36,8 +36,10 @@ async def assignee_sync(request: RagAssigneeSyncRequest, pool=Depends(get_pool))
 @router.post("/query", response_model=RagQueryResponse)
 async def query(request: RagQueryRequest, pool=Depends(get_pool)) -> RagQueryResponse:
     # 라우터 레벨의 verify_internal_api_key 의존성이 Spring(RagController) 외의 직접 호출을
-    # 차단하므로, project_id/user_id는 이제 Spring이 세션에서 검증/주입한 값만 도달한다
-    # (Spring RagController.query()가 CurrentUser.id()로 user_id를 덮어써서 보낸다).
+    # 차단하므로, 이 경로에 도달하는 project_id/user_id는 Spring이 검증/주입한 값이다:
+    #   - project_id: RagController.query()의 @PreAuthorize("@projectAccess.isMember(#request.project_id())")가
+    #     요청자가 해당 프로젝트 멤버가 아니면 컨트롤러 진입 전에 403으로 차단한다.
+    #   - user_id: RagController.query()가 요청 바디 값을 무시하고 CurrentUser.id()(인증 세션)로 덮어써서 보낸다.
     try:
         return await answer_question(pool, request.project_id, request.question, request.user_id)
     except (aiohttp.ClientError, RequestsHTTPError) as exc:
