@@ -1,9 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { TaskDetailPanel } from "./TaskDetailPanel";
 import type { Task } from "../libs/types/task";
-import { generateChecklist } from "../libs/utils/checklistApi";
+import { generateChecklistPreview, applyGeneratedChecklist } from "../libs/utils/checklistApi";
 
 vi.mock("../../global/hooks/useAuth", () => ({
   useAuth: () => ({ currentProjectId: 1, currentProject: { projectId: 1, projectTitle: "데모", role: "팀장" } }),
@@ -14,10 +14,8 @@ vi.mock("../libs/utils/checklistApi", () => ({
   createChecklistItem: vi.fn(),
   updateChecklistItem: vi.fn(),
   deleteChecklistItem: vi.fn(),
-  generateChecklist: vi.fn().mockResolvedValue([
-    { id: "2", label: "API 명세 확정", done: false },
-    { id: "3", label: "단위 테스트 작성", done: false },
-  ]),
+  generateChecklistPreview: vi.fn().mockResolvedValue({ titles: ["API 설계", "구현"], engine: "ollama" }),
+  applyGeneratedChecklist: vi.fn().mockResolvedValue([{ id: "9", label: "API 설계", done: false }]),
 }));
 
 vi.mock("../libs/utils/taskCommentApi", () => ({
@@ -39,7 +37,7 @@ function makeTask(): Task {
 }
 
 describe("TaskDetailPanel 체크리스트 자동 생성", () => {
-  it("appends generated items to the existing checklist", async () => {
+  it("opens the preview modal, shows generated titles, and applies the selected items", async () => {
     const onShowToast = vi.fn();
     render(
       <TaskDetailPanel
@@ -58,10 +56,16 @@ describe("TaskDetailPanel 체크리스트 자동 생성", () => {
     await userEvent.click(screen.getByTitle("더보기"));
     await userEvent.click(await screen.findByText("체크리스트 자동 생성"));
 
-    expect(await screen.findByText("API 명세 확정")).toBeInTheDocument();
-    expect(await screen.findByText("단위 테스트 작성")).toBeInTheDocument();
+    expect(generateChecklistPreview).toHaveBeenCalledWith("TF-01", 1);
+    expect(await screen.findByDisplayValue("API 설계")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("구현")).toBeInTheDocument();
     expect(screen.getByText("기존 항목")).toBeInTheDocument();
-    expect(generateChecklist).toHaveBeenCalledWith("TF-01", 1);
-    expect(onShowToast).toHaveBeenCalledWith("체크리스트 2개를 생성했습니다.");
+
+    await userEvent.click(screen.getByText("선택 항목 추가"));
+
+    expect(applyGeneratedChecklist).toHaveBeenCalledWith("TF-01", ["API 설계", "구현"], 1);
+    await waitFor(() => {
+      expect(onShowToast).toHaveBeenCalledWith("체크리스트 1개를 추가했습니다.");
+    });
   });
 });
