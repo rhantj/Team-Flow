@@ -34,6 +34,10 @@ interface RawContributionMemberScore {
   task_component: number;
   meeting_component: number;
   contribution_score: number;
+  anomaly_type: string;
+  task_count_active_rel: number;
+  difficulty_avg_rel: number;
+  overdue_count: number;
 }
 
 interface RawContributionScoreData {
@@ -49,6 +53,10 @@ export interface ContributionMemberScoreDto {
   taskComponent: number;
   meetingComponent: number;
   contributionScore: number;
+  anomalyType: string;
+  taskCountActiveRel: number;
+  difficultyAvgRel: number;
+  overdueCount: number;
 }
 
 export interface ContributionScoreResult {
@@ -69,6 +77,10 @@ export async function fetchContributionScore(projectId: number): Promise<Contrib
       taskComponent: m.task_component,
       meetingComponent: m.meeting_component,
       contributionScore: m.contribution_score,
+      anomalyType: m.anomaly_type,
+      taskCountActiveRel: m.task_count_active_rel,
+      difficultyAvgRel: m.difficulty_avg_rel,
+      overdueCount: m.overdue_count,
     })),
     note: data.note,
   };

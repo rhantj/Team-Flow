@@ -30,7 +30,7 @@ class ContributionScoreControllerTest {
         ContributionScoreResponseDto fastApiResponse = new ContributionScoreResponseDto(
             "1.0",
             1L,
-            List.of(new ContributionMemberScoreDto("3", 100.0, 80.0, 80.0, 86.7)),
+            List.of(new ContributionMemberScoreDto("3", 100.0, 80.0, 80.0, 86.7, "정상", 1.0, 1.0, 0)),
             null
         );
         when(fastApiContributionScoreClient.fetch(1L)).thenReturn(fastApiResponse);
@@ -46,7 +46,11 @@ class ContributionScoreControllerTest {
         mockMvc.perform(post("/api/v1/ai/contribution/score").contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.members[0].assignee_id").value("3"))
-            .andExpect(jsonPath("$.data.members[0].contribution_score").value(86.7));
+            .andExpect(jsonPath("$.data.members[0].contribution_score").value(86.7))
+            .andExpect(jsonPath("$.data.members[0].anomaly_type").value("정상"))
+            .andExpect(jsonPath("$.data.members[0].task_count_active_rel").value(1.0))
+            .andExpect(jsonPath("$.data.members[0].difficulty_avg_rel").value(1.0))
+            .andExpect(jsonPath("$.data.members[0].overdue_count").value(0));
     }
 
     @Test
