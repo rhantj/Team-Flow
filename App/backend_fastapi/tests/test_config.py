@@ -28,7 +28,16 @@ def test_settings_defaults_hf_embedding_model(monkeypatch: pytest.MonkeyPatch) -
 
     settings = Settings(_env_file=None)
 
-    assert settings.hf_embedding_model == "BAAI/bge-m3"
+    assert settings.hf_embedding_model == "rhantj/bge-m3-workflow-query-robust"
+
+
+def test_settings_defaults_hf_embedding_model_revision(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pw@localhost:5432/workflow")
+    monkeypatch.delenv("HF_EMBEDDING_MODEL_REVISION", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.hf_embedding_model_revision == "dc328732ab2c3330d38305199e26b2d060586af3"
 
 
 def test_settings_defaults_hf_rag_generation_model(monkeypatch: pytest.MonkeyPatch) -> None:
