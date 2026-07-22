@@ -24,6 +24,10 @@ class Settings(BaseSettings):
         validation_alias="HF_MEETING_ANALYSIS_MODEL",
     )
 
+    # Spring(RagController)만 RAG 라우터를 호출할 수 있도록 검증하는 서비스 간 공유 시크릿.
+    # 미설정 시 llm_rag_assistant/app/security.py가 모든 요청을 거부한다(fail-closed).
+    rag_internal_api_key: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -6,6 +6,7 @@ import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.NotificationService;
 import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.project.ProjectRole;
+import com.workflowai.rag.RagIngestService;
 import com.workflowai.security.CurrentUser;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
@@ -57,6 +58,7 @@ public class TaskController {
     private final ActivityService activityService;
     private final NotificationService notificationService;
     private final ProjectMemberRepository projectMemberRepository;
+    private final RagIngestService ragIngestService;
 
     public TaskController(
         TaskRepository taskRepository,
@@ -64,7 +66,8 @@ public class TaskController {
         DemoDataService demoDataService,
         ActivityService activityService,
         NotificationService notificationService,
-        ProjectMemberRepository projectMemberRepository
+        ProjectMemberRepository projectMemberRepository,
+        RagIngestService ragIngestService
     ) {
         this.taskRepository = taskRepository;
         this.userRepository = userRepository;
@@ -72,6 +75,7 @@ public class TaskController {
         this.activityService = activityService;
         this.notificationService = notificationService;
         this.projectMemberRepository = projectMemberRepository;
+        this.ragIngestService = ragIngestService;
     }
 
     // TODO: 로그인이 없어 활동 로그의 행위자를 항상 mock 사용자 "1"로 남긴다. 실제 인증이 붙으면 로그인 사용자로 교체.
@@ -262,6 +266,9 @@ public class TaskController {
             || !Objects.equals(priorityBefore, task.getPriority())
             || !Objects.equals(descriptionBefore, task.getDescription());
         if (assigneeChanged) {
+            // RAG 검색에서 "내가 담당한 업무"가 재배정 이후에도 옛 담당자에게 계속 잡히지
+            // 않도록, 이미 인제스트된 청크의 assignee_id 메타데이터를 동기화한다.
+            ragIngestService.syncAssigneeBestEffort(projectDbId, "task", task.getId(), task.getAssigneeId());
             activityService.record(
                 projectDbId, actorId, "ASSIGNEE_CHANGED", task.getId(),
                 "담당자를 '" + userName(task.getAssigneeId()) + "'(으)로 변경했습니다."

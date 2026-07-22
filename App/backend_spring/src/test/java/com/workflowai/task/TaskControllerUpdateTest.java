@@ -3,6 +3,7 @@ package com.workflowai.task;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -14,6 +15,7 @@ import com.workflowai.activity.ActivityService;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.NotificationService;
 import com.workflowai.project.ProjectMemberRepository;
+import com.workflowai.rag.RagIngestService;
 import com.workflowai.user.UserRepository;
 import java.time.LocalDate;
 import java.util.Optional;
@@ -47,6 +49,9 @@ class TaskControllerUpdateTest {
     @Mock
     private ProjectMemberRepository projectMemberRepository;
 
+    @Mock
+    private RagIngestService ragIngestService;
+
     private MockMvc mockMvc;
 
     @BeforeEach
@@ -54,7 +59,7 @@ class TaskControllerUpdateTest {
         mockMvc = MockMvcBuilders
             .standaloneSetup(new TaskController(
                 taskRepository, userRepository, demoDataService, activityService,
-                notificationService, projectMemberRepository
+                notificationService, projectMemberRepository, ragIngestService
             ))
             .build();
     }
@@ -136,6 +141,26 @@ class TaskControllerUpdateTest {
             .andExpect(status().isOk());
 
         verify(notificationService).notify(eq(5L), eq("TASK_ASSIGNED"), any(), any(), eq("task"), any());
+    }
+
+    @Test
+    void syncsRagAssigneeMetadataWhenAssigneeChanges() throws Exception {
+        // 담당자가 재배정된 뒤에도 RAG 검색이 옛 담당자에게 계속 걸리지 않도록,
+        // 기존 인제스트된 청크의 assignee_id를 동기화하는 호출이 나가야 한다.
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(taskRepository.findById(anyLong())).thenReturn(Optional.of(existingTask()));
+        when(demoDataService.resolveUserId(eq("2"))).thenReturn(5L);
+        when(taskRepository.save(any(Task.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        mockMvc.perform(patch("/api/v1/projects/demo-project/tasks/42")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"assigneeId\":\"2\"}"))
+            .andExpect(status().isOk());
+
+        // existingTask()는 id를 명시적으로 설정하지 않는 픽스처라 getId()가 null이다
+        // (Task 생성자의 첫 인자는 projectId). 이 테스트는 task.getId() 값 자체가 아니라
+        // syncAssigneeBestEffort가 새 담당자(5L)와 함께 실제로 호출되는지만 검증한다.
+        verify(ragIngestService).syncAssigneeBestEffort(eq(1L), eq("task"), isNull(), eq(5L));
     }
 
     @Test

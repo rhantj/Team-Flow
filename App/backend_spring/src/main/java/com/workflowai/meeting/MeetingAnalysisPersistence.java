@@ -73,7 +73,10 @@ public class MeetingAnalysisPersistence {
                 todo.evidence_text()
             ));
             if (actionItem != null) {
-                ragIngestService.ingestBestEffort(meeting.getProjectId(), "action_item", actionItem.getId(), buildActionItemIngestContent(actionItem));
+                ragIngestService.ingestBestEffort(
+                    meeting.getProjectId(), "action_item", actionItem.getId(),
+                    buildActionItemIngestContent(actionItem), actionItem.getFinalAssigneeId()
+                );
             }
         }
 

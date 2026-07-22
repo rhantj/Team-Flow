@@ -17,7 +17,10 @@ public class FastApiRagClient {
 
     private final RestClient restClient;
 
-    public FastApiRagClient(@Value("${workflow.ai.base-url}") String baseUrl) {
+    public FastApiRagClient(
+        @Value("${workflow.ai.base-url}") String baseUrl,
+        @Value("${workflow.ai.internal-key}") String internalKey
+    ) {
         HttpClient httpClient = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(CONNECT_TIMEOUT)
@@ -27,6 +30,9 @@ public class FastApiRagClient {
         this.restClient = RestClient.builder()
             .baseUrl(baseUrl)
             .requestFactory(requestFactory)
+            // FastAPI llm_rag_assistant/app/security.py의 verify_internal_api_key가 이 헤더로
+            // Spring 외의 직접 호출(docker-compose가 8000 포트를 노출함)을 차단한다.
+            .defaultHeader("X-Internal-Api-Key", internalKey)
             .build();
     }
 
@@ -46,5 +52,14 @@ public class FastApiRagClient {
             .body(request)
             .retrieve()
             .body(RagIngestResponse.class);
+    }
+
+    public void syncAssignee(RagAssigneeSyncRequest request) {
+        restClient.post()
+            .uri("/ai/rag/assignee-sync")
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(request)
+            .retrieve()
+            .toBodilessEntity();
     }
 }

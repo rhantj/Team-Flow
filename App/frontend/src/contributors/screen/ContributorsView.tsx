@@ -317,80 +317,80 @@ export function ContributorsView() {
                             isSelected ? "bg-blue-50" : "hover:bg-muted/40"
                           }`}
                         >
-                      <div className="flex items-center justify-center gap-2">
-                        <span className="w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold text-foreground bg-muted">
-                          {index + 1}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div
-                          className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0"
-                          style={{ background: report.color }}
-                        >
-                          {report.name[0]}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="text-sm font-bold text-foreground truncate">{report.name}</div>
-                          <div className="text-[11px] text-muted-foreground">{report.role}</div>
-                        </div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-lg font-bold" style={{ color: tone.color }}>{report.score}</div>
-                        <div className="text-[10px] font-semibold" style={{ color: tone.color }}>{tone.label}</div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setSelectedMemberId(report.memberId);
-                          setDrilldown({ mode: "tasks", memberId: report.memberId });
-                        }}
-                        className="w-full bg-transparent border-0 p-0 text-xs text-foreground text-center hover:underline cursor-pointer"
-                      >
-                        <span className="font-bold">{report.todoDone}</span>
-                        <span className="text-muted-foreground">/{report.todoTotal}</span>
-                        <span className="block text-[10px] text-muted-foreground">{taskRate}%</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setSelectedMemberId(report.memberId);
-                          setDrilldown({ mode: "meetings", memberId: report.memberId });
-                        }}
-                        className="w-full bg-transparent border-0 p-0 text-xs text-foreground text-center hover:underline cursor-pointer"
-                      >
-                        {attendanceByMemberId[report.memberId] ? (
-                          <>
-                            <span className="font-bold">{attendanceByMemberId[report.memberId].meetingsAttended}</span>
-                            <span className="text-muted-foreground">/{attendanceByMemberId[report.memberId].totalMeetings}회</span>
-                            <span className="block text-[10px] text-muted-foreground">{attendanceByMemberId[report.memberId].attendanceRate}%</span>
-                          </>
-                        ) : (
-                          <span className="font-bold">{report.meetings}회</span>
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setSelectedMemberId(report.memberId);
-                          setDrilldown({ mode: "workload", memberId: report.memberId });
-                        }}
-                        className="w-full bg-transparent border-0 p-0 text-xs text-foreground text-center hover:underline cursor-pointer"
-                      >
-                        <span className="font-bold">{report.categories.workload}</span>
-                      </button>
-                      <div className="text-center">
-                        <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full ${
-                          publicFlags[report.memberId]
-                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                            : "bg-slate-100 text-slate-500 border border-slate-200"
-                        }`}>
-                          {publicFlags[report.memberId] ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                          {publicFlags[report.memberId] ? "공개" : "비공개"}
-                        </span>
-                      </div>
+                          <div className="flex items-center justify-center gap-2">
+                            <span className="w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold text-foreground bg-muted">
+                              {index + 1}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div
+                              className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0"
+                              style={{ background: report.color }}
+                            >
+                              {report.name[0]}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-sm font-bold text-foreground truncate">{report.name}</div>
+                              <div className="text-[11px] text-muted-foreground">{report.role}</div>
+                            </div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-lg font-bold" style={{ color: tone.color }}>{report.score}</div>
+                            <div className="text-[10px] font-semibold" style={{ color: tone.color }}>{tone.label}</div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedMemberId(report.memberId);
+                              setDrilldown({ mode: "tasks", memberId: report.memberId });
+                            }}
+                            className="w-full bg-transparent border-0 p-0 text-xs text-foreground text-center hover:underline cursor-pointer"
+                          >
+                            <span className="font-bold">{report.todoDone}</span>
+                            <span className="text-muted-foreground">/{report.todoTotal}</span>
+                            <span className="block text-[10px] text-muted-foreground">{taskRate}%</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedMemberId(report.memberId);
+                              setDrilldown({ mode: "meetings", memberId: report.memberId });
+                            }}
+                            className="w-full bg-transparent border-0 p-0 text-xs text-foreground text-center hover:underline cursor-pointer"
+                          >
+                            {attendanceByMemberId[report.memberId] ? (
+                              <>
+                                <span className="font-bold">{attendanceByMemberId[report.memberId].meetingsAttended}</span>
+                                <span className="text-muted-foreground">/{attendanceByMemberId[report.memberId].totalMeetings}회</span>
+                                <span className="block text-[10px] text-muted-foreground">{attendanceByMemberId[report.memberId].attendanceRate}%</span>
+                              </>
+                            ) : (
+                              <span className="font-bold">{report.meetings}회</span>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedMemberId(report.memberId);
+                              setDrilldown({ mode: "workload", memberId: report.memberId });
+                            }}
+                            className="w-full bg-transparent border-0 p-0 text-xs text-foreground text-center hover:underline cursor-pointer"
+                          >
+                            <span className="font-bold">{report.categories.workload}</span>
+                          </button>
+                          <div className="text-center">
+                            <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full ${
+                              publicFlags[report.memberId]
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                : "bg-slate-100 text-slate-500 border border-slate-200"
+                            }`}>
+                              {publicFlags[report.memberId] ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                              {publicFlags[report.memberId] ? "공개" : "비공개"}
+                            </span>
+                          </div>
                         </div>
                       );
                     })}

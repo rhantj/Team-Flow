@@ -32,13 +32,13 @@ JOIN meeting_analysis a ON a.meeting_id = m.id
 """
 
 _ACTION_ITEMS_SQL = """
-SELECT ai.id, m.project_id, ai.title, ai.description, ai.basis
+SELECT ai.id, m.project_id, ai.title, ai.description, ai.basis, ai.final_assignee_id
 FROM meeting_action_items ai
 JOIN meetings m ON m.id = ai.meeting_id
 """
 
 _TASKS_SQL = """
-SELECT id, project_id, title, description
+SELECT id, project_id, title, description, assignee_id
 FROM tasks
 """
 
@@ -95,7 +95,7 @@ async def backfill_action_items(pool: asyncpg.Pool) -> int:
         content = _build_action_item_content(row["title"], row["description"], row["basis"])
         if not content or await _already_ingested(pool, row["project_id"], "action_item", row["id"]):
             continue
-        await ingest_content(pool, row["project_id"], "action_item", row["id"], content)
+        await ingest_content(pool, row["project_id"], "action_item", row["id"], content, row["final_assignee_id"])
         count += 1
     return count
 
@@ -108,7 +108,7 @@ async def backfill_tasks(pool: asyncpg.Pool) -> int:
         content = _build_task_content(row["title"], row["description"])
         if not content or await _already_ingested(pool, row["project_id"], "task", row["id"]):
             continue
-        await ingest_content(pool, row["project_id"], "task", row["id"], content)
+        await ingest_content(pool, row["project_id"], "task", row["id"], content, row["assignee_id"])
         count += 1
     return count
 

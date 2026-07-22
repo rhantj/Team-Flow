@@ -76,9 +76,17 @@ async def test_get_workload_score_includes_workload_evidence_fields():
         "ml_workload_score.app.services.workload_service.build_features",
     ) as mock_build_features:
         mock_build_features.return_value = pd.DataFrame([
-            {"assignee_id": "1", "task_count_total": 4, "completion_rate": 0.5,
-             "overload_score_0_100": 82.5, "is_anomaly": True, "anomaly_type": "과부하 의심",
-             "task_count_active_rel": 1.8, "difficulty_avg_rel": 1.4, "overdue_count": 2},
+            {
+                "assignee_id": "1",
+                "task_count_total": 4,
+                "completion_rate": 0.5,
+                "overload_score_0_100": 82.5,
+                "is_anomaly": True,
+                "anomaly_type": "과부하 의심",
+                "task_count_active_rel": 1.8,
+                "difficulty_avg_rel": 1.4,
+                "overdue_count": 2,
+            },
         ])
         with patch(
             "ml_workload_score.app.services.workload_service.detect_overload_anomalies_auto",

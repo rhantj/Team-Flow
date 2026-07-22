@@ -303,12 +303,15 @@ CREATE TABLE document_chunks (
     source_id   BIGINT NOT NULL,
     content     TEXT NOT NULL,
     embedding   JSONB,
+    assignee_id BIGINT NULL,
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_chunks_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    CONSTRAINT fk_chunks_project  FOREIGN KEY (project_id)  REFERENCES projects(id) ON DELETE CASCADE,
+    CONSTRAINT fk_chunks_assignee FOREIGN KEY (assignee_id) REFERENCES users(id)    ON DELETE SET NULL
 );
 COMMENT ON TABLE document_chunks IS 'RAG 임베딩 청크';
 COMMENT ON COLUMN document_chunks.source_type IS 'meeting/task/deliverable/github (폴리모픽)';
 COMMENT ON COLUMN document_chunks.embedding IS 'pgvector 미사용 시 JSONB로 임시 표현 (§6.4 참고)';
+COMMENT ON COLUMN document_chunks.assignee_id IS 'task/action_item 담당자 (RAG 질의 개인화용, 없으면 NULL)';
 
 CREATE TABLE assistant_messages (
     id         BIGSERIAL PRIMARY KEY,
@@ -438,8 +441,10 @@ COMMENT ON TABLE audit_logs IS '심사자 조회 등 감사 로그';
 --     source_type VARCHAR(20) NOT NULL,
 --     source_id   BIGINT NOT NULL,
 --     content     TEXT NOT NULL,
---     embedding   VECTOR(1536),  -- 임베딩 모델 차원 수에 맞게 조정
+--     embedding   VECTOR(1536),  -- 임베딩 모델 차원 수에 맞게 조정 (운영은 bge-m3라 1024)
+--     assignee_id BIGINT NULL,   -- task/action_item 담당자 (RAG 질의 개인화용)
 --     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
---     CONSTRAINT fk_chunks_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+--     CONSTRAINT fk_chunks_project  FOREIGN KEY (project_id)  REFERENCES projects(id) ON DELETE CASCADE,
+--     CONSTRAINT fk_chunks_assignee FOREIGN KEY (assignee_id) REFERENCES users(id)    ON DELETE SET NULL
 -- );
 -- ============================================================================
