@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router";
 import { Calendar, CheckCircle2, CheckSquare, Sparkles, TrendingUp } from "lucide-react";
 import { AIBox } from "../../../ai/components/AIBox";
+import { openAIAssistant } from "../../../ai/libs/utils/openAIAssistant";
 import { BackBtn } from "../../../global/component/BackBtn";
 import { CircleProgress } from "../../../global/component/CircleProgress";
 import { DetailStatCard } from "../../../global/component/DetailStatCard";
@@ -8,7 +9,7 @@ import { useAuth } from "../../../global/hooks/useAuth";
 import { useDashboardProgress } from "../../libs/hooks/useDashboardProgress";
 import { useDashboardSummary } from "../../libs/hooks/useDashboardSummary";
 import { useDashboardTasks } from "../../libs/hooks/useDashboardTasks";
-import { formatDashboardDueDate, normalizeTaskStatus, taskAssignee } from "../../libs/utils/dashboardTaskUtils";
+import { formatDashboardDueDate, isDelayRisk, normalizeTaskStatus, taskAssignee } from "../../libs/utils/dashboardTaskUtils";
 import { resolveMemberDisplay } from "../../libs/utils/memberDisplay";
 
 const CATEGORY_COLORS = ["#3B5BDB", "#7048E8", "#10B981", "#F59E0B", "#EF4444", "#06B6D4"];
@@ -30,6 +31,8 @@ export function ProgressPage() {
   const categoryBreakdown = progress?.categoryBreakdown ?? [];
   const milestones = progress?.milestones ?? [];
   const error = summaryError ?? progressError;
+  const delayRiskCount = progress?.delayRisks.filter(risk => isDelayRisk(risk.result)).length ?? 0;
+  const reportQuestion = `현재 프로젝트의 진행률 보고서를 생성해줘. 전체 업무 ${totalTasks}개 중 ${doneTasks}개가 완료되어 완료율은 ${progressPercent}%이고, 미완료 업무는 ${openTasks}개, 지연 주의·위험 업무는 ${delayRiskCount}개야. 핵심 현황과 일정 위험, 다음 액션을 요약해줘.`;
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-4" style={{ fontFamily: "'Inter','Noto Sans KR',sans-serif" }}>
@@ -39,8 +42,8 @@ export function ProgressPage() {
           <h1 className="text-xl font-bold text-foreground">진행률 분석</h1>
           <p className="text-sm text-muted-foreground mt-0.5">업무와 마일스톤 기준으로 완료 현황을 분석합니다.</p>
         </div>
-        <button onClick={() => navigate("/dashboard/dash-progress")} className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white rounded-lg" style={{ background: "linear-gradient(135deg,#7048E8,#4F6EF7)" }}>
-          <Sparkles className="w-4 h-4" /> AI 지연 분석
+        <button onClick={() => openAIAssistant(reportQuestion)} className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white rounded-lg" style={{ background: "linear-gradient(135deg,#7048E8,#4F6EF7)" }}>
+          <Sparkles className="w-4 h-4" /> 진행률 보고서 생성
         </button>
       </div>
 
@@ -53,7 +56,11 @@ export function ProgressPage() {
         <DetailStatCard label="마일스톤" value={loading ? "..." : `${milestones.length}개`} sub="등록된 마일스톤" color="#F59E0B" icon={Calendar} />
       </div>
 
-      <AIBox text="미구현된 기능입니다." />
+      <AIBox
+        text={`완료율 ${progressPercent}%와 지연 주의·위험 업무 ${delayRiskCount}개를 바탕으로 진행률 보고서를 생성할 수 있습니다.`}
+        onAsk={() => openAIAssistant(reportQuestion)}
+        actionLabel="보고서 생성"
+      />
 
       <div className="grid grid-cols-3 gap-4">
         <div className="bg-card rounded-xl p-5 border border-border shadow-sm flex flex-col items-center justify-center gap-4">
@@ -90,7 +97,7 @@ export function ProgressPage() {
               <span className="text-sm font-semibold text-foreground">AI 완료 예측</span>
             </div>
             <div className="p-3 rounded-lg bg-muted/40 border border-border text-xs text-muted-foreground leading-relaxed">
-              미구현된 기능입니다.
+              현재 완료율은 {progressPercent}%이며 지연 주의·위험 업무는 {delayRiskCount}개입니다. AI 보고서에서 일정 영향과 권장 조치를 함께 확인하세요.
             </div>
           </div>
           <div className="bg-card rounded-xl p-4 border border-border shadow-sm">

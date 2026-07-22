@@ -4,18 +4,21 @@ import { Sparkles } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
 import { AIAssistant } from "../../../ai/screen/AIAssistant";
+import {
+  OPEN_AI_ASSISTANT_EVENT,
+  type OpenAIAssistantEventDetail,
+} from "../../../ai/libs/utils/openAIAssistant";
 import type { Tab } from "../../../board/libs/types/task";
 import { useAuth } from "../../hooks/useAuth";
 import { useSidebarCollapsed } from "../../hooks/useSidebarCollapsed";
 import { useIsMobile } from "../ui/use-mobile";
-
-const OPEN_AI_ASSISTANT_EVENT = "workflow-ai:open-ai-assistant";
 
 export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const { projectRoles } = useAuth();
   const [aiOpen, setAIOpen] = useState(false);
+  const [pendingQuestion, setPendingQuestion] = useState<OpenAIAssistantEventDetail | null>(null);
   const { collapsed, toggle: toggleCollapsed } = useSidebarCollapsed();
   const isMobile = useIsMobile();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -25,10 +28,26 @@ export function AppShell() {
   }, [isMobile]);
 
   useEffect(() => {
-    const open = () => setAIOpen(true);
+    const open = (event: Event) => {
+      const detail = event instanceof CustomEvent
+        ? event.detail as OpenAIAssistantEventDetail | undefined
+        : undefined;
+      setPendingQuestion(detail ?? null);
+      setAIOpen(true);
+    };
     window.addEventListener(OPEN_AI_ASSISTANT_EVENT, open);
     return () => window.removeEventListener(OPEN_AI_ASSISTANT_EVENT, open);
   }, []);
+
+  const openAI = () => {
+    setPendingQuestion(null);
+    setAIOpen(true);
+  };
+
+  const closeAI = () => {
+    setAIOpen(false);
+    setPendingQuestion(null);
+  };
 
   const activeTab = (location.pathname.split("/").filter(Boolean)[0] ?? "dashboard") as Tab;
   const isJudge = projectRoles.length > 0 && projectRoles.every(pr => pr.role === "심사자");
@@ -62,7 +81,7 @@ export function AppShell() {
         <Sidebar
           active={activeTab}
           onSelect={handleSelect}
-          onAI={() => setAIOpen(true)}
+          onAI={openAI}
           collapsed={isMobile ? false : collapsed}
           onToggleCollapsed={toggleCollapsed}
           showCollapseToggle={!isMobile}
@@ -97,7 +116,7 @@ export function AppShell() {
 
       {/* AI floating button */}
       {!isJudge && !aiOpen && (
-        <button onClick={() => setAIOpen(true)}
+        <button onClick={openAI}
           className="fixed bottom-6 right-6 w-14 h-14 rounded-2xl shadow-xl flex items-center justify-center text-white transition-transform hover:scale-105 z-40"
           style={{ background: "linear-gradient(135deg, #7048E8 0%, #4F6EF7 100%)" }}>
           <Sparkles className="w-6 h-6" />
@@ -107,8 +126,8 @@ export function AppShell() {
       {/* AI panel overlay */}
       {aiOpen && (
         <>
-          <div className="fixed inset-0 bg-black/10 z-40" onClick={() => setAIOpen(false)} />
-          <AIAssistant onClose={() => setAIOpen(false)} />
+          <div className="fixed inset-0 bg-black/10 z-40" onClick={closeAI} />
+          <AIAssistant onClose={closeAI} pendingQuestion={pendingQuestion} />
         </>
       )}
     </div>

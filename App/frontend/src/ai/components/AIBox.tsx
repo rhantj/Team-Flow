@@ -1,6 +1,12 @@
 import { Sparkles } from "lucide-react";
 
-export function AIBox({ text, onAsk }: { text: string; onAsk?: () => void }) {
+interface AIBoxProps {
+  text: string;
+  onAsk?: () => void;
+  actionLabel?: string;
+}
+
+export function AIBox({ text, onAsk, actionLabel = "AI에게 질문" }: AIBoxProps) {
   return (
     <div className="rounded-xl p-4 flex items-start gap-3 border border-purple-200" style={{ background: "rgba(112,72,232,0.05)" }}>
       <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
@@ -15,7 +21,7 @@ export function AIBox({ text, onAsk }: { text: string; onAsk?: () => void }) {
         <button onClick={onAsk}
           className="text-xs font-semibold px-2.5 py-1 rounded-lg shrink-0 transition-opacity hover:opacity-80"
           style={{ background: "rgba(112,72,232,0.15)", color: "#7048E8" }}>
-          AI에게 질문
+          {actionLabel}
         </button>
       )}
     </div>

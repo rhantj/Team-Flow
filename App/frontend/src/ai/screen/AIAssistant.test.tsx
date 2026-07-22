@@ -18,6 +18,7 @@ describe("AIAssistant", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     mockCurrentProjectId = 1;
+    sessionStorage.clear();
   });
 
   it("renders initial assistant greeting", () => {
@@ -60,5 +61,27 @@ describe("AIAssistant", () => {
 
     expect(apiFetch).not.toHaveBeenCalled();
     expect(screen.getByText("아직 연결된 프로젝트가 없습니다. 프로젝트를 만들고 회의록을 업로드한 뒤 다시 질문해주세요.")).toBeInTheDocument();
+  });
+
+  it("automatically sends a pending dashboard question exactly once", async () => {
+    vi.mocked(apiFetch).mockResolvedValue({ answer: "추천 답변", sources: [] });
+
+    const { rerender } = render(
+      <AIAssistant
+        onClose={() => {}}
+        pendingQuestion={{ question: "블로커 해결 방법을 추천해줘", requestId: 101 }}
+      />
+    );
+
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("블로커 해결 방법을 추천해줘")).toBeInTheDocument();
+
+    rerender(
+      <AIAssistant
+        onClose={() => {}}
+        pendingQuestion={{ question: "블로커 해결 방법을 추천해줘", requestId: 101 }}
+      />
+    );
+    expect(apiFetch).toHaveBeenCalledTimes(1);
   });
 });

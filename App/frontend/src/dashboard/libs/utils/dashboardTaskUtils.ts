@@ -30,6 +30,48 @@ export function daysUntilDue(dueDate: string | null | undefined): number | null 
   return Math.ceil((due.getTime() - today.getTime()) / 86400000);
 }
 
+export function formatDDay(dueDate: string | null | undefined): string {
+  const days = daysUntilDue(dueDate);
+  if (days == null) return "미정";
+  if (days === 0) return "D-Day";
+  return days > 0 ? `D-${days}` : `D+${Math.abs(days)}`;
+}
+
+function parseLocalDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  const parsed = dateOnly
+    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+    : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/** 프로젝트 기간 중 오늘까지 지난 비율을 0~100%로 환산한다. */
+export function expectedProgressPercent(
+  projectCreatedAt: string | null | undefined,
+  projectDeadline: string | null | undefined,
+  now = Date.now(),
+): number | null {
+  const startedAt = parseLocalDate(projectCreatedAt);
+  const deadline = parseLocalDate(projectDeadline);
+  if (!startedAt || !deadline || deadline.getTime() <= startedAt.getTime()) return null;
+  const elapsedRatio = (now - startedAt.getTime()) / (deadline.getTime() - startedAt.getTime());
+  return Math.round(Math.min(Math.max(elapsedRatio, 0), 1) * 100);
+}
+
+export function isDangerDelayRisk(result: string): boolean {
+  const normalized = result.trim().toLowerCase();
+  return result.includes("위험") || normalized.includes("danger") || normalized.includes("high");
+}
+
+export function isDelayRisk(result: string): boolean {
+  const normalized = result.trim().toLowerCase();
+  return isDangerDelayRisk(result)
+    || result.includes("주의")
+    || normalized.includes("warning")
+    || normalized.includes("caution");
+}
+
 /** ISO 날짜/일시 문자열부터 지금까지 경과한 시간을 "일" 단위로 내림 계산한다.
  * 캘린더 날짜 경계가 아니라 실제 경과 시간 기준(체류시간 근사 — 백엔드 ML 피처
  * hours_in_current_status와 동일한 방식)이라 "3일 이상"류 임계값 판정에 적합하다. */
@@ -59,7 +101,7 @@ export function formatRelativeDate(dateStr: string | null | undefined): string {
 export function sourceLabel(sourceType: string | null | undefined): string {
   if (!sourceType) return "직접 생성";
   const normalized = sourceType.toUpperCase();
-  if (normalized.includes("MEETING")) return "미구현된 기능입니다.";
+  if (normalized.includes("MEETING")) return "회의록";
   if (normalized.includes("GITHUB")) return "GitHub";
   if (normalized.includes("AI")) return "AI";
   if (normalized.includes("MANUAL")) return "직접 생성";

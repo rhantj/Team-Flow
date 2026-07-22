@@ -1,13 +1,20 @@
 import { useNavigate } from "react-router";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { AlertTriangle, Calendar, Clock, FileText, Loader2, ShieldAlert, Sparkles, TrendingUp } from "lucide-react";
+import { AlertTriangle, Calendar, Clock, FileText, Loader2, ShieldAlert, Sparkles, Target, TrendingUp } from "lucide-react";
 import { AIBox } from "../../../ai/components/AIBox";
+import { openAIAssistant } from "../../../ai/libs/utils/openAIAssistant";
 import { BackBtn } from "../../../global/component/BackBtn";
 import { DetailStatCard } from "../../../global/component/DetailStatCard";
 import type { TaskStatus } from "../../../board/libs/types/task";
 import { useAuth } from "../../../global/hooks/useAuth";
 import { useDashboardProgress } from "../../libs/hooks/useDashboardProgress";
-import { formatDashboardDueDate } from "../../libs/utils/dashboardTaskUtils";
+import {
+  expectedProgressPercent,
+  formatDashboardDueDate,
+  formatDDay,
+  isDangerDelayRisk,
+  isDelayRisk,
+} from "../../libs/utils/dashboardTaskUtils";
 
 const CATEGORY_COLORS = ["#3B5BDB", "#7048E8", "#10B981", "#F59E0B", "#EF4444", "#06B6D4"];
 
@@ -23,11 +30,6 @@ function normalizeMilestoneStatus(status: string): TaskStatus {
   return normalized in MILESTONE_STATUS_MAP ? normalized : "todo";
 }
 
-function isDangerResult(result: string) {
-  const normalized = result.toLowerCase();
-  return result.includes("위험") || normalized.includes("danger") || normalized.includes("high");
-}
-
 export function DashProgressPage() {
   const { currentProjectId } = useAuth();
   const navigate = useNavigate();
@@ -38,7 +40,7 @@ export function DashProgressPage() {
   const totalTasks = progress?.totalTasks ?? 0;
   const doneTasks = progress?.doneTasks ?? 0;
   const progressPercent = progress?.progressPercent ?? 0;
-  const delayRisks = progress?.delayRisks ?? [];
+  const delayRisks = progress?.delayRisks.filter(risk => isDelayRisk(risk.result)) ?? [];
   const hasPredictions = progress?.hasPredictions ?? false;
   const categories = progress?.categoryBreakdown ?? [];
   const milestones = progress?.milestones ?? [];
@@ -47,6 +49,12 @@ export function DashProgressPage() {
     완료: item.done,
     미완료: Math.max(item.total - item.done, 0),
   }));
+  const expectedProgress = expectedProgressPercent(progress?.projectCreatedAt, progress?.projectDeadline);
+  const planGap = expectedProgress == null ? null : progressPercent - expectedProgress;
+  const planGapLabel = planGap == null ? "-" : `${planGap > 0 ? "+" : ""}${planGap}%p`;
+  const planGapColor = planGap == null ? "#8892A4" : planGap < 0 ? "#EF4444" : planGap > 0 ? "#10B981" : "#8892A4";
+  const projectDDay = formatDDay(progress?.projectDeadline);
+  const reportQuestion = `현재 프로젝트의 전체 진행률 보고서를 생성해줘. 실제 완료율은 ${progressPercent}%, 계획상 예상 진행률은 ${expectedProgress ?? "미정"}%, 지연 주의·위험 업무는 ${delayRisks.length}개, 프로젝트 마감은 ${projectDDay}야. 계획 대비 차이와 주요 위험, 권장 조치를 정리해줘.`;
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-4" style={{ fontFamily: "'Inter','Noto Sans KR',sans-serif" }}>
@@ -58,7 +66,7 @@ export function DashProgressPage() {
         </div>
         <div className="flex items-center gap-2">
           <button onClick={onGoUrgent} className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-red-200 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors"><AlertTriangle className="w-3.5 h-3.5" />마감 업무</button>
-          <button className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><FileText className="w-3.5 h-3.5" />리포트</button>
+          <button onClick={() => openAIAssistant(reportQuestion)} className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><FileText className="w-3.5 h-3.5" />진행률 보고서</button>
           <button onClick={() => runDelayRiskAnalysis()} disabled={refreshing || currentProjectId == null} className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-white rounded-lg disabled:opacity-60" style={{ background: "linear-gradient(135deg,#7048E8,#4F6EF7)" }}>
             {refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
             AI 지연 위험 분석
@@ -68,14 +76,33 @@ export function DashProgressPage() {
 
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{error}</div>}
 
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-5 gap-3">
         <DetailStatCard label="전체 완료율" value={loading ? "..." : `${progressPercent}%`} sub={loading ? "불러오는 중" : `${doneTasks} / ${totalTasks} 완료`} color="#3B5BDB" icon={TrendingUp} />
-        <DetailStatCard label="미완료 업무" value={loading ? "..." : `${Math.max(totalTasks - doneTasks, 0)}개`} sub="완료 전 상태" color="#F59E0B" icon={AlertTriangle} />
-        <DetailStatCard label="지연 위험 업무" value={loading ? "..." : `${delayRisks.length}개`} sub={hasPredictions ? "AI 분석 결과" : "분석 필요"} color="#EF4444" icon={Clock} />
-        <DetailStatCard label="마일스톤" value={loading ? "..." : `${milestones.length}개`} sub="등록된 일정" color="#7048E8" icon={Calendar} />
+        <DetailStatCard label="계획 대비" value={loading ? "..." : planGapLabel} sub={expectedProgress == null ? "프로젝트 일정 미정" : `예상 ${expectedProgress}% · 실제 ${progressPercent}%`} color={planGapColor} icon={Target} />
+        <DetailStatCard label="지연 업무" value={loading ? "..." : `${delayRisks.length}개`} sub={hasPredictions ? "주의·위험 예측" : "분석 필요"} color="#EF4444" icon={Clock} />
+        <DetailStatCard label="마감 D-day" value={loading ? "..." : projectDDay} sub={formatDashboardDueDate(progress?.projectDeadline)} color="#7048E8" icon={Calendar} />
+        <div className="bg-card rounded-xl p-4 shadow-sm border border-border">
+          <div className="text-xs font-medium text-foreground mb-2">상태 범례</div>
+          <div className="space-y-1.5">
+            {[
+              { label: "정상", color: "#10B981" },
+              { label: "주의", color: "#F59E0B" },
+              { label: "위험", color: "#EF4444" },
+            ].map(item => (
+              <div key={item.label} className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                <span className="w-2 h-2 rounded-full shrink-0" style={{ background: item.color }} />
+                <span>{item.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
-      <AIBox text="미구현된 기능입니다." />
+      <AIBox
+        text="계획 대비 진행률과 지연 예측을 바탕으로 전체 진행률 보고서와 다음 액션을 생성할 수 있습니다."
+        onAsk={() => openAIAssistant(reportQuestion)}
+        actionLabel="보고서 생성"
+      />
 
       <div className="bg-card rounded-xl border border-border shadow-sm p-5">
         <div className="flex items-center justify-between mb-3">
@@ -98,7 +125,7 @@ export function DashProgressPage() {
           <div className="space-y-2">
             {delayRisks.map(risk => (
               <div key={risk.taskId} className="flex items-center gap-3 px-3 py-2 rounded-lg border border-border">
-                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${isDangerResult(risk.result) ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${isDangerDelayRisk(risk.result) ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
                   {risk.result}
                 </span>
                 <div className="flex-1 min-w-0">

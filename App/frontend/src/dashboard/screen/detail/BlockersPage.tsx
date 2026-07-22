@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router";
 import { AlertCircle, AlertTriangle, Calendar, CheckCheck, Clock, Layers, MessageSquare, Plus, Sparkles } from "lucide-react";
 import { AIBox } from "../../../ai/components/AIBox";
+import { openAIAssistant } from "../../../ai/libs/utils/openAIAssistant";
 import { BackBtn } from "../../../global/component/BackBtn";
 import { DetailStatCard } from "../../../global/component/DetailStatCard";
 import { PriorityBadge } from "../../../board/components/PriorityBadge";
@@ -8,8 +9,10 @@ import { useAuth } from "../../../global/hooks/useAuth";
 import { useDashboardProgress } from "../../libs/hooks/useDashboardProgress";
 import { useDashboardTasks } from "../../libs/hooks/useDashboardTasks";
 import {
+  daysSince,
   daysUntilDue,
   formatDashboardDueDate,
+  isDelayRisk,
   normalizePriority,
   normalizeTaskStatus,
   sourceLabel,
@@ -24,11 +27,16 @@ export function BlockersPage() {
   const onBack = () => navigate("/dashboard");
   const blockedTasks = tasks.filter(task => normalizeTaskStatus(task.status) === "blocked");
   const highPriorityCount = blockedTasks.filter(task => normalizePriority(task.priority) === "high").length;
-  const dueSoonCount = blockedTasks.filter(task => {
-    const days = daysUntilDue(task.dueDate);
-    return days != null && days <= 7;
-  }).length;
-  const riskTaskIds = new Set(progress?.delayRisks.map(risk => risk.taskId) ?? []);
+  const riskPredictions = progress?.delayRisks.filter(risk => isDelayRisk(risk.result)) ?? [];
+  const riskTaskIds = new Set(riskPredictions.map(risk => risk.taskId));
+  const overdueRiskDelayDays = riskPredictions
+    .map(risk => daysUntilDue(risk.dueDate))
+    .filter((days): days is number => days != null && days < 0)
+    .map(days => -days);
+  const averageDelayDays = overdueRiskDelayDays.length === 0
+    ? 0
+    : Math.round(overdueRiskDelayDays.reduce((sum, days) => sum + days, 0) / overdueRiskDelayDays.length);
+  const blockerQuestion = `현재 블로커 ${blockedTasks.length}개의 해결 방법을 추천해줘. 높은 우선순위 블로커는 ${highPriorityCount}개이고, 마감일을 넘긴 지연 주의·위험 업무의 평균 지연은 ${averageDelayDays}일이야. 우선순위와 구체적인 해결 순서를 제안해줘.`;
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-4" style={{ fontFamily: "'Inter','Noto Sans KR',sans-serif" }}>
@@ -48,17 +56,21 @@ export function BlockersPage() {
       <div className="grid grid-cols-4 gap-3">
         <DetailStatCard label="현재 블로커" value={loading ? "..." : blockedTasks.length} sub="해결 대기" color="#EF4444" icon={AlertTriangle} />
         <DetailStatCard label="높은 우선순위" value={loading ? "..." : highPriorityCount} sub="즉시 조치 필요" color="#EF4444" icon={AlertCircle} />
-        <DetailStatCard label="7일 내 마감" value={loading ? "..." : dueSoonCount} sub="일정 영향 가능" color="#F59E0B" icon={Clock} />
-        <DetailStatCard label="AI 위험 감지" value="미구현" sub="예측 결과" color="#7048E8" icon={Layers} />
+        <DetailStatCard label="평균 지연" value={loading ? "..." : `${averageDelayDays}일`} sub={overdueRiskDelayDays.length === 0 ? "지연 대상 없음" : `주의·위험 ${overdueRiskDelayDays.length}건 기준`} color="#F97316" icon={Clock} />
+        <DetailStatCard label="AI 위험 감지" value={loading ? "..." : riskPredictions.length} sub="전체 업무 예측 결과" color="#7048E8" icon={Layers} />
       </div>
 
-      <AIBox text="미구현된 기능입니다." />
+      <AIBox
+        text="블로커의 우선순위와 상태 체류시간을 바탕으로 해결 순서와 다음 액션을 추천받을 수 있습니다."
+        onAsk={() => openAIAssistant(blockerQuestion)}
+        actionLabel="AI 해결 방법 추천"
+      />
 
       <div className="space-y-4">
         {blockedTasks.map((task, index) => {
           const assignee = taskAssignee(task, index);
           const priority = normalizePriority(task.priority);
-          const days = daysUntilDue(task.dueDate);
+          const statusDays = daysSince(task.updatedAt) ?? 0;
           const isRisk = riskTaskIds.has(task.id);
           return (
             <div key={task.id} className="bg-card rounded-xl border-2 border-red-200 shadow-sm overflow-hidden">
@@ -72,13 +84,13 @@ export function BlockersPage() {
                       <PriorityBadge priority={priority} />
                       <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{task.category ?? "미분류"}</span>
                       <span className="text-[10px] font-mono text-muted-foreground">{task.id}</span>
-                      {isRisk && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200">지연 위험</span>}
+                      {isRisk && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200">지연 위험</span>}
                     </div>
                     <div className="text-sm font-semibold text-foreground">{task.title}</div>
                   </div>
                 </div>
                 <span className="text-xs font-medium px-2.5 py-1 rounded-lg bg-red-100 text-red-700 shrink-0 whitespace-nowrap">
-                  {days == null ? "마감 미정" : days < 0 ? `D+${Math.abs(days)}` : `D-${days}`}
+                  {statusDays}일째 지속
                 </span>
               </div>
 
@@ -127,8 +139,8 @@ export function BlockersPage() {
                   <button onClick={() => navigate("/board")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
                     <MessageSquare className="w-3.5 h-3.5" /> 댓글
                   </button>
-                  <button onClick={() => navigate("/dashboard/dash-progress")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg ml-auto transition-opacity hover:opacity-80" style={{ background: "rgba(112,72,232,0.12)", color: "#7048E8" }}>
-                    <Sparkles className="w-3.5 h-3.5" /> AI 분석 보기
+                  <button onClick={() => openAIAssistant(`블로커 업무 '${task.title}'의 해결 방법을 추천해줘. 현재 ${statusDays}일째 지속 중이고 담당자는 ${assignee.name}, 우선순위는 ${priority}야. 업무 설명: ${task.description || "등록된 설명 없음"}`)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg ml-auto transition-opacity hover:opacity-80" style={{ background: "rgba(112,72,232,0.12)", color: "#7048E8" }}>
+                    <Sparkles className="w-3.5 h-3.5" /> AI 해결 방법 추천
                   </button>
                 </div>
               </div>

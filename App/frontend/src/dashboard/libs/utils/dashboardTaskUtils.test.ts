@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { daysSince, formatDashboardDueDate, formatRelativeDate } from "./dashboardTaskUtils";
+import {
+  daysSince,
+  expectedProgressPercent,
+  formatDashboardDueDate,
+  formatDDay,
+  formatRelativeDate,
+  isDangerDelayRisk,
+  isDelayRisk,
+} from "./dashboardTaskUtils";
 
 describe("formatDashboardDueDate", () => {
   it("formats a date-only string as MM.DD", () => {
@@ -55,5 +63,40 @@ describe("daysSince / formatRelativeDate", () => {
 
   it("formatRelativeDate returns 미정 when null", () => {
     expect(formatRelativeDate(null)).toBe("미정");
+  });
+});
+
+describe("dashboard schedule helpers", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-21T12:00:00"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("formats project deadlines as D-Day labels", () => {
+    expect(formatDDay("2026-07-21")).toBe("D-Day");
+    expect(formatDDay("2026-07-24")).toBe("D-3");
+    expect(formatDDay("2026-07-19")).toBe("D+2");
+    expect(formatDDay(null)).toBe("미정");
+  });
+
+  it("calculates expected progress from the project schedule", () => {
+    expect(expectedProgressPercent("2026-07-01", "2026-07-31", new Date("2026-07-16T00:00:00").getTime())).toBe(50);
+    expect(expectedProgressPercent("2026-07-01", "2026-07-31", new Date("2026-06-01T00:00:00").getTime())).toBe(0);
+    expect(expectedProgressPercent("2026-07-01", "2026-07-31", new Date("2026-08-01T00:00:00").getTime())).toBe(100);
+    expect(expectedProgressPercent(null, "2026-07-31")).toBeNull();
+  });
+});
+
+describe("delay risk result helpers", () => {
+  it("distinguishes warning/danger predictions from normal results", () => {
+    expect(isDelayRisk("주의")).toBe(true);
+    expect(isDelayRisk("위험")).toBe(true);
+    expect(isDelayRisk("정상")).toBe(false);
+    expect(isDangerDelayRisk("주의")).toBe(false);
+    expect(isDangerDelayRisk("위험")).toBe(true);
   });
 });

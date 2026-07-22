@@ -24,10 +24,9 @@ import type { DetailPage } from "../../board/libs/types/task";
 import { useDashboardProgress } from "../libs/hooks/useDashboardProgress";
 import { useDashboardSummary } from "../libs/hooks/useDashboardSummary";
 import { activityMessage, activityTypeLabel, formatRelativeTime } from "../libs/utils/activityDisplay";
-import { formatDashboardDueDate, normalizeTaskStatus } from "../libs/utils/dashboardTaskUtils";
+import { formatDashboardDueDate, isDelayRisk, normalizeTaskStatus } from "../libs/utils/dashboardTaskUtils";
 import { resolveMemberDisplay } from "../libs/utils/memberDisplay";
-
-const OPEN_AI_ASSISTANT_EVENT = "workflow-ai:open-ai-assistant";
+import { openAIAssistant } from "../../ai/libs/utils/openAIAssistant";
 
 function EmptyState({ children }: { children: string }) {
   return <div className="py-8 text-center text-xs text-muted-foreground">{children}</div>;
@@ -56,12 +55,14 @@ export function DashboardView() {
     done: item.done,
     remaining: Math.max(item.total - item.done, 0),
   })) ?? [];
+  const delayRiskCount = progress?.delayRisks.filter(risk => isDelayRisk(risk.result)).length ?? 0;
+  const dashboardQuestion = `현재 프로젝트 대시보드를 요약해줘. 전체 업무 ${totalTasks}개, 완료 ${doneTasks}개, 완료율 ${progressPct}%, 블로커 ${blockedTasks}개, 진행 중 ${inProgressTasks}개, 지연 주의·위험 업무 ${delayRiskCount}개야. 가장 먼저 처리할 일과 다음 액션을 알려줘.`;
 
   const quickActions = [
     { label: "업무 추가", icon: Plus, color: "#3B5BDB", onClick: () => navigate("/board?openAdd=1") },
     { label: "회의록 업로드", icon: Upload, color: "#7048E8", onClick: () => navigate("/meetings?upload=1") },
     ...(deliverablesActive ? [{ label: "산출물", icon: Package, color: "#0F766E", onClick: () => navigate("/deliverables") }] : []),
-    { label: "AI 어시스턴트", icon: Sparkles, color: "#F59E0B", onClick: () => window.dispatchEvent(new Event(OPEN_AI_ASSISTANT_EVENT)) },
+    { label: "AI 어시스턴트", icon: Sparkles, color: "#F59E0B", onClick: () => openAIAssistant() },
     { label: "업무 보드", icon: Columns3, color: "#0EA5E9", onClick: () => navigate("/board") },
     { label: "전체 업무", icon: Users, color: "#EC4899", onClick: () => navigate("/dashboard/all-tasks") },
     { label: "마감 임박", icon: Clock, color: "#EF4444", onClick: () => navigate("/dashboard/urgent") },
@@ -89,8 +90,15 @@ export function DashboardView() {
         </div>
         <div className="flex-1">
           <div className="text-sm font-semibold text-foreground">AI 추천 액션</div>
-          <div className="text-xs text-muted-foreground mt-0.5">미구현된 기능입니다.</div>
+          <div className="text-xs text-muted-foreground mt-0.5">
+            {blockedTasks > 0
+              ? `블로커 ${blockedTasks}개와 지연 주의·위험 업무 ${delayRiskCount}개를 우선 점검해 보세요.`
+              : `완료율 ${progressPct}% 기준으로 다음 우선순위와 일정 위험을 점검할 수 있습니다.`}
+          </div>
         </div>
+        <button onClick={() => openAIAssistant(dashboardQuestion)} className="text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0 transition-opacity hover:opacity-80" style={{ background: "rgba(112,72,232,0.15)", color: "#7048E8" }}>
+          AI에게 질문
+        </button>
       </div>
 
       <div className="bg-card rounded-xl p-4 shadow-sm border border-border">
