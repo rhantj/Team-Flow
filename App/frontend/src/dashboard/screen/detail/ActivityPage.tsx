@@ -48,11 +48,11 @@ function isToday(iso: string | null | undefined) {
   return date.toDateString() === today.toDateString();
 }
 
-function isThisWeek(iso: string | null | undefined) {
+function withinDays(iso: string | null | undefined, days: number) {
   if (!iso) return false;
   const date = new Date(iso).getTime();
   if (Number.isNaN(date)) return false;
-  return Date.now() - date <= 7 * 86400000;
+  return Date.now() - date <= days * 86400000;
 }
 
 export function ActivityPage() {
@@ -80,7 +80,7 @@ export function ActivityPage() {
   }, [activities, memberFilter, search, typeFilter]);
 
   const todayCount = activities.filter(a => isToday(a.createdAt)).length;
-  const weekCount = activities.filter(a => isThisWeek(a.createdAt)).length;
+  const weekCount = activities.filter(a => withinDays(a.createdAt, 5)).length;
   const taskCount = activities.filter(a => matchesTypeFilter(a.type, "업무")).length;
   const aiCount = activities.filter(a => normalizeActivityType(a.type) === "ai").length;
 
@@ -90,7 +90,7 @@ export function ActivityPage() {
         <div>
           <BackBtn onBack={onBack} />
           <h1 className="text-xl font-bold text-foreground">최근 활동</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Supabase activities 테이블에 기록된 프로젝트 활동입니다.</p>
+          <p className="text-sm text-muted-foreground mt-0.5">팀 전체 활동을 타임라인으로 확인하고 중요 변경사항을 파악합니다.</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => refetch()} className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
@@ -106,9 +106,9 @@ export function ActivityPage() {
 
       <div className="grid grid-cols-4 gap-3">
         <DetailStatCard label="오늘 활동" value={loading ? "..." : todayCount} sub="오늘 기준" color="#3B5BDB" icon={Zap} />
-        <DetailStatCard label="최근 7일" value={loading ? "..." : weekCount} sub="일주일 기준" color="#7048E8" icon={TrendingUp} />
+        <DetailStatCard label="이번 주 전체" value={loading ? "..." : weekCount} sub="최근 5일 기준" color="#7048E8" icon={TrendingUp} />
         <DetailStatCard label="업무 활동" value={loading ? "..." : taskCount} sub="생성/변경" color="#10B981" icon={RefreshCw} />
-        <DetailStatCard label="AI 활동" value={loading ? "..." : aiCount} sub="자동 분석" color="#7048E8" icon={Sparkles} />
+        <DetailStatCard label="AI 생성" value={loading ? "..." : aiCount} sub="자동 생성 항목" color="#7048E8" icon={Sparkles} />
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -173,21 +173,25 @@ export function ActivityPage() {
           <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
             <div className="flex items-center gap-2 px-4 py-3 border-b border-border" style={{ background: "rgba(112,72,232,0.05)" }}>
               <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: "linear-gradient(135deg,#7048E8,#4F6EF7)" }}><Sparkles className="w-3 h-3 text-white" /></div>
-              <span className="text-sm font-semibold text-foreground">활동 요약</span>
+              <span className="text-sm font-semibold text-foreground">AI 주간 활동 요약</span>
             </div>
             <div className="p-4 space-y-3 text-xs text-muted-foreground leading-relaxed">
               <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 text-blue-800">
-                <div className="font-semibold mb-1">최근 7일</div>
-                총 {weekCount}건의 활동이 기록되었습니다.
+                <div className="font-semibold mb-1">핵심 요약</div>
+                미구현된 기능입니다.
               </div>
               <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800">
-                <div className="font-semibold mb-1">업무 변경</div>
-                업무 관련 활동은 {taskCount}건입니다.
+                <div className="font-semibold mb-1">주요 변경사항</div>
+                미구현된 기능입니다.
+              </div>
+              <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800">
+                <div className="font-semibold mb-1">권장 액션</div>
+                미구현된 기능입니다.
               </div>
             </div>
           </div>
           <div className="bg-card rounded-xl border border-border shadow-sm p-4">
-            <div className="text-sm font-semibold text-foreground mb-3">담당자별 활동량</div>
+            <div className="text-sm font-semibold text-foreground mb-3">팀원별 활동량</div>
             {memberOptions.map((name, index) => {
               const member = resolveMemberDisplay(name, index);
               const count = activities.filter(activity => activity.actorName === name).length;
