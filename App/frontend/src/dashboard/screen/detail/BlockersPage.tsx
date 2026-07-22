@@ -17,6 +17,7 @@ import {
   formatDashboardDueDate,
   isDangerDelayRisk,
   isDelayRisk,
+  nextPositionForStatus,
   normalizePriority,
   normalizeTaskStatus,
   taskAssignee,
@@ -74,9 +75,9 @@ export function BlockersPage() {
     ? `${user?.name ?? "담당자"}님의 ${longestStalledDangerTask.title}이 지연 위험입니다.`
     : "현재 지연 위험('위험') 업무가 없습니다.";
 
-  const resolveBlocker = async (taskId: string, position: number) => {
+  const resolveBlocker = async (taskId: string) => {
     if (currentProjectId == null) return;
-    await updateTaskPosition(taskId, "done", position, currentProjectId);
+    await updateTaskPosition(taskId, "done", nextPositionForStatus(tasks, "done"), currentProjectId);
     refetch();
   };
 
@@ -166,7 +167,7 @@ export function BlockersPage() {
                 <BlockerAiSuggestion task={task} projectId={currentProjectId} ready={aiInsightReady} />
 
                 <div className="flex items-center flex-wrap gap-2 pt-1 border-t border-border">
-                  <button onClick={() => resolveBlocker(task.id, task.position)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg bg-red-500 hover:bg-red-600 transition-colors">
+                  <button onClick={() => resolveBlocker(task.id)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg bg-red-500 hover:bg-red-600 transition-colors">
                     <CheckCheck className="w-3.5 h-3.5" /> 해결 완료
                   </button>
                   <button onClick={() => navigate("/board")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">

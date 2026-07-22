@@ -7,7 +7,28 @@ import {
   formatRelativeDate,
   isDangerDelayRisk,
   isDelayRisk,
+  nextPositionForStatus,
 } from "./dashboardTaskUtils";
+import type { DashboardTaskDto } from "../types/dashboard";
+
+function taskFixture(overrides: Partial<DashboardTaskDto>): DashboardTaskDto {
+  return {
+    id: "1",
+    title: "제목",
+    category: null,
+    status: "todo",
+    assigneeId: null,
+    assigneeName: null,
+    dueDate: null,
+    priority: null,
+    description: null,
+    sourceType: null,
+    position: 0,
+    createdAt: null,
+    updatedAt: null,
+    ...overrides,
+  };
+}
 
 describe("formatDashboardDueDate", () => {
   it("formats a date-only string as MM.DD", () => {
@@ -88,6 +109,22 @@ describe("dashboard schedule helpers", () => {
     expect(expectedProgressPercent("2026-07-01", "2026-07-31", new Date("2026-06-01T00:00:00").getTime())).toBe(0);
     expect(expectedProgressPercent("2026-07-01", "2026-07-31", new Date("2026-08-01T00:00:00").getTime())).toBe(100);
     expect(expectedProgressPercent(null, "2026-07-31")).toBeNull();
+  });
+});
+
+describe("nextPositionForStatus", () => {
+  it("returns 0 when the target status column is empty", () => {
+    const tasks = [taskFixture({ id: "1", status: "todo", position: 0 })];
+    expect(nextPositionForStatus(tasks, "done")).toBe(0);
+  });
+
+  it("returns one past the highest position already in that status column", () => {
+    const tasks = [
+      taskFixture({ id: "1", status: "done", position: 2 }),
+      taskFixture({ id: "2", status: "done", position: 5 }),
+      taskFixture({ id: "3", status: "blocked", position: 99 }),
+    ];
+    expect(nextPositionForStatus(tasks, "done")).toBe(6);
   });
 });
 

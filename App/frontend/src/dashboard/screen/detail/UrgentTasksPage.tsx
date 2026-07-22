@@ -16,6 +16,7 @@ import {
   daysUntilDue,
   formatDashboardDueDate,
   isOpenTask,
+  nextPositionForStatus,
   normalizePriority,
   normalizeTaskStatus,
   taskAssignee,
@@ -80,9 +81,9 @@ export function UrgentTasksPage() {
 
   const urgentQuestion = `마감 임박 업무 ${urgentTasks.length}개를 점검해줘. 오늘 마감인 업무는 ${counts.today}개, 3일 이내에 마감하는 업무는 ${counts["3day"]}개, 7일 이내에 마감하는 업무는 ${counts.week}개, 이미 지연된 업무는 ${counts.overdue}개야. 지금 가장 확인할 업무와 권장 조치를 우선순위대로 알려줘. 출력은 3문장 이내로 해.`;
 
-  const changeStatus = async (taskId: string, position: number, status: "done" | "blocked") => {
+  const changeStatus = async (taskId: string, status: "done" | "blocked") => {
     if (currentProjectId == null) return;
-    await updateTaskPosition(taskId, status, position, currentProjectId);
+    await updateTaskPosition(taskId, status, nextPositionForStatus(tasks, status), currentProjectId);
     refetch();
   };
 
@@ -227,8 +228,8 @@ export function UrgentTasksPage() {
                 <button className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium bg-blue-50 border border-blue-200 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors"><Bell className="w-3.5 h-3.5" />리마인드 알림 보내기</button>
                 <button onClick={() => setAssigneeTarget(selectedRow.task.id)} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><UserCog className="w-3.5 h-3.5" />담당자 변경</button>
                 <button onClick={() => setDueDateTarget(selectedRow.task.id)} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><Calendar className="w-3.5 h-3.5" />마감일 수정</button>
-                <button onClick={() => changeStatus(selectedRow.task.id, selectedRow.task.position, "done")} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />완료 처리</button>
-                <button onClick={() => changeStatus(selectedRow.task.id, selectedRow.task.position, "blocked")} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><AlertTriangle className="w-3.5 h-3.5 text-red-500" />블로커로 지정</button>
+                <button onClick={() => changeStatus(selectedRow.task.id, "done")} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />완료 처리</button>
+                <button onClick={() => changeStatus(selectedRow.task.id, "blocked")} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><AlertTriangle className="w-3.5 h-3.5 text-red-500" />블로커로 지정</button>
               </div>
             </div>
           </div>

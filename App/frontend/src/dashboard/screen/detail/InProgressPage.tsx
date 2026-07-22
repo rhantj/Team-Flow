@@ -18,6 +18,7 @@ import {
   formatRelativeDate,
   isDangerDelayRisk,
   isDelayRisk,
+  nextPositionForStatus,
   normalizeTaskStatus,
   sourceLabel,
   taskAssignee,
@@ -45,9 +46,9 @@ export function InProgressPage() {
   const projectDDay = formatDDay(progress?.projectDeadline);
   const monitoringQuestion = `진행 중 업무 ${inProgressTasks.length}개를 점검해줘. 3일 이상 업데이트가 없는 업무는 ${updateNeededCount}개, 지연 위험 업무는 ${dangerCount}개, 프로젝트 마감은 ${projectDDay}야. 지금 확인할 업무와 권장 조치를 우선순위대로 알려줘. 출력은 3문장 이내로 해.`;
 
-  const changeStatus = async (taskId: string, position: number, status: "done" | "blocked") => {
+  const changeStatus = async (taskId: string, status: "done" | "blocked") => {
     if (currentProjectId == null) return;
-    await updateTaskPosition(taskId, status, position, currentProjectId);
+    await updateTaskPosition(taskId, status, nextPositionForStatus(tasks, status), currentProjectId);
     refetch();
   };
 
@@ -153,10 +154,10 @@ export function InProgressPage() {
                 </div>
 
                 <div className="flex items-center flex-wrap gap-2 pt-3 border-t border-border">
-                  <button onClick={() => changeStatus(task.id, task.position, "done")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
+                  <button onClick={() => changeStatus(task.id, "done")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> 완료 처리
                   </button>
-                  <button onClick={() => changeStatus(task.id, task.position, "blocked")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
+                  <button onClick={() => changeStatus(task.id, "blocked")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
                     <AlertTriangle className="w-3.5 h-3.5 text-red-500" /> 블로커 전환
                   </button>
                   <button onClick={() => setDueDateTarget(task)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">

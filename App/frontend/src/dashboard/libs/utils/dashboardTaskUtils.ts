@@ -126,3 +126,13 @@ export function taskSearchText(task: DashboardTaskDto): string {
     sourceLabel(task.sourceType),
   ].join(" ").toLowerCase();
 }
+
+/** targetStatus 컬럼(상태)의 맨 끝에 이어붙일 position 값을 계산한다.
+ * 보드의 reorderTasks()/computeInsertPosition()과 동일한 "마지막 카드 position + 1" 규칙을
+ * 쓴다 — 대시보드 화면의 빠른 상태 변경 버튼이 원래 있던 컬럼의 position을 그대로 들고 가면
+ * 대상 컬럼의 기존 카드와 값이 겹칠 수 있어, 항상 대상 컬럼 끝에 배치되도록 새로 계산한다. */
+export function nextPositionForStatus(tasks: DashboardTaskDto[], status: string): number {
+  const columnTasks = tasks.filter(task => normalizeTaskStatus(task.status) === status);
+  if (columnTasks.length === 0) return 0;
+  return Math.max(...columnTasks.map(task => task.position)) + 1;
+}
