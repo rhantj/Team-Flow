@@ -35,6 +35,7 @@ export function useRagQuery() {
 
   const cancel = useCallback(() => {
     controllerRef.current?.abort();
+    setStatus("idle");
   }, []);
 
   return { status, answer, error, ask, cancel };

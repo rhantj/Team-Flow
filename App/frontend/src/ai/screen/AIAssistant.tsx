@@ -42,19 +42,32 @@ function isChatSession(value: unknown): value is ChatSession {
   return Array.isArray(session.messages) && session.messages.every(isChatMsg);
 }
 
+function safeRemoveItem(key: string): void {
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    // 스토리지 접근이 제한된 환경(비공개 모드 등) - 삭제 실패는 무시한다.
+  }
+}
+
 function loadSavedMessages(key: string): ChatMsg[] | null {
-  const raw = sessionStorage.getItem(key);
+  let raw: string | null;
+  try {
+    raw = sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
   if (!raw) return null;
   try {
     const parsed: unknown = JSON.parse(raw);
     const now = Date.now();
     if (!isChatSession(parsed) || parsed.savedAt > now || now - parsed.savedAt > CHAT_SESSION_TTL_MS) {
-      sessionStorage.removeItem(key);
+      safeRemoveItem(key);
       return null;
     }
     return parsed.messages;
   } catch {
-    sessionStorage.removeItem(key);
+    safeRemoveItem(key);
     return null;
   }
 }
