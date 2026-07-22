@@ -417,7 +417,6 @@ class MeetingAnalysisServiceTest {
         assertThat(summary.get(0).attendanceRate()).isEqualTo(100);
     }
 
-<<<<<<< HEAD
     @Test
     void attendanceDetailMarksAttendedAndAbsentMeetingsSortedByDate() {
         mockMember(1L);
@@ -475,7 +474,8 @@ class MeetingAnalysisServiceTest {
         List<MeetingAttendanceDetail> detail = service.attendanceDetail("demo-project", 2L);
 
         assertThat(detail).isEmpty();
-=======
+    }
+
     private byte[] createPdfBytes(String text) throws Exception {
         try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             PDPage page = new PDPage();
@@ -490,6 +490,5 @@ class MeetingAnalysisServiceTest {
             document.save(output);
             return output.toByteArray();
         }
->>>>>>> 8324adff4b6299ed5a20be7d0bc051e51e736197
     }
 }
