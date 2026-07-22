@@ -181,6 +181,13 @@ public class DashboardService {
             .toList();
     }
 
+    /** 마일스톤을 새로 만들고, 방금 만든 마일스톤을 진행률 0%인 MilestoneProgressDto로 반환한다. */
+    public MilestoneProgressDto createMilestone(String projectIdParam, String title, java.time.LocalDate dueDate) {
+        Long projectId = demoDataService.resolveProjectId(projectIdParam);
+        Milestone saved = milestoneRepository.save(new Milestone(projectId, title, dueDate));
+        return toMilestoneProgressDto(saved, List.of());
+    }
+
     /** FastAPI에 재예측을 요청한 뒤(베스트-에포트) 최신 진행률 상세를 반환한다. */
     public ProgressDetailResponse refreshDelayRiskAndGetProgress(String projectIdParam) {
         Long projectId = demoDataService.resolveProjectId(projectIdParam);

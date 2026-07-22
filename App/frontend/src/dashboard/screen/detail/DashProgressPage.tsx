@@ -1,18 +1,19 @@
+import { useState } from "react";
 import { useNavigate } from "react-router";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { AlertTriangle, Calendar, Clock, FileText, Loader2, ShieldAlert, Sparkles, Target, TrendingUp } from "lucide-react";
-import { AIBox } from "../../../ai/components/AIBox";
+import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { AlertTriangle, Calendar, Clock, FileText, Plus, Sparkles, Target } from "lucide-react";
+import { AiInsightBox } from "../../../ai/components/AiInsightBox";
 import { openAIAssistant } from "../../../ai/libs/utils/openAIAssistant";
 import { BackBtn } from "../../../global/component/BackBtn";
 import { DetailStatCard } from "../../../global/component/DetailStatCard";
 import type { TaskStatus } from "../../../board/libs/types/task";
 import { useAuth } from "../../../global/hooks/useAuth";
 import { useDashboardProgress } from "../../libs/hooks/useDashboardProgress";
+import { MilestoneAddPopup } from "../../components/MilestoneAddPopup";
 import {
   expectedProgressPercent,
   formatDashboardDueDate,
   formatDDay,
-  isDangerDelayRisk,
   isDelayRisk,
 } from "../../libs/utils/dashboardTaskUtils";
 
@@ -25,36 +26,49 @@ const MILESTONE_STATUS_MAP: Record<TaskStatus, { cls: string; label: string }> =
   blocked: { cls: "bg-red-100 text-red-700", label: "지연" },
 };
 
+const STAGE_LEGEND = [
+  { label: "완료 (100%)", color: "#10B981" },
+  { label: "진행 중 (50%+)", color: "#3B5BDB" },
+  { label: "시작 (1~49%)", color: "#F59E0B" },
+  { label: "미착수 (0%)", color: "#C1C9D9" },
+];
+
 function normalizeMilestoneStatus(status: string): TaskStatus {
   const normalized = status.toLowerCase() as TaskStatus;
   return normalized in MILESTONE_STATUS_MAP ? normalized : "todo";
 }
 
 export function DashProgressPage() {
-  const { currentProjectId } = useAuth();
+  const { user, currentProjectId } = useAuth();
   const navigate = useNavigate();
   const onBack = () => navigate("/dashboard");
   const onGoUrgent = () => navigate("/dashboard/urgent");
-  const { data: progress, loading, refreshing, error, runDelayRiskAnalysis } = useDashboardProgress(currentProjectId);
+  const { data: progress, loading, error, refetch } = useDashboardProgress(currentProjectId);
+  const [showMilestonePopup, setShowMilestonePopup] = useState(false);
 
   const totalTasks = progress?.totalTasks ?? 0;
   const doneTasks = progress?.doneTasks ?? 0;
   const progressPercent = progress?.progressPercent ?? 0;
   const delayRisks = progress?.delayRisks.filter(risk => isDelayRisk(risk.result)) ?? [];
-  const hasPredictions = progress?.hasPredictions ?? false;
   const categories = progress?.categoryBreakdown ?? [];
   const milestones = progress?.milestones ?? [];
-  const categoryChart = categories.map(item => ({
-    category: item.category,
-    완료: item.done,
-    미완료: Math.max(item.total - item.done, 0),
-  }));
-  const expectedProgress = expectedProgressPercent(progress?.projectCreatedAt, progress?.projectDeadline);
+  const projectCreatedAt = progress?.projectCreatedAt ?? null;
+  const projectDeadline = progress?.projectDeadline ?? null;
+  const expectedProgress = expectedProgressPercent(projectCreatedAt, projectDeadline);
   const planGap = expectedProgress == null ? null : progressPercent - expectedProgress;
   const planGapLabel = planGap == null ? "-" : `${planGap > 0 ? "+" : ""}${planGap}%p`;
   const planGapColor = planGap == null ? "#8892A4" : planGap < 0 ? "#EF4444" : planGap > 0 ? "#10B981" : "#8892A4";
-  const projectDDay = formatDDay(progress?.projectDeadline);
-  const reportQuestion = `현재 프로젝트의 전체 진행률 보고서를 생성해줘. 실제 완료율은 ${progressPercent}%, 계획상 예상 진행률은 ${expectedProgress ?? "미정"}%, 지연 주의·위험 업무는 ${delayRisks.length}개, 프로젝트 마감은 ${projectDDay}야. 계획 대비 차이와 주요 위험, 권장 조치를 정리해줘.`;
+  const projectDDay = formatDDay(projectDeadline);
+  const insightPrompt = `현재 프로젝트의 진행 상황을 분석해줘. 실제 완료율은 ${progressPercent}%, 계획상 예상 진행률은 ${expectedProgress ?? "미정"}%, 지연 주의·위험 업무는 ${delayRisks.length}개, 프로젝트 마감은 ${projectDDay}야. 계획 대비 차이와 주요 위험, 권장 조치를 정리해줘. 출력은 3문장 이내로 해.`;
+  const insightFallback = "계획 대비 진행률과 지연 예측을 바탕으로 다음 액션을 추천받을 수 있습니다.";
+
+  const planVsActualChart: Array<{ label: string; 예상?: number; 실제: number | null }> = projectCreatedAt
+    ? [
+        { label: formatDashboardDueDate(projectCreatedAt), 예상: 0, 실제: 0 },
+        { label: "오늘", 예상: expectedProgress ?? undefined, 실제: progressPercent },
+        ...(projectDeadline ? [{ label: formatDashboardDueDate(projectDeadline), 예상: 100, 실제: null }] : []),
+      ]
+    : [];
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-4" style={{ fontFamily: "'Inter','Noto Sans KR',sans-serif" }}>
@@ -62,14 +76,13 @@ export function DashProgressPage() {
         <div>
           <BackBtn onBack={onBack} />
           <h1 className="text-xl font-bold text-foreground">전체 진행률</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">실제 업무, 마일스톤, AI 지연 예측 결과를 한 화면에서 확인합니다.</p>
+          <p className="text-sm text-muted-foreground mt-0.5">프로젝트 일정 대비 진행 현황을 분석하고 지연 위험을 파악합니다.</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={onGoUrgent} className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-red-200 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors"><AlertTriangle className="w-3.5 h-3.5" />마감 업무</button>
-          <button onClick={() => openAIAssistant(reportQuestion)} className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><FileText className="w-3.5 h-3.5" />진행률 보고서</button>
-          <button onClick={() => runDelayRiskAnalysis()} disabled={refreshing || currentProjectId == null} className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-white rounded-lg disabled:opacity-60" style={{ background: "linear-gradient(135deg,#7048E8,#4F6EF7)" }}>
-            {refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            AI 지연 위험 분석
+          <button onClick={() => openAIAssistant(insightPrompt)} className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><FileText className="w-3.5 h-3.5" />진행률 보고서</button>
+          <button onClick={() => openAIAssistant(insightPrompt)} className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-white rounded-lg" style={{ background: "linear-gradient(135deg,#7048E8,#4F6EF7)" }}>
+            <Sparkles className="w-3.5 h-3.5" />AI 요약 요청
           </button>
         </div>
       </div>
@@ -77,10 +90,10 @@ export function DashProgressPage() {
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{error}</div>}
 
       <div className="grid grid-cols-5 gap-3">
-        <DetailStatCard label="전체 완료율" value={loading ? "..." : `${progressPercent}%`} sub={loading ? "불러오는 중" : `${doneTasks} / ${totalTasks} 완료`} color="#3B5BDB" icon={TrendingUp} />
+        <DetailStatCard label="전체 완료율" value={loading ? "..." : `${progressPercent}%`} sub={loading ? "불러오는 중" : `${doneTasks} / ${totalTasks} 완료`} color="#3B5BDB" icon={Target} />
         <DetailStatCard label="계획 대비" value={loading ? "..." : planGapLabel} sub={expectedProgress == null ? "프로젝트 일정 미정" : `예상 ${expectedProgress}% · 실제 ${progressPercent}%`} color={planGapColor} icon={Target} />
-        <DetailStatCard label="지연 업무" value={loading ? "..." : `${delayRisks.length}개`} sub={hasPredictions ? "주의·위험 예측" : "분석 필요"} color="#EF4444" icon={Clock} />
-        <DetailStatCard label="마감 D-day" value={loading ? "..." : projectDDay} sub={formatDashboardDueDate(progress?.projectDeadline)} color="#7048E8" icon={Calendar} />
+        <DetailStatCard label="지연 업무" value={loading ? "..." : `${delayRisks.length}개`} sub="즉시 검토 필요" color="#EF4444" icon={Clock} />
+        <DetailStatCard label="마감 D-day" value={loading ? "..." : projectDDay} sub={formatDashboardDueDate(projectDeadline)} color="#F59E0B" icon={Calendar} iconBorder />
         <div className="bg-card rounded-xl p-4 shadow-sm border border-border">
           <div className="text-xs font-medium text-foreground mb-2">상태 범례</div>
           <div className="space-y-1.5">
@@ -98,75 +111,50 @@ export function DashProgressPage() {
         </div>
       </div>
 
-      <AIBox
-        text="계획 대비 진행률과 지연 예측을 바탕으로 전체 진행률 보고서와 다음 액션을 생성할 수 있습니다."
-        onAsk={() => openAIAssistant(reportQuestion)}
-        actionLabel="보고서 생성"
+      <AiInsightBox
+        projectId={currentProjectId}
+        prompt={insightPrompt}
+        ready={!loading}
+        fallbackText={insightFallback}
       />
-
-      <div className="bg-card rounded-xl border border-border shadow-sm p-5">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <ShieldAlert className="w-4 h-4 text-red-500" />
-            <div className="text-sm font-semibold text-foreground">AI 지연 위험도</div>
-          </div>
-          <button onClick={() => runDelayRiskAnalysis()} disabled={refreshing || currentProjectId == null} className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-purple-200 text-purple-600 hover:bg-purple-50 disabled:opacity-50 transition-colors">
-            {refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            {hasPredictions ? "다시 분석" : "분석 실행"}
-          </button>
-        </div>
-        {loading ? (
-          <div className="text-xs text-muted-foreground py-4 text-center">데이터를 불러오는 중입니다</div>
-        ) : delayRisks.length === 0 ? (
-          <div className="text-xs text-muted-foreground py-4 text-center">
-            {hasPredictions ? "현재 지연 위험으로 분류된 업무가 없습니다." : "아직 실행된 분석이 없습니다."}
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {delayRisks.map(risk => (
-              <div key={risk.taskId} className="flex items-center gap-3 px-3 py-2 rounded-lg border border-border">
-                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${isDangerDelayRisk(risk.result) ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
-                  {risk.result}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-medium text-foreground truncate">{risk.taskTitle}</div>
-                  <div className="text-[10px] text-muted-foreground">{risk.assigneeName ?? "미배정"} · 마감 {formatDashboardDueDate(risk.dueDate)}</div>
-                </div>
-                {risk.score != null && <span className="text-[10px] text-muted-foreground shrink-0">신뢰도 {Math.round(risk.score * 100)}%</span>}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
 
       <div className="grid grid-cols-3 gap-4">
         <div className="col-span-2 bg-card rounded-xl p-5 border border-border shadow-sm">
           <div className="flex items-center justify-between mb-4">
-            <div className="text-sm font-semibold text-foreground">카테고리별 완료/미완료</div>
-            <div className="text-xs text-muted-foreground">tasks.category 기준</div>
+            <div className="text-sm font-semibold text-foreground">계획 대비 실제 진행률</div>
+            <div className="text-xs text-muted-foreground">{projectDeadline ? "예상 vs 실제" : "마감일 미정 · 실제만 표시"}</div>
           </div>
           <div className="h-52">
             {loading ? (
               <div className="h-full flex items-center justify-center text-sm text-muted-foreground">데이터를 불러오는 중입니다</div>
-            ) : categoryChart.length ? (
+            ) : planVsActualChart.length ? (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={categoryChart} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
+                <LineChart data={planVsActualChart} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.05)" />
-                  <XAxis dataKey="category" tick={{ fontSize: 10, fill: "#8892A4" }} />
-                  <YAxis tick={{ fontSize: 10, fill: "#8892A4" }} />
+                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#8892A4" }} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "#8892A4" }} />
                   <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }} />
-                  <Bar dataKey="완료" stackId="tasks" fill="#10B981" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="미완료" stackId="tasks" fill="#C1C9D9" radius={[3, 3, 0, 0]} />
-                </BarChart>
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  {projectDeadline && <Line type="monotone" dataKey="예상" name="예상 진행률" stroke="#C1C9D9" strokeWidth={2} strokeDasharray="4 3" dot={{ r: 3 }} />}
+                  <Line type="monotone" dataKey="실제" name="실제 진행률" stroke="#7048E8" strokeWidth={2} dot={{ r: 3 }} />
+                </LineChart>
               </ResponsiveContainer>
             ) : (
-              <div className="h-full flex items-center justify-center text-sm text-muted-foreground">카테고리 데이터가 없습니다.</div>
+              <div className="h-full flex items-center justify-center text-sm text-muted-foreground">표시할 진행률 데이터가 없습니다.</div>
             )}
           </div>
         </div>
 
         <div className="bg-card rounded-xl p-5 border border-border shadow-sm">
-          <div className="text-sm font-semibold text-foreground mb-4">카테고리별 진행 상태</div>
+          <div className="text-sm font-semibold text-foreground mb-3">단계별 진행 상태</div>
+          <div className="flex flex-wrap gap-x-3 gap-y-1 mb-3">
+            {STAGE_LEGEND.map(item => (
+              <div key={item.label} className="flex items-center gap-1 text-[9px] text-muted-foreground">
+                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: item.color }} />
+                <span>{item.label}</span>
+              </div>
+            ))}
+          </div>
           <div className="space-y-3.5">
             {categories.map((item, index) => {
               const pct = item.total === 0 ? 0 : Math.round((item.done / item.total) * 100);
@@ -193,11 +181,14 @@ export function DashProgressPage() {
       <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-5 py-3 border-b border-border">
           <div className="text-sm font-semibold text-foreground">마일스톤 진행 현황</div>
+          <button onClick={() => setShowMilestonePopup(true)} className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-border text-foreground hover:bg-muted transition-colors">
+            <Plus className="w-3.5 h-3.5" /> 마일스톤 추가
+          </button>
         </div>
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border bg-muted/40">
-              {["ID", "마일스톤", "마감일", "상태", "진행률", "관련 업무"].map(header => (
+              {["ID", "마일스톤", "마감일", "상태", "진행률", "관련 업무", "액션"].map(header => (
                 <th key={header} className="px-4 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{header}</th>
               ))}
             </tr>
@@ -217,7 +208,10 @@ export function DashProgressPage() {
                       <span className="text-xs font-semibold text-foreground">{item.progressPercent}%</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground">{item.taskCount}개</td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground">{item.taskCount > 0 ? `${item.taskCount}개` : "-"}</td>
+                  <td className="px-4 py-3">
+                    <button onClick={() => navigate("/dashboard/all-tasks")} className="text-[11px] font-medium text-blue-600 hover:text-blue-700">업무 보기</button>
+                  </td>
                 </tr>
               );
             })}
@@ -229,6 +223,14 @@ export function DashProgressPage() {
           </div>
         )}
       </div>
+
+      {showMilestonePopup && currentProjectId != null && (
+        <MilestoneAddPopup
+          projectId={currentProjectId}
+          onClose={() => setShowMilestonePopup(false)}
+          onCreated={() => { setShowMilestonePopup(false); refetch(); }}
+        />
+      )}
     </div>
   );
 }

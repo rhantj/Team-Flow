@@ -1,13 +1,17 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type UIEvent } from "react";
 import { useNavigate } from "react-router";
-import { AlertCircle, AlertTriangle, Bell, Calendar, CheckCircle2, Clock, Search, Sparkles, User } from "lucide-react";
-import { AIBox } from "../../../ai/components/AIBox";
+import { AlertCircle, AlertTriangle, Bell, Calendar, CheckCircle2, Clock, Search, Sparkles, UserCog } from "lucide-react";
+import { AiInsightBox } from "../../../ai/components/AiInsightBox";
+import { openAIAssistant } from "../../../ai/libs/utils/openAIAssistant";
 import { BackBtn } from "../../../global/component/BackBtn";
 import { DetailStatCard } from "../../../global/component/DetailStatCard";
 import { PriorityBadge } from "../../../board/components/PriorityBadge";
 import { TaskStatusPill } from "../../../board/components/TaskStatusPill";
 import { useAuth } from "../../../global/hooks/useAuth";
 import { useDashboardTasks } from "../../libs/hooks/useDashboardTasks";
+import { updateTaskPosition } from "../../../board/libs/utils/taskApi";
+import { TaskDueDatePopup } from "../../components/TaskDueDatePopup";
+import { TaskAssigneePopup } from "../../components/TaskAssigneePopup";
 import {
   daysUntilDue,
   formatDashboardDueDate,
@@ -24,6 +28,8 @@ const GROUPS = [
   { label: "7일 이내", key: "week", color: "#F59E0B", bg: "bg-amber-50 border-amber-200" },
 ] as const;
 
+const PAGE_SIZE = 15;
+
 function urgencyKey(daysLeft: number | null) {
   if (daysLeft == null) return null;
   if (daysLeft < 0) return "overdue";
@@ -35,12 +41,15 @@ function urgencyKey(daysLeft: number | null) {
 
 export function UrgentTasksPage() {
   const { currentProjectId } = useAuth();
-  const { data: tasks, loading, error } = useDashboardTasks(currentProjectId);
+  const { data: tasks, loading, error, refetch } = useDashboardTasks(currentProjectId);
   const navigate = useNavigate();
   const onBack = () => navigate("/dashboard");
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [assigneeFilter, setAssigneeFilter] = useState("전체");
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [dueDateTarget, setDueDateTarget] = useState<string | null>(null);
+  const [assigneeTarget, setAssigneeTarget] = useState<string | null>(null);
 
   const assigneeOptions = useMemo(
     () => Array.from(new Set(tasks.map(task => task.assigneeName).filter(Boolean))) as string[],
@@ -62,10 +71,29 @@ export function UrgentTasksPage() {
   }, [assigneeFilter, search, tasks]);
 
   const selectedRow = urgentTasks.find(row => row.task.id === selected) ?? urgentTasks[0] ?? null;
+  const dueDateRow = urgentTasks.find(row => row.task.id === dueDateTarget) ?? null;
+  const assigneeRow = urgentTasks.find(row => row.task.id === assigneeTarget) ?? null;
   const counts = Object.fromEntries(GROUPS.map(group => [
     group.key,
     urgentTasks.filter(row => urgencyKey(row.daysLeft) === group.key).length,
   ])) as Record<(typeof GROUPS)[number]["key"], number>;
+
+  const urgentQuestion = `마감 임박 업무 ${urgentTasks.length}개를 점검해줘. 오늘 마감인 업무는 ${counts.today}개, 3일 이내에 마감하는 업무는 ${counts["3day"]}개, 7일 이내에 마감하는 업무는 ${counts.week}개, 이미 지연된 업무는 ${counts.overdue}개야. 지금 가장 확인할 업무와 권장 조치를 우선순위대로 알려줘. 출력은 3문장 이내로 해.`;
+
+  const changeStatus = async (taskId: string, position: number, status: "done" | "blocked") => {
+    if (currentProjectId == null) return;
+    await updateTaskPosition(taskId, status, position, currentProjectId);
+    refetch();
+  };
+
+  const handleScroll = (event: UIEvent<HTMLDivElement>) => {
+    const el = event.currentTarget;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 80) {
+      setVisibleCount(prev => Math.min(prev + PAGE_SIZE, urgentTasks.length));
+    }
+  };
+
+  let remainingVisible = visibleCount;
 
   return (
     <div className="h-full overflow-hidden flex flex-col p-6 gap-4" style={{ fontFamily: "'Inter','Noto Sans KR',sans-serif" }}>
@@ -73,11 +101,11 @@ export function UrgentTasksPage() {
         <div>
           <BackBtn onBack={onBack} />
           <h1 className="text-xl font-bold text-foreground">마감 임박 업무</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">실제 마감일 기준으로 7일 이내 업무를 우선순위별로 확인합니다.</p>
+          <p className="text-sm text-muted-foreground mt-0.5">마감이 가까운 업무와 지연된 업무를 우선순위별로 관리합니다.</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => navigate("/dashboard/dash-progress")} className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-white rounded-lg" style={{ background: "linear-gradient(135deg,#7048E8,#4F6EF7)" }}>
-            <Sparkles className="w-3.5 h-3.5" /> AI 지연 위험 분석
+          <button onClick={() => openAIAssistant(urgentQuestion)} className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-white rounded-lg" style={{ background: "linear-gradient(135deg,#7048E8,#4F6EF7)" }}>
+            <Sparkles className="w-3.5 h-3.5" /> AI 마감 위험 분석
           </button>
         </div>
       </div>
@@ -88,10 +116,15 @@ export function UrgentTasksPage() {
         <DetailStatCard label="오늘 마감" value={loading ? "..." : counts.today} sub="즉시 확인 필요" color="#EF4444" icon={AlertCircle} />
         <DetailStatCard label="3일 이내" value={loading ? "..." : counts["3day"]} sub="긴급 처리 필요" color="#F97316" icon={AlertTriangle} />
         <DetailStatCard label="7일 이내" value={loading ? "..." : counts.week} sub="이번 주 완료 목표" color="#F59E0B" icon={Clock} />
-        <DetailStatCard label="이미 지연" value={loading ? "..." : counts.overdue} sub="담당자 확인 필요" color="#6B7280" icon={AlertTriangle} />
+        <DetailStatCard label="이미 지연" value={loading ? "..." : counts.overdue} sub="즉시 담당자 확인" color="#6B7280" icon={AlertTriangle} />
       </div>
 
-      <AIBox text="미구현된 기능입니다." />
+      <AiInsightBox
+        projectId={currentProjectId}
+        prompt={urgentQuestion}
+        ready={!loading}
+        fallbackText="마감 임박·지연 업무를 바탕으로 지금 확인할 업무와 권장 조치를 추천받을 수 있습니다."
+      />
 
       <div className="flex items-center gap-2 shrink-0 flex-wrap">
         <div className="relative">
@@ -106,17 +139,20 @@ export function UrgentTasksPage() {
       </div>
 
       <div className="flex-1 overflow-hidden flex gap-4 min-h-0">
-        <div className="flex-1 overflow-y-auto space-y-3">
+        <div className="flex-1 overflow-y-auto space-y-3" onScroll={handleScroll}>
           {GROUPS.map(group => {
             const grouped = urgentTasks.filter(row => urgencyKey(row.daysLeft) === group.key);
             if (!grouped.length) return null;
+            const visibleRows = remainingVisible > 0 ? grouped.slice(0, remainingVisible) : [];
+            remainingVisible -= visibleRows.length;
             return (
               <div key={group.key}>
                 <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-semibold mb-2 ${group.bg}`} style={{ color: group.color }}>
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ background: group.color }} />
                   {group.label} ({grouped.length})
                 </div>
                 <div className="space-y-2">
-                  {grouped.map(({ task, daysLeft }, index) => {
+                  {visibleRows.map(({ task, daysLeft }, index) => {
                     const member = taskAssignee(task, index);
                     const status = normalizeTaskStatus(task.status);
                     const isSelected = selectedRow?.task.id === task.id;
@@ -157,7 +193,8 @@ export function UrgentTasksPage() {
                 <span className="font-mono text-[10px] text-muted-foreground">{selectedRow.task.id}</span>
                 <TaskStatusPill status={normalizeTaskStatus(selectedRow.task.status)} />
               </div>
-              <div className="text-sm font-semibold text-foreground leading-snug">{selectedRow.task.title}</div>
+              <div className="text-sm font-semibold text-foreground leading-snug mb-1.5">{selectedRow.task.title}</div>
+              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-600">{selectedRow.task.category ?? "미분류"}</span>
             </div>
             <div className="p-4 space-y-4">
               <div className="grid grid-cols-2 gap-3 text-xs">
@@ -174,7 +211,7 @@ export function UrgentTasksPage() {
                   <span className="font-semibold text-foreground">{formatDashboardDueDate(selectedRow.task.dueDate)}</span>
                 </div>
                 <div>
-                  <div className="text-[10px] text-muted-foreground mb-1">D-day</div>
+                  <div className="text-[10px] text-muted-foreground mb-1">남은 시간</div>
                   <span className="font-bold" style={{ color: selectedRow.daysLeft != null && selectedRow.daysLeft <= 3 ? "#EF4444" : "#F59E0B" }}>
                     {selectedRow.daysLeft != null && selectedRow.daysLeft < 0 ? `D+${Math.abs(selectedRow.daysLeft)}` : `D-${selectedRow.daysLeft ?? "-"}`}
                   </span>
@@ -186,15 +223,34 @@ export function UrgentTasksPage() {
                 </div>
               )}
               <div className="space-y-2 pt-2 border-t border-border">
-                <button className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium bg-blue-50 border border-blue-200 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors"><Bell className="w-3.5 h-3.5" />리마인드 보내기</button>
-                <button onClick={() => navigate("/board")} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><User className="w-3.5 h-3.5" />보드에서 관리</button>
-                <button onClick={() => navigate("/board")} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><Calendar className="w-3.5 h-3.5" />마감일 수정</button>
-                <button onClick={() => navigate("/board")} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />완료 처리</button>
+                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">빠른 액션</div>
+                <button className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium bg-blue-50 border border-blue-200 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors"><Bell className="w-3.5 h-3.5" />리마인드 알림 보내기</button>
+                <button onClick={() => setAssigneeTarget(selectedRow.task.id)} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><UserCog className="w-3.5 h-3.5" />담당자 변경</button>
+                <button onClick={() => setDueDateTarget(selectedRow.task.id)} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><Calendar className="w-3.5 h-3.5" />마감일 수정</button>
+                <button onClick={() => changeStatus(selectedRow.task.id, selectedRow.task.position, "done")} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />완료 처리</button>
+                <button onClick={() => changeStatus(selectedRow.task.id, selectedRow.task.position, "blocked")} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><AlertTriangle className="w-3.5 h-3.5 text-red-500" />블로커로 지정</button>
               </div>
             </div>
           </div>
         )}
       </div>
+
+      {dueDateRow && currentProjectId != null && (
+        <TaskDueDatePopup
+          task={dueDateRow.task}
+          projectId={currentProjectId}
+          onClose={() => setDueDateTarget(null)}
+          onChanged={() => { setDueDateTarget(null); refetch(); }}
+        />
+      )}
+      {assigneeRow && currentProjectId != null && (
+        <TaskAssigneePopup
+          task={assigneeRow.task}
+          projectId={currentProjectId}
+          onClose={() => setAssigneeTarget(null)}
+          onChanged={() => { setAssigneeTarget(null); refetch(); }}
+        />
+      )}
     </div>
   );
 }
