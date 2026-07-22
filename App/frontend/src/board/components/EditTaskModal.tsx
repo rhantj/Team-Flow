@@ -31,7 +31,7 @@ export function EditTaskModal({ task, onClose, onUpdated }: EditTaskModalProps) 
     setSelCat(knownCat ? task.category : "other");
     setCustomCat(knownCat ? "" : task.category);
     setTitle(task.title);
-    setDescription("");
+    setDescription(task.description ?? "");
     setAssigneeId(task.assignee || "1");
     setDueDate(task.dueDate);
     setPriority(task.priority);

@@ -2,6 +2,7 @@ package com.workflowai.task;
 
 import com.workflowai.common.ApiResponse;
 import com.workflowai.common.DemoDataService;
+import com.workflowai.notification.NotificationService;
 import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.project.ProjectRole;
 import com.workflowai.security.CurrentUser;
@@ -34,19 +35,22 @@ public class TaskCommentController {
     private final UserRepository userRepository;
     private final DemoDataService demoDataService;
     private final ProjectMemberRepository projectMemberRepository;
+    private final NotificationService notificationService;
 
     public TaskCommentController(
         TaskCommentRepository taskCommentRepository,
         TaskRepository taskRepository,
         UserRepository userRepository,
         DemoDataService demoDataService,
-        ProjectMemberRepository projectMemberRepository
+        ProjectMemberRepository projectMemberRepository,
+        NotificationService notificationService
     ) {
         this.taskCommentRepository = taskCommentRepository;
         this.taskRepository = taskRepository;
         this.userRepository = userRepository;
         this.demoDataService = demoDataService;
         this.projectMemberRepository = projectMemberRepository;
+        this.notificationService = notificationService;
     }
 
     private Task resolveTaskOrNull(String projectId, Long taskId) {
@@ -118,6 +122,15 @@ public class TaskCommentController {
         User author = userRepository.findById(authorDbId).orElse(null);
         String authorName = author != null ? author.getName() : "알 수 없음";
         String authorMockId = author != null ? author.getProviderId() : null;
+        if (task.getAssigneeId() != null && !task.getAssigneeId().equals(authorDbId)) {
+            boolean isFeedback = "FEEDBACK".equals(type);
+            String verb = isFeedback ? "피드백을" : "코멘트를";
+            String noun = isFeedback ? "피드백이" : "코멘트가";
+            notificationService.notify(
+                task.getAssigneeId(), "TASK_COMMENT", "새 " + noun + " 달렸습니다.",
+                "'" + authorName + "'님이 '" + task.getTitle() + "' 업무에 " + verb + " 남겼습니다.", "task", task.getId()
+            );
+        }
         return ResponseEntity.ok(ApiResponse.ok(TaskCommentDto.from(saved, authorName, authorMockId)));
     }
 

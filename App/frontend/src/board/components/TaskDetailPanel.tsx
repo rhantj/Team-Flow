@@ -8,15 +8,12 @@ import { getCat, formatDueDate } from "../libs/utils/taskService";
 import { getCatDetailFields } from "../libs/utils/catFields";
 import { STATUS_ACTIONS, visibleSecondaryActions } from "../libs/utils/taskActions";
 import { MEMBERS } from "../../global/lib/mock/members";
-import { addNotification } from "../libs/utils/activityStore";
 import { fetchChecklist, createChecklistItem, updateChecklistItem, deleteChecklistItem, generateChecklist } from "../libs/utils/checklistApi";
 import { fetchTaskComments, createTaskComment, updateTaskComment, deleteTaskComment, type TaskCommentDto } from "../libs/utils/taskCommentApi";
 import { fetchTaskActivity, type TaskActivityDto } from "../libs/utils/activityApi";
-import { DEMO_PROJECT_ID } from "../libs/utils/taskApi";
+import { DEMO_PROJECT_ID, sendTaskNudge, type NudgeKind } from "../libs/utils/taskApi";
 import { useAuth } from "../../global/hooks/useAuth";
 import type { Task, ChecklistItem } from "../libs/types/task";
-
-const CURRENT_USER = MEMBERS[0];
 
 type FeedType = "comment" | "status" | "system";
 interface FeedItem { id: string; type: FeedType; who: string; when: string; msg: string; at: number; commentId?: string; isFeedback?: boolean; }
@@ -62,16 +59,17 @@ function WipBadge() {
 const ASSIGNEE_ACTION_LABELS = new Set(["담당자 변경", "담당자 재배정"]);
 
 // 알림류는 별도 입력 없이 정형화된 메시지를 담당자에게 즉시 보내는 원클릭 액션이다.
-const NUDGE_MESSAGES: Record<string, (title: string) => string> = {
-  "시작 알림": (title) => `'${title}' 업무를 시작해주세요.`,
-  "진행상황 요청": (title) => `'${title}' 업무의 진행상황을 공유해주세요.`,
-  "긴급 알림": (title) => `'${title}' 업무가 보류 중입니다. 빠른 확인이 필요합니다.`,
+// 실제 메시지 문구는 백엔드(TaskController.NUDGE_MESSAGE_TEMPLATES)가 구성한다.
+const NUDGE_KINDS: Record<string, NudgeKind> = {
+  "시작 알림": "START",
+  "진행상황 요청": "PROGRESS",
+  "긴급 알림": "URGENT",
 };
 
 const IMPLEMENTED_ACTION_LABELS = new Set([
   "다시 열기", "팀장 피드백", "블로커 등록",
   ...ASSIGNEE_ACTION_LABELS,
-  ...Object.keys(NUDGE_MESSAGES),
+  ...Object.keys(NUDGE_KINDS),
 ]);
 
 interface TaskDetailPanelProps {
@@ -215,14 +213,15 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
     }
   };
 
-  const handleSendNudge = (label: string) => {
-    const buildMessage = NUDGE_MESSAGES[label];
-    if (!buildMessage) return;
-    const assignee = MEMBERS.find((mm) => mm.id === task.assignee);
-    if (assignee) {
-      addNotification(assignee.id, buildMessage(task.title), task.id);
+  const handleSendNudge = async (label: string) => {
+    const kind = NUDGE_KINDS[label];
+    if (!kind) return;
+    try {
+      await sendTaskNudge(task.id, kind, projectId);
+      onShowToast(`${label}을 보냈습니다.`);
+    } catch {
+      onShowToast(`${label} 전송에 실패했습니다.`);
     }
-    onShowToast(`${label}을 보냈습니다.`);
   };
 
   const handleStartEditChecklistItem = (item: ChecklistItem) => {
@@ -305,11 +304,7 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
     try {
       const created = await createTaskComment(task.id, text, projectId, type);
       setTaskComments((cur) => [...cur, created]);
-      const assignee = MEMBERS.find((mm) => mm.id === task.assignee);
-      if (assignee) {
-        const verb = type === "FEEDBACK" ? "피드백을" : "코멘트를";
-        addNotification(assignee.id, `${CURRENT_USER.name} 팀장이 '${task.title}' 업무에 ${verb} 남겼습니다.`, task.id);
-      }
+      // 담당자 알림은 이제 백엔드(TaskCommentController)가 코멘트 저장 시 함께 만든다.
       setNewComment("");
       setFeedbackMode(false);
       setCommentSentMessage(type === "FEEDBACK" ? "피드백 전송 완료" : "코멘트 전송 완료");
@@ -368,9 +363,11 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
             <PriorityBadge priority={task.priority} />
           </div>
           <div className="relative flex items-center gap-1 shrink-0">
-            <button onClick={onEditTask} className="p-1.5 hover:bg-muted rounded-lg transition-colors" title="업무 수정">
-              <Pencil className="w-4 h-4 text-muted-foreground" />
-            </button>
+            {isLeader && (
+              <button onClick={onEditTask} className="p-1.5 hover:bg-muted rounded-lg transition-colors" title="업무 수정">
+                <Pencil className="w-4 h-4 text-muted-foreground" />
+              </button>
+            )}
             <button onClick={onOpenWorkResult} className="p-1.5 hover:bg-muted rounded-lg transition-colors" title="작업 내용 작성">
               <Plus className="w-4 h-4 text-muted-foreground" />
             </button>
@@ -402,7 +399,7 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
                             onEditTask();
                             return;
                           }
-                          if (a.label in NUDGE_MESSAGES) {
+                          if (a.label in NUDGE_KINDS) {
                             setMenuOpen(false);
                             handleSendNudge(a.label);
                             return;
@@ -427,19 +424,26 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
                     <Sparkles className="w-3.5 h-3.5" />
                     {generatingChecklist ? "생성 중..." : "체크리스트 자동 생성"}
                   </button>
-                  <div className="my-1 border-t border-border" />
-                  <button
-                    onClick={() => { setMenuOpen(false); setConfirmingDelete(true); }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium hover:bg-muted text-left transition-colors text-red-600"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />업무 삭제
-                  </button>
+                  {isLeader && (
+                    <>
+                      <div className="my-1 border-t border-border" />
+                      <button
+                        onClick={() => { setMenuOpen(false); setConfirmingDelete(true); }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium hover:bg-muted text-left transition-colors text-red-600"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />업무 삭제
+                      </button>
+                    </>
+                  )}
                 </div>
               </>
             )}
           </div>
         </div>
         <div className="text-sm font-bold text-foreground leading-snug">{task.title}</div>
+        {task.description && (
+          <div className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{task.description}</div>
+        )}
         <div className="text-[10px] font-mono text-muted-foreground mt-0.5">{task.id}</div>
       </div>
 

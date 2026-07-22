@@ -14,6 +14,7 @@ interface TaskListItemDto {
   dueDate: string | null;
   priority: string | null;
   position: number;
+  description: string | null;
 }
 
 const VALID_STATUSES: TaskStatus[] = ["todo", "inprogress", "blocked", "done"];
@@ -41,6 +42,7 @@ function toTask(dto: TaskListItemDto): Task {
     category: dto.category ?? "other",
     labels: [],
     position: dto.position,
+    description: dto.description ?? undefined,
   };
 }
 
@@ -99,4 +101,13 @@ export async function updateTask(taskId: string, input: UpdateTaskInput, project
 
 export async function deleteTask(taskId: string, projectId: number = DEMO_PROJECT_ID): Promise<void> {
   await apiFetch<null>(`/projects/${projectId}/tasks/${taskId}`, { method: "DELETE" });
+}
+
+export type NudgeKind = "START" | "PROGRESS" | "URGENT";
+
+export async function sendTaskNudge(taskId: string, kind: NudgeKind, projectId: number = DEMO_PROJECT_ID): Promise<void> {
+  await apiFetch<null>(`/projects/${projectId}/tasks/${taskId}/nudge`, {
+    method: "POST",
+    body: JSON.stringify({ kind }),
+  });
 }

@@ -1,12 +1,15 @@
 package com.workflowai.task;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.workflowai.common.DemoDataService;
+import com.workflowai.notification.NotificationService;
 import com.workflowai.project.ProjectMember;
 import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.project.ProjectRole;
@@ -48,6 +51,9 @@ class TaskCommentControllerFeedbackTest {
 
     @MockitoBean
     private ProjectMemberRepository projectMemberRepository;
+
+    @MockitoBean
+    private NotificationService notificationService;
 
     @AfterEach
     void clearSecurityContext() {
@@ -92,6 +98,8 @@ class TaskCommentControllerFeedbackTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.success").value(true))
             .andExpect(jsonPath("$.data.type").value("FEEDBACK"));
+
+        verify(notificationService).notify(eq(1L), eq("TASK_COMMENT"), any(), any(), eq("task"), any());
     }
 
     @Test
@@ -145,5 +153,28 @@ class TaskCommentControllerFeedbackTest {
                     """))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.type").value("COMMENT"));
+
+        verify(notificationService).notify(eq(1L), eq("TASK_COMMENT"), any(), any(), eq("task"), any());
+    }
+
+    @Test
+    void doesNotNotifyWhenAuthorIsTheAssignee() throws Exception {
+        authenticateAs(1L);
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(taskRepository.findById(42L)).thenReturn(Optional.of(existingTask()));
+        when(taskCommentRepository.save(any(TaskComment.class)))
+            .thenAnswer(inv -> inv.getArgument(0));
+        when(userRepository.findById(1L))
+            .thenReturn(Optional.of(new User("assignee@workflow.ai", "박지수", "demo", "3")));
+
+        mockMvc.perform(post("/api/v1/projects/demo-project/tasks/42/comments")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"content":"제가 담당자인데 셀프 코멘트 남깁니다"}
+                    """))
+            .andExpect(status().isOk());
+
+        verify(notificationService, org.mockito.Mockito.never())
+            .notify(any(), any(), any(), any(), any(), any());
     }
 }

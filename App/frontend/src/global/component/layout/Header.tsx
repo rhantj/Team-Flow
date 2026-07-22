@@ -1,17 +1,19 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { ChevronRight, Search, Calendar, Bell, LogOut, Menu } from "lucide-react";
-import { MEMBERS } from "../../lib/mock/members";
 import { TAB_TITLES } from "../../lib/constants/nav";
 import type { Tab } from "../../../board/libs/types/task";
-import { useStoredNotifications, markNotificationsRead } from "../../../board/libs/utils/activityStore";
+import {
+  fetchNotifications, fetchUnreadNotificationCount, markAllNotificationsRead,
+  type NotificationResponse,
+} from "../../api/notificationApi";
 import { useAuth } from "../../hooks/useAuth";
 import { usePresence } from "../../hooks/usePresence";
 import { useProject } from "../../hooks/useProject";
 import type { ProjectRoleKo } from "../../api/authTypes";
 import { useIsMobile } from "../ui/use-mobile";
 
-const CURRENT_USER = MEMBERS[0];
+const NOTIFICATION_POLL_INTERVAL_MS = 30_000;
 
 const ROLE_COLORS: Record<ProjectRoleKo, string> = {
   "팀장": "#3B5BDB",
@@ -42,15 +44,64 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
   const isMobile = useIsMobile();
   const [searchOpen, setSearchOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const { currentProject, currentProjectId, logout } = useAuth();
+  const { isAuthenticated, currentProject, currentProjectId, logout } = useAuth();
   const presenceUsers = usePresence(currentProjectId);
   const projectDetail = useProject(currentProjectId);
   const currentProjectName = currentProject?.projectTitle ?? null;
   const dDay = projectDetail?.deadline ? computeDDay(projectDetail.deadline) : null;
   const role: ProjectRoleKo = currentProject?.role ?? "팀장";
-  const allNotifications = useStoredNotifications();
-  const myNotifications = allNotifications.filter(n => n.recipientId === CURRENT_USER.id);
-  const unreadCount = myNotifications.filter(n => !n.read).length;
+  const [notifications, setNotifications] = useState<NotificationResponse[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifError, setNotifError] = useState(false);
+
+  // 실시간 푸시(SSE/WebSocket)가 아직 없어 안 읽은 개수만 주기적으로 폴링한다.
+  // 목록 자체는 벨을 열 때만 불러온다(불필요한 요청을 줄이기 위함).
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    const loadUnreadCount = () => {
+      fetchUnreadNotificationCount().then((count) => {
+        if (!cancelled) setUnreadCount(count);
+      }).catch((err) => {
+        if (!cancelled) console.error("안 읽은 알림 개수를 불러오지 못했습니다.", err);
+      });
+    };
+    loadUnreadCount();
+    const interval = setInterval(loadUnreadCount, NOTIFICATION_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isAuthenticated]);
+
+  const handleToggleNotifications = async () => {
+    const opening = !notifOpen;
+    setNotifOpen(opening);
+    if (!opening) return;
+
+    // 목록을 먼저 불러와 화면에 반영한 뒤에만 읽음 처리한다. 두 요청을 동시에 보내면 목록을
+    // 불러오는 그 사이에 새로 도착한 알림까지 "모두 읽음" 처리에 휩쓸려, 사용자가 보지도
+    // 못한 알림이 안 읽음 배지에서 사라지는 경우가 생긴다.
+    let list: NotificationResponse[];
+    try {
+      list = await fetchNotifications();
+    } catch (err) {
+      console.error("알림 목록을 불러오지 못했습니다.", err);
+      setNotifError(true);
+      return;
+    }
+    setNotifications(list);
+    setNotifError(false);
+
+    try {
+      await markAllNotificationsRead();
+      setUnreadCount(0);
+    } catch (err) {
+      console.error("알림 읽음 처리에 실패했습니다.", err);
+      // 실패 시 배지 숫자는 그대로 둔다 — 안 읽음 처리에 실패했는데 0으로 낮추면 실제로
+      // 안 읽은 알림이 있는데도 없는 것처럼 보인다.
+    }
+  };
 
   const segments = location.pathname.split("/").filter(Boolean);
   const activeTab = (segments[0] ?? "dashboard") as Tab;
@@ -109,7 +160,7 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
 
         <div className="relative">
           <button
-            onClick={() => { setNotifOpen(v => !v); if (!notifOpen) markNotificationsRead(); }}
+            onClick={handleToggleNotifications}
             className={`relative h-10 min-w-10 px-2.5 rounded-xl border shadow-sm transition-all flex items-center justify-center ${
               notifOpen
                 ? "border-blue-400 bg-blue-100 text-blue-700"
@@ -130,11 +181,14 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
               <div className="absolute right-0 top-full mt-2 w-80 bg-card border border-border rounded-xl shadow-lg z-50 overflow-hidden">
                 <div className="px-4 py-2.5 border-b border-border text-xs font-semibold text-foreground">알림</div>
                 <div className="max-h-80 overflow-y-auto">
-                  {myNotifications.length === 0 ? (
+                  {notifError ? (
+                    <div className="px-4 py-6 text-xs text-red-600 text-center">알림을 불러오지 못했습니다. 다시 시도해주세요.</div>
+                  ) : notifications.length === 0 ? (
                     <div className="px-4 py-6 text-xs text-muted-foreground text-center">알림이 없습니다.</div>
-                  ) : myNotifications.map(n => (
+                  ) : notifications.map(n => (
                     <div key={n.id} className="px-4 py-2.5 border-b border-border last:border-0 text-xs text-foreground">
-                      {n.message}
+                      <div className="font-semibold">{n.title}</div>
+                      {n.content && <div className="text-muted-foreground mt-0.5">{n.content}</div>}
                       <div className="text-[10px] text-muted-foreground mt-0.5">{new Date(n.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })}</div>
                     </div>
                   ))}

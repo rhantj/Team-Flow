@@ -2,7 +2,7 @@ import {
   ArrowRight, User, CheckSquare, Bell, Sparkles, CheckCircle2, AlertTriangle,
   GitPullRequest, AlertCircle, CheckCheck, MessageSquare, Eye, RefreshCw,
 } from "lucide-react";
-import type { TaskStatus } from "../types/task";
+import type { Task, TaskStatus } from "../types/task";
 
 export const STATUS_LABELS: Record<TaskStatus, string> = { todo: "할 일", inprogress: "진행 중", blocked: "보류/블로커", done: "완료" };
 
@@ -50,7 +50,8 @@ const HIDDEN_ACTION_LABELS = new Set([
   "영향 업무 확인", // 업무 간 의존관계 데이터 모델 없음
   "체크리스트 생성", // "체크리스트 자동 생성"과 기능 중복
 ]);
-const LEADER_ONLY_LABELS = new Set(["팀장 피드백"]);
+// 백엔드(TaskController.sendNudge)가 넛지류를 팀장 전용(@PreAuthorize hasRole LEADER)으로 막아서 프론트도 맞춘다.
+const LEADER_ONLY_LABELS = new Set(["팀장 피드백", "시작 알림", "진행상황 요청", "긴급 알림"]);
 
 /** 점세개 메뉴에 실제로 보여줄 보조 액션만 남긴다(범위 밖 기능 숨김 + 팀장 전용 항목 권한 필터링). */
 export function visibleSecondaryActions(actions: StatusAction[], isLeader: boolean): StatusAction[] {
@@ -59,6 +60,16 @@ export function visibleSecondaryActions(actions: StatusAction[], isLeader: boole
     if (LEADER_ONLY_LABELS.has(a.label) && !isLeader) return false;
     return true;
   });
+}
+
+/**
+ * 백엔드 이동 권한 규칙(TaskController.updatePosition의 FORBIDDEN_NOT_OWNER)과 동일하게,
+ * 팀장은 전체 업무를 이동할 수 있고 팀원은 자기가 담당자인 업무만 이동할 수 있다.
+ */
+export function canMoveTask(isLeader: boolean, task: Task, userId: number | null | undefined): boolean {
+  if (isLeader) return true;
+  if (userId == null) return false;
+  return task.assignee === String(userId);
 }
 
 const QUICK_MOVE: Partial<Record<string, Partial<Record<TaskStatus, TaskStatus>>>> = {

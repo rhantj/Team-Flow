@@ -12,6 +12,7 @@ export interface Task {
   category: string;
   /** 같은 status 안에서의 칸반 카드 순서(오름차순). 컬럼 간 값 비교는 하지 않음 */
   position: number;
+  description?: string;
   sourceMeetingTitle?: string;
 }
 

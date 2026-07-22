@@ -57,4 +57,40 @@ public class Notification {
     public Long getId() {
         return id;
     }
+
+    public Long getUserId() {
+        return userId;
+    }
+
+    public String getType() {
+        return type;
+    }
+
+    public String getTitle() {
+        return title;
+    }
+
+    public String getContent() {
+        return content;
+    }
+
+    public String getTargetType() {
+        return targetType;
+    }
+
+    public Long getTargetId() {
+        return targetId;
+    }
+
+    public boolean isRead() {
+        return read;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void markRead() {
+        this.read = true;
+    }
 }

@@ -50,6 +50,26 @@ class ProjectAccessTest {
         assertThat(projectAccess.hasRole(1L, "REVIEWER")).isFalse();
     }
 
+    @Test
+    void hasRoleWithProjectIdParamResolvesDemoProjectId() {
+        ProjectAccess projectAccess = new ProjectAccess(projectMemberRepository, demoDataService);
+        authenticate(1L);
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(projectMemberRepository.findByProjectIdAndUserId(1L, 1L))
+            .thenReturn(Optional.of(new ProjectMember(1L, 1L, ProjectRole.LEADER)));
+
+        assertThat(projectAccess.hasRole("demo-project", "LEADER")).isTrue();
+    }
+
+    @Test
+    void hasRoleWithProjectIdParamReturnsFalseWhenResolveFails() {
+        ProjectAccess projectAccess = new ProjectAccess(projectMemberRepository, demoDataService);
+        authenticate(1L);
+        when(demoDataService.resolveProjectId("unknown")).thenThrow(new IllegalArgumentException("알 수 없는 projectId"));
+
+        assertThat(projectAccess.hasRole("unknown", "LEADER")).isFalse();
+    }
+
     private void authenticate(Long userId) {
         UserPrincipal principal = new UserPrincipal(userId, "user@example.com", "사용자");
         SecurityContextHolder.getContext().setAuthentication(new TestingAuthenticationToken(principal, null));
