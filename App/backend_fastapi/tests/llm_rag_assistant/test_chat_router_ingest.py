@@ -7,13 +7,19 @@ from fastapi.testclient import TestClient
 from app.main import app
 from core.db import get_pool
 from llm_rag_assistant.app.schema.chat_schema import RagIngestResponse
+from llm_rag_assistant.app.security import verify_internal_api_key
 
 
-def test_ingest_endpoint_returns_chunk_ids() -> None:
+def _override_pool():
     async def _fake_pool():
         yield object()
 
     app.dependency_overrides[get_pool] = _fake_pool
+    app.dependency_overrides[verify_internal_api_key] = lambda: None
+
+
+def test_ingest_endpoint_returns_chunk_ids() -> None:
+    _override_pool()
 
     fake_result = RagIngestResponse(chunk_ids=[1, 2], chunk_count=2)
     with patch(
@@ -37,10 +43,7 @@ def test_ingest_endpoint_returns_chunk_ids() -> None:
 
 
 def test_assignee_sync_endpoint_calls_sync_assignee_with_request_fields() -> None:
-    async def _fake_pool():
-        yield object()
-
-    app.dependency_overrides[get_pool] = _fake_pool
+    _override_pool()
 
     with patch(
         "llm_rag_assistant.app.routers.chat_router.sync_assignee",

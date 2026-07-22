@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from core.db import get_pool
 from llm_rag_assistant.app.schema.chat_schema import RagQueryResponse, RagSource
+from llm_rag_assistant.app.security import verify_internal_api_key
 
 
 def _override_pool():
@@ -17,6 +18,7 @@ def _override_pool():
         yield object()
 
     app.dependency_overrides[get_pool] = _fake_pool
+    app.dependency_overrides[verify_internal_api_key] = lambda: None
 
 
 def test_query_endpoint_returns_answer_with_sources() -> None:
