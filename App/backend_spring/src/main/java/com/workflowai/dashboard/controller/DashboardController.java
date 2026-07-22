@@ -4,12 +4,15 @@ import com.workflowai.common.ApiResponse;
 import com.workflowai.dashboard.DTO.ActivityItemDto;
 import com.workflowai.dashboard.DTO.DashboardTaskDto;
 import com.workflowai.dashboard.DTO.DashboardSummaryResponse;
+import com.workflowai.dashboard.DTO.DelayRiskDto;
 import com.workflowai.dashboard.DTO.ProgressDetailResponse;
 import com.workflowai.dashboard.service.DashboardService;
+import com.workflowai.security.CurrentUser;
 import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -56,6 +59,18 @@ public class DashboardController {
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId
     ) {
         return ApiResponse.ok(dashboardService.getProgressDetail(projectId));
+    }
+
+    @Operation(
+        summary = "내 업무 지연 위험도",
+        description = "현재 로그인한 사용자가 담당자인 업무 중 AI 지연 위험도가 '정상'이 아닌 업무 목록을 반환한다."
+    )
+    @GetMapping("/delay-risk/mine")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
+    public ApiResponse<List<DelayRiskDto>> getMyDelayRisks(
+        @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId
+    ) {
+        return ApiResponse.ok(dashboardService.getMyDelayRisks(projectId, CurrentUser.id()));
     }
 
     @Operation(

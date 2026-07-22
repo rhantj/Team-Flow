@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     """진행률 불균형 지수(시간경과율-진행률)가 이보다 크면 '주의' (경과 대비 진행 저조)."""
 
     # 최근 활동 모멘텀
-    recent_activity_window_days: int = 3
+    recent_activity_window_days: int = 3  ## N=3일
     """기한 임박 시 최근 N일간 활동(댓글/상태변경/작업기록)이 없으면 '위험' 전조로 본다."""
 
     # 모델 아티팩트

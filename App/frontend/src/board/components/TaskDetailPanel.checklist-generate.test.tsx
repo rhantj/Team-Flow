@@ -42,6 +42,7 @@ describe("TaskDetailPanel 체크리스트 자동 생성", () => {
     render(
       <TaskDetailPanel
         task={makeTask()}
+        projectMembers={[]}
         onClose={vi.fn()}
         onQuickAction={vi.fn()}
         onShowToast={onShowToast}

@@ -89,7 +89,6 @@ export function InProgressPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <PriorityBadge priority={priority} />
                     <span className={`text-xs font-semibold bg-muted px-2 py-1 rounded-lg ${isDueSoon ? "text-amber-600" : "text-foreground"}`}>
                       마감 {formatDashboardDueDate(task.dueDate)}
                     </span>

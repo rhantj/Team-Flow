@@ -15,6 +15,7 @@ import { fetchTasks, updateTaskPosition, deleteTask, DEMO_PROJECT_ID } from "../
 import { NEXT_STATUS, quickMoveTargetStatus } from "../libs/utils/taskActions";
 import { reorderTasks } from "../libs/utils/taskService";
 import { useAuth } from "../../global/hooks/useAuth";
+import { getProjectMembers, type MemberResponse } from "../../global/api/projectsApi";
 import type { Task, TaskStatus } from "../libs/types/task";
 
 const FILTER_PARAMS = ["assignee", "priority", "category"] as const;
@@ -26,6 +27,7 @@ function parseFilterParam(searchParams: URLSearchParams, key: string): string[] 
 export function BoardView() {
   const { currentProjectId } = useAuth();
   const projectId = currentProjectId ?? DEMO_PROJECT_ID;
+  const [projectMembers, setProjectMembers] = useState<MemberResponse[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [searchParams, setSearchParams] = useSearchParams();
@@ -78,6 +80,17 @@ export function BoardView() {
   useEffect(() => {
     loadTasks();
   }, [loadTasks]);
+
+  // 담당자 배정 UI(카드 아바타, 상세 패널, 드롭다운, 필터)는 현재 프로젝트의 실제 멤버만 보여준다.
+  useEffect(() => {
+    if (currentProjectId == null) {
+      setProjectMembers([]);
+      return;
+    }
+    getProjectMembers(currentProjectId)
+      .then(setProjectMembers)
+      .catch(() => setProjectMembers([]));
+  }, [currentProjectId]);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -196,6 +209,7 @@ export function BoardView() {
 
         <BoardToolbar tasks={tasks} compact={workspaceMode} onAddTask={openModal} />
         <BoardFilterBar
+          projectMembers={projectMembers}
           assigneeFilter={assigneeFilter}
           priorityFilter={priorityFilter}
           categoryFilter={categoryFilter}
@@ -229,6 +243,7 @@ export function BoardView() {
                 <Panel defaultSize={workResultOpen ? 50 : 68} minSize={30} className="min-w-0">
                   <KanbanBoard
                     tasks={filteredTasks}
+                    projectMembers={projectMembers}
                     compact
                     selectedId={selId}
                     onSelectTask={handleSelectTask}
@@ -243,6 +258,7 @@ export function BoardView() {
                 <Panel defaultSize={workResultOpen ? 25 : 32} minSize={24} maxSize={50} className="min-w-0">
                   <TaskDetailPanel
                     task={selTask}
+                    projectMembers={projectMembers}
                     onClose={() => setSelId(null)}
                     onQuickAction={handleQuickAction}
                     onShowToast={showToast}
@@ -269,6 +285,7 @@ export function BoardView() {
             ) : (
               <KanbanBoard
                 tasks={filteredTasks}
+                projectMembers={projectMembers}
                 compact={false}
                 selectedId={selId}
                 onSelectTask={handleSelectTask}
@@ -280,8 +297,8 @@ export function BoardView() {
           )}
         </div>
 
-        <AddTaskModal open={showModal} initialStatus={modalStatus} onClose={() => setShowModal(false)} onCreated={handleTaskCreated} />
-        <EditTaskModal task={editingTask} onClose={() => setEditingTask(null)} onUpdated={handleTaskUpdated} />
+        <AddTaskModal open={showModal} initialStatus={modalStatus} projectMembers={projectMembers} onClose={() => setShowModal(false)} onCreated={handleTaskCreated} />
+        <EditTaskModal task={editingTask} projectMembers={projectMembers} onClose={() => setEditingTask(null)} onUpdated={handleTaskUpdated} />
       </div>
     </DndProvider>
   );

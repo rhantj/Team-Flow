@@ -7,7 +7,8 @@ import { LabelBadge } from "../../global/component/LabelBadge";
 import { getCat, formatDueDate } from "../libs/utils/taskService";
 import { getCatDetailFields } from "../libs/utils/catFields";
 import { STATUS_ACTIONS, visibleSecondaryActions } from "../libs/utils/taskActions";
-import { MEMBERS } from "../../global/lib/mock/members";
+import { PARTICIPANT_COLORS } from "../../global/lib/mock/members";
+import type { MemberResponse } from "../../global/api/projectsApi";
 import { fetchChecklist, createChecklistItem, updateChecklistItem, deleteChecklistItem } from "../libs/utils/checklistApi";
 import { fetchTaskComments, createTaskComment, updateTaskComment, deleteTaskComment, type TaskCommentDto } from "../libs/utils/taskCommentApi";
 import { fetchTaskActivity, type TaskActivityDto } from "../libs/utils/activityApi";
@@ -75,6 +76,7 @@ const IMPLEMENTED_ACTION_LABELS = new Set([
 
 interface TaskDetailPanelProps {
   task: Task;
+  projectMembers: MemberResponse[];
   onClose: () => void;
   onQuickAction: (label: string, isPrimary: boolean) => void;
   onShowToast: (message: string) => void;
@@ -83,7 +85,7 @@ interface TaskDetailPanelProps {
   onOpenWorkResult: () => void;
 }
 
-export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onDeleteTask, onEditTask, onOpenWorkResult }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ task, projectMembers, onClose, onQuickAction, onShowToast, onDeleteTask, onEditTask, onOpenWorkResult }: TaskDetailPanelProps) {
   const { currentProjectId, currentProject } = useAuth();
   const projectId = currentProjectId ?? DEMO_PROJECT_ID;
   const [devInfoOpen, setDevInfoOpen] = useState(false);
@@ -251,7 +253,7 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
   const dday = formatDDay(task.dueDate);
   const doneCount = checklist.filter((c) => c.done).length;
   const progressPct = checklist.length ? Math.round((doneCount / checklist.length) * 100) : 0;
-  const m = MEMBERS.find((me) => me.id === task.assignee)!;
+  const m = projectMembers.find((me) => String(me.userId) === task.assignee);
   const actions = STATUS_ACTIONS[task.status] ?? [];
   const isLeader = currentProject?.role === "팀장";
   // done 상태는 "다음 상태"가 없으므로 큰 primary CTA를 아예 보여주지 않는다("검수 완료"가
@@ -474,10 +476,16 @@ export function TaskDetailPanel({ task, onClose, onQuickAction, onShowToast, onD
           <div>
             <div className="text-[9.5px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">담당자</div>
             <div className="flex items-center gap-1.5">
-              <div className="w-[18px] h-[18px] rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0" style={{ background: m.color }}>
-                {m.initials}
-              </div>
-              <span className="text-xs font-semibold text-foreground">{m.name}</span>
+              {m ? (
+                <>
+                  <div className="w-[18px] h-[18px] rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0" style={{ background: PARTICIPANT_COLORS[m.userId % PARTICIPANT_COLORS.length] }}>
+                    {m.name.slice(0, 1)}
+                  </div>
+                  <span className="text-xs font-semibold text-foreground">{m.name}</span>
+                </>
+              ) : (
+                <span className="text-xs font-medium text-amber-600">미배정</span>
+              )}
             </div>
           </div>
           <div>

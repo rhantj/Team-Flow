@@ -42,6 +42,7 @@ function renderPanel() {
   render(
     <TaskDetailPanel
       task={makeTask()}
+      projectMembers={[]}
       onClose={vi.fn()}
       onQuickAction={vi.fn()}
       onShowToast={vi.fn()}
