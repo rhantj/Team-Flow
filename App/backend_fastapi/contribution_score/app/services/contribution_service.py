@@ -55,6 +55,10 @@ def compute_contribution_scores(
                 task_component=task_comp,
                 meeting_component=meeting_comp,
                 contribution_score=score,
+                anomaly_type=member.anomaly_type,
+                task_count_active_rel=member.task_count_active_rel,
+                difficulty_avg_rel=member.difficulty_avg_rel,
+                overdue_count=member.overdue_count,
             )
         )
     return results

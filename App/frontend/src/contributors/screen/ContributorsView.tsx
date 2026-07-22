@@ -84,7 +84,7 @@ export function ContributorsView() {
     }
     fetchTasks(currentProjectId).then(setProjectTasks).catch(() => setProjectTasks([]));
   }, [currentProjectId]);
-  const [drilldown, setDrilldown] = useState<{ mode: "tasks" | "meetings"; memberId: string } | null>(null);
+  const [drilldown, setDrilldown] = useState<{ mode: "tasks" | "meetings" | "workload"; memberId: string } | null>(null);
   // 실제 기여 점수로 목업 score/categories를 보강한다. 실패하면 목업 값을 그대로 쓴다.
   const [contributionScores, setContributionScores] = useState<ContributionMemberScoreDto[]>([]);
   useEffect(() => {
@@ -365,9 +365,17 @@ export function ContributorsView() {
                           <span className="font-bold">{report.meetings}회</span>
                         )}
                       </button>
-                      <div className="text-xs text-foreground text-center">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedMemberId(report.memberId);
+                          setDrilldown({ mode: "workload", memberId: report.memberId });
+                        }}
+                        className="w-full bg-transparent border-0 p-0 text-xs text-foreground text-center hover:underline cursor-pointer"
+                      >
                         <span className="font-bold">{report.categories.workload}</span>
-                      </div>
+                      </button>
                       <div className="text-center">
                         <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full ${
                           publicFlags[report.memberId]
@@ -537,6 +545,7 @@ export function ContributorsView() {
           projectId={currentProjectId}
           userId={Number(drilldown.memberId)}
           onClose={() => setDrilldown(null)}
+          workloadEvidence={contributionByMemberId[drilldown.memberId]}
         />
       )}
     </div>

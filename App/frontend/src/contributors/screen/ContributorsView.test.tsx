@@ -5,7 +5,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { ContributorsView } from "./ContributorsView";
 import { fetchTasks } from "../../board/libs/utils/taskApi";
 import { fetchAttendanceSummary, fetchAttendanceDetail } from "../../meetings/libs/utils/meetingAiApi";
-import { fetchContributionScore, fetchContributionReport } from "../libs/utils/contributorsApi";
+import { fetchContributionScore } from "../libs/utils/contributorsApi";
 import type { Task } from "../../board/libs/types/task";
 
 vi.mock("../../global/hooks/useAuth", () => ({
@@ -46,7 +46,16 @@ function renderView() {
 describe("ContributorsView drilldown panels", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    vi.mocked(fetchContributionScore).mockResolvedValue({ members: [], note: null });
+    vi.mocked(fetchContributionScore).mockResolvedValue({
+      members: [
+        {
+          assigneeId: "1", workloadComponent: 17.5, taskComponent: 80.0, meetingComponent: 80.0,
+          contributionScore: 60.0, anomalyType: "저활동 의심", taskCountActiveRel: 0.3,
+          difficultyAvgRel: 0.9, overdueCount: 0,
+        },
+      ],
+      note: null,
+    });
     vi.mocked(fetchAttendanceSummary).mockResolvedValue([]);
     vi.mocked(fetchTasks).mockResolvedValue([
       makeTask("A", "1", "done", "AI 모델 학습 파이프라인 구축"),
@@ -86,5 +95,19 @@ describe("ContributorsView drilldown panels", () => {
 
     await waitFor(() => expect(screen.getByText("12.10 팀 정기 회의")).toBeInTheDocument());
     expect(fetchAttendanceDetail).toHaveBeenCalledWith("1", 1);
+  });
+
+  it("opens the workload drilldown panel without a new fetch when '업무 편중도' cell is clicked", async () => {
+    renderView();
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(fetchContributionScore).toHaveBeenCalled());
+    const nameCell = screen.getByText("김민준", { selector: ".text-sm" });
+    const row = nameCell.closest('[role="button"]') as HTMLElement;
+    const workloadCell = within(row).getByText("17.5");
+    await user.click(workloadCell);
+
+    await waitFor(() => expect(screen.getByText("저활동 의심")).toBeInTheDocument());
+    expect(fetchContributionScore).toHaveBeenCalledTimes(1);
   });
 });
