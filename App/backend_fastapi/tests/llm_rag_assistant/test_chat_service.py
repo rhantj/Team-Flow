@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from llm_rag_assistant.app.services.chat_service import answer_question
+from llm_rag_assistant.app.services.chat_service import _is_personal_intent, answer_question
 
 
 @pytest.mark.asyncio
@@ -108,3 +108,26 @@ async def test_answer_question_does_not_filter_by_assignee_for_non_personal_ques
         await answer_question(pool, project_id=5, question="프로젝트 전체 업무 현황 알려줘", user_id=42)
 
     mock_search.assert_awaited_once_with(pool, 5, [0.1], top_k=5, assignee_id=None)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "이 문제 알려줘",
+        "이번 과제 진행 상황이 어때?",
+        "안내 사항 정리해줘",
+        "제안서 초안 만들어줘",
+    ],
+)
+def test_is_personal_intent_does_not_false_positive_on_substring_matches(question: str) -> None:
+    """'제 '가 '문제 '/'과제 '/'안내 '/'제안' 같은 무관한 단어의 부분 문자열로 들어있다고
+    개인화 질문으로 오인하면 안 된다 (토큰 단위 정확 일치여야 함)."""
+    assert _is_personal_intent(question) is False
+
+
+@pytest.mark.parametrize(
+    "question",
+    ["내가 담당한 업무 알려줘", "제가 맡은 태스크 뭐야", "나의 할 일 정리해줘", "내 업무 목록 보여줘"],
+)
+def test_is_personal_intent_detects_standalone_personal_pronoun_tokens(question: str) -> None:
+    assert _is_personal_intent(question) is True
