@@ -627,7 +627,9 @@ export function MyPage() {
   // null/undefined일 때만 목업으로 대체한다.
   const affiliation = user?.affiliation ?? MEMBER_USER.affiliation;
   const field = user?.field ?? [];
-  const github = user?.githubUsername ?? MEMBER_USER.github;
+  // GitHub은 "연결됨" 상태 자체를 표시하는 값이라, 목업으로 대체하면 실제로 연결하지 않은
+  // 사용자에게 거짓 연결 상태를 보여주게 된다 — 절대 목업으로 대체하지 않는다.
+  const github = user?.githubUsername ?? "";
   const profileImageUrl = user?.profileImageUrl ?? null;
   const handleLogout = () => {
     logout();

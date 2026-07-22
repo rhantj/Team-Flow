@@ -9,24 +9,33 @@
 -- 별도 마이그레이션으로 제거한다.
 -- 적용 대상: 현재 Supabase PostgreSQL (추후 OCI 자체 호스팅 이전 시 동일 스크립트 재실행)
 
-ALTER TABLE users ADD COLUMN IF NOT EXISTS field_tags JSONB NOT NULL DEFAULT '[]'::jsonb;
-
--- field가 이미 JSONB 배열이면(007 적용 후) 그대로, 아직 VARCHAR 단일 문자열이면 1개짜리 배열로
--- 감싸서 옮긴다. field_tags가 기본값(빈 배열)일 때만 채운다 — 재실행해도 기존 값을 덮어쓰지 않는다.
+-- 레거시 field 값을 field_tags로 옮기는 백필은 "컬럼이 이번에 처음 생성됐을 때"만 실행한다.
+-- 예전엔 field_tags가 빈 배열([])인지로 "아직 백필 안 됨"을 판단했는데, 이러면 사용자가
+-- 분야를 일부러 다 지워서([]) 정말 비운 상태에서 이 스크립트가 재실행될 경우 레거시 field 값이
+-- 다시 채워져 사용자가 지운 게 원상복구되는 문제가 있었다. "컬럼이 존재했는지"는 시간이 지나도
+-- 바뀌지 않는 값이라, 최초 생성 시점 단 한 번만 백필하는 게 보장된다.
 DO $$
 DECLARE
+    column_existed boolean;
     field_data_type text;
 BEGIN
-    SELECT data_type INTO field_data_type
-    FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'field';
+    SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'field_tags'
+    ) INTO column_existed;
 
-    IF field_data_type = 'jsonb' THEN
-        UPDATE users SET field_tags = field
-        WHERE field_tags = '[]'::jsonb AND field IS NOT NULL AND field <> '[]'::jsonb;
-    ELSIF field_data_type IS NOT NULL THEN
-        UPDATE users SET field_tags = jsonb_build_array(field)
-        WHERE field_tags = '[]'::jsonb AND field IS NOT NULL AND field <> '';
+    IF NOT column_existed THEN
+        ALTER TABLE users ADD COLUMN field_tags JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+        SELECT data_type INTO field_data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'field';
+
+        IF field_data_type = 'jsonb' THEN
+            UPDATE users SET field_tags = field WHERE field IS NOT NULL AND field <> '[]'::jsonb;
+        ELSIF field_data_type IS NOT NULL THEN
+            UPDATE users SET field_tags = jsonb_build_array(field) WHERE field IS NOT NULL AND field <> '';
+        END IF;
     END IF;
 END $$;
 

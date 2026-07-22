@@ -44,8 +44,11 @@ function AvatarUploader({ imageUrl, name }: { imageUrl: string | null; name: str
       setCacheBust(Date.now());
     } catch (err) {
       setAvatarError(err instanceof ApiRequestError ? err.message : "이미지 업로드에 실패했습니다.");
-      setPreviewUrl(null);
     } finally {
+      // 성공/실패 어느 쪽이든 미리보기를 내리는 것과 동시에 URL을 해제한다 — 성공했을 때
+      // previewUrl을 남겨두면, 곧이어 해제된(무효화된) blob URL을 계속 img src로 쓰게 되어
+      // 정작 새로 반영된 실제 이미지(imageUrl)로 못 넘어가고 깨진 상태로 보일 수 있었다.
+      setPreviewUrl(null);
       setUploading(false);
       URL.revokeObjectURL(objectUrl);
     }
