@@ -1,9 +1,10 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "../../hooks/useAuth";
 import { Header } from "./Header";
+import { fetchNotifications, fetchUnreadNotificationCount, markAllNotificationsRead } from "../../api/notificationApi";
 
 vi.mock("../ui/use-mobile", () => ({ useIsMobile: () => true }));
 
@@ -28,5 +29,78 @@ describe("Header (mobile)", () => {
     const button = screen.getByRole("button", { name: "메뉴 열기" });
     await userEvent.click(button);
     expect(onOpenMobileMenu).toHaveBeenCalledOnce();
+  });
+});
+
+vi.mock("../../api/notificationApi", () => ({
+  fetchNotifications: vi.fn(),
+  fetchUnreadNotificationCount: vi.fn().mockResolvedValue(0),
+  markAllNotificationsRead: vi.fn(),
+}));
+
+// 첫 번째 describe("Header (mobile)")는 실제 AuthProvider(비로그인 상태)로도 문제없이 렌더링돼야
+// 하므로, 이 모킹이 파일 전체에 적용되더라도 깨지지 않도록 기본값을 비로그인 상태로 둔다.
+const mockUseAuth = vi.fn().mockReturnValue({
+  isAuthenticated: false, loading: false, user: null, projectRoles: [], currentProjectId: null, currentProject: null,
+  selectProject: vi.fn(), addLocalProjectRole: vi.fn(), loginWithGoogle: vi.fn(), logout: vi.fn(), refreshMe: vi.fn(),
+});
+vi.mock("../../hooks/useAuth", async () => {
+  const actual = await vi.importActual<typeof import("../../hooks/useAuth")>("../../hooks/useAuth");
+  return { ...actual, useAuth: () => mockUseAuth() };
+});
+
+describe("Header 알림", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.mocked(fetchNotifications).mockReset();
+    vi.mocked(markAllNotificationsRead).mockReset();
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true, loading: false, user: { id: 1, email: "a@a.com", name: "테스트" },
+      projectRoles: [], currentProjectId: null, currentProject: null,
+      selectProject: vi.fn(), addLocalProjectRole: vi.fn(), loginWithGoogle: vi.fn(),
+      logout: vi.fn(), refreshMe: vi.fn(),
+    });
+  });
+
+  async function openBell() {
+    await userEvent.click(screen.getByRole("button", { name: "알림" }));
+  }
+
+  it("목록을 다 불러온 뒤에만 읽음 처리를 요청한다(동시 요청 금지)", async () => {
+    let resolveFetch: (value: Awaited<ReturnType<typeof fetchNotifications>>) => void;
+    vi.mocked(fetchNotifications).mockReturnValue(new Promise((resolve) => { resolveFetch = resolve; }));
+    vi.mocked(markAllNotificationsRead).mockResolvedValue(undefined);
+
+    renderHeader();
+    await openBell();
+
+    // fetchNotifications가 아직 응답하지 않은 상태에서는 읽음 처리가 호출되면 안 된다.
+    expect(markAllNotificationsRead).not.toHaveBeenCalled();
+
+    resolveFetch!([]);
+    await waitFor(() => expect(markAllNotificationsRead).toHaveBeenCalledTimes(1));
+  });
+
+  it("목록 조회에 실패하면 읽음 처리를 시도하지 않고 에러를 보여준다", async () => {
+    vi.mocked(fetchNotifications).mockRejectedValue(new Error("network error"));
+
+    renderHeader();
+    await openBell();
+
+    await screen.findByText("알림을 불러오지 못했습니다. 다시 시도해주세요.");
+    expect(markAllNotificationsRead).not.toHaveBeenCalled();
+  });
+
+  it("읽음 처리에 실패해도 안 읽음 배지 숫자를 그대로 유지한다", async () => {
+    vi.mocked(fetchUnreadNotificationCount).mockResolvedValue(3);
+    vi.mocked(fetchNotifications).mockResolvedValue([]);
+    vi.mocked(markAllNotificationsRead).mockRejectedValue(new Error("network error"));
+
+    renderHeader();
+    await waitFor(() => expect(screen.getByRole("button", { name: "알림" }).textContent).toContain("3"));
+
+    await openBell();
+    await waitFor(() => expect(markAllNotificationsRead).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "알림" }).textContent).toContain("3");
   });
 });

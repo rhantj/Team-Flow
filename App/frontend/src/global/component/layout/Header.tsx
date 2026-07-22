@@ -52,6 +52,7 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
   const role: ProjectRoleKo = currentProject?.role ?? "팀장";
   const [notifications, setNotifications] = useState<NotificationResponse[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [notifError, setNotifError] = useState(false);
 
   // 실시간 푸시(SSE/WebSocket)가 아직 없어 안 읽은 개수만 주기적으로 폴링한다.
   // 목록 자체는 벨을 열 때만 불러온다(불필요한 요청을 줄이기 위함).
@@ -61,7 +62,9 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
     const loadUnreadCount = () => {
       fetchUnreadNotificationCount().then((count) => {
         if (!cancelled) setUnreadCount(count);
-      }).catch(() => {});
+      }).catch((err) => {
+        if (!cancelled) console.error("안 읽은 알림 개수를 불러오지 못했습니다.", err);
+      });
     };
     loadUnreadCount();
     const interval = setInterval(loadUnreadCount, NOTIFICATION_POLL_INTERVAL_MS);
@@ -71,12 +74,33 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
     };
   }, [isAuthenticated]);
 
-  const handleToggleNotifications = () => {
+  const handleToggleNotifications = async () => {
     const opening = !notifOpen;
     setNotifOpen(opening);
     if (!opening) return;
-    fetchNotifications().then(setNotifications).catch(() => {});
-    markAllNotificationsRead().then(() => setUnreadCount(0)).catch(() => {});
+
+    // 목록을 먼저 불러와 화면에 반영한 뒤에만 읽음 처리한다. 두 요청을 동시에 보내면 목록을
+    // 불러오는 그 사이에 새로 도착한 알림까지 "모두 읽음" 처리에 휩쓸려, 사용자가 보지도
+    // 못한 알림이 안 읽음 배지에서 사라지는 경우가 생긴다.
+    let list: NotificationResponse[];
+    try {
+      list = await fetchNotifications();
+    } catch (err) {
+      console.error("알림 목록을 불러오지 못했습니다.", err);
+      setNotifError(true);
+      return;
+    }
+    setNotifications(list);
+    setNotifError(false);
+
+    try {
+      await markAllNotificationsRead();
+      setUnreadCount(0);
+    } catch (err) {
+      console.error("알림 읽음 처리에 실패했습니다.", err);
+      // 실패 시 배지 숫자는 그대로 둔다 — 안 읽음 처리에 실패했는데 0으로 낮추면 실제로
+      // 안 읽은 알림이 있는데도 없는 것처럼 보인다.
+    }
   };
 
   const segments = location.pathname.split("/").filter(Boolean);
@@ -157,7 +181,9 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
               <div className="absolute right-0 top-full mt-2 w-80 bg-card border border-border rounded-xl shadow-lg z-50 overflow-hidden">
                 <div className="px-4 py-2.5 border-b border-border text-xs font-semibold text-foreground">알림</div>
                 <div className="max-h-80 overflow-y-auto">
-                  {notifications.length === 0 ? (
+                  {notifError ? (
+                    <div className="px-4 py-6 text-xs text-red-600 text-center">알림을 불러오지 못했습니다. 다시 시도해주세요.</div>
+                  ) : notifications.length === 0 ? (
                     <div className="px-4 py-6 text-xs text-muted-foreground text-center">알림이 없습니다.</div>
                   ) : notifications.map(n => (
                     <div key={n.id} className="px-4 py-2.5 border-b border-border last:border-0 text-xs text-foreground">
