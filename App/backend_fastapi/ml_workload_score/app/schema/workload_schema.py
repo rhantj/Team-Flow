@@ -13,6 +13,10 @@ class WorkloadMemberResult(BaseModel):
     overload_score: float
     is_anomaly: bool
     anomaly_type: str
+    # --- 편중도 근거 패널용 신규 필드 (build_features()가 이미 계산하던 값) ---
+    task_count_active_rel: float
+    difficulty_avg_rel: float
+    overdue_count: int
 
 
 class WorkloadScoreData(BaseModel):
