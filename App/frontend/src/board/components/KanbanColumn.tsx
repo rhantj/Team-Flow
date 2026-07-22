@@ -2,6 +2,7 @@ import { useDrop } from "react-dnd";
 import { Plus } from "lucide-react";
 import { TaskCard } from "./TaskCard";
 import { TASK_DRAG_TYPE, type TaskDragItem } from "../libs/utils/dnd";
+import type { MemberResponse } from "../../global/api/projectsApi";
 import type { Task, TaskStatus } from "../libs/types/task";
 
 export interface BoardColumnDef {
@@ -14,6 +15,7 @@ export interface BoardColumnDef {
 interface KanbanColumnProps {
   col: BoardColumnDef;
   tasks: Task[];
+  projectMembers: MemberResponse[];
   compact?: boolean;
   selectedId: string | null;
   onSelectTask: (id: string) => void;
@@ -22,7 +24,7 @@ interface KanbanColumnProps {
   onReorderTask: (draggedId: string, targetId: string, position: "before" | "after") => void;
 }
 
-export function KanbanColumn({ col, tasks, compact, selectedId, onSelectTask, onAddTask, onDropTask, onReorderTask }: KanbanColumnProps) {
+export function KanbanColumn({ col, tasks, projectMembers, compact, selectedId, onSelectTask, onAddTask, onDropTask, onReorderTask }: KanbanColumnProps) {
   const [{ isOver, isEmptyAreaOver, canDrop }, dropRef] = useDrop(
     () => ({
       accept: TASK_DRAG_TYPE,
@@ -69,6 +71,7 @@ export function KanbanColumn({ col, tasks, compact, selectedId, onSelectTask, on
             key={task.id}
             task={task}
             catId={task.category}
+            projectMembers={projectMembers}
             compact={compact}
             selected={selectedId === task.id}
             onSelect={() => onSelectTask(task.id)}

@@ -5,8 +5,8 @@ import { CATEGORIES } from "../libs/mock/tasks";
 import { getCat } from "../libs/utils/taskService";
 import { CAT_MODAL_FIELDS } from "../libs/utils/catFields";
 import { createTask, DEMO_PROJECT_ID } from "../libs/utils/taskApi";
-import { MEMBERS } from "../../global/lib/mock/members";
 import { useAuth } from "../../global/hooks/useAuth";
+import type { MemberResponse } from "../../global/api/projectsApi";
 import type { Priority, Task, TaskStatus } from "../libs/types/task";
 
 const STEPS = ["카테고리 선택", "기본 정보", "추가 정보", "생성 완료"];
@@ -14,18 +14,19 @@ const STEPS = ["카테고리 선택", "기본 정보", "추가 정보", "생성 
 interface AddTaskModalProps {
   open: boolean;
   initialStatus: TaskStatus;
+  projectMembers: MemberResponse[];
   onClose: () => void;
   onCreated: (task: Task) => void;
 }
 
-export function AddTaskModal({ open, initialStatus, onClose, onCreated }: AddTaskModalProps) {
+export function AddTaskModal({ open, initialStatus, projectMembers, onClose, onCreated }: AddTaskModalProps) {
   const { currentProjectId } = useAuth();
   const [step, setStep] = useState(0);
   const [selCat, setSelCat] = useState("");
   const [customCat, setCustomCat] = useState("");
   const [fTitle, setFTitle] = useState("");
   const [fDesc, setFDesc] = useState("");
-  const [fAssignee, setFAssignee] = useState("1");
+  const [fAssignee, setFAssignee] = useState("");
   const [fDue, setFDue] = useState("");
   const [fPriority, setFPriority] = useState<Priority>("medium");
   const [fStatus, setFStatus] = useState<TaskStatus>("todo");
@@ -40,13 +41,14 @@ export function AddTaskModal({ open, initialStatus, onClose, onCreated }: AddTas
       setStep(0);
       setFTitle("");
       setFDesc("");
+      setFAssignee(String(projectMembers[0]?.userId ?? ""));
       setFDue("");
       setFPriority("medium");
       setFCriteria("");
       setSubmitError(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, initialStatus]);
+  }, [open, initialStatus, projectMembers]);
 
   if (!open) return null;
 
@@ -172,7 +174,7 @@ export function AddTaskModal({ open, initialStatus, onClose, onCreated }: AddTas
                     <div>
                       <label className="text-xs font-semibold text-foreground block mb-1.5">담당자</label>
                       <select value={fAssignee} onChange={(e) => setFAssignee(e.target.value)} className="w-full rounded-xl border border-border bg-input-background px-4 py-2.5 text-sm outline-none focus:border-blue-400">
-                        {MEMBERS.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.role})</option>)}
+                        {projectMembers.map((m) => <option key={m.userId} value={String(m.userId)}>{m.name} ({m.role})</option>)}
                       </select>
                     </div>
                     <div>

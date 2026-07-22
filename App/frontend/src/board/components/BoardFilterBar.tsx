@@ -5,7 +5,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "../../global/component/ui/dropdown-menu";
-import { MEMBERS } from "../../global/lib/mock/members";
+import type { MemberResponse } from "../../global/api/projectsApi";
 import { CATEGORIES } from "../libs/mock/tasks";
 import { getCat } from "../libs/utils/taskService";
 import type { Priority } from "../libs/types/task";
@@ -17,6 +17,7 @@ const PRIORITY_OPTIONS: { id: Priority; label: string }[] = [
 ];
 
 interface BoardFilterBarProps {
+  projectMembers: MemberResponse[];
   assigneeFilter: string[];
   priorityFilter: string[];
   categoryFilter: string[];
@@ -88,6 +89,7 @@ function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }
 }
 
 export function BoardFilterBar({
+  projectMembers,
   assigneeFilter,
   priorityFilter,
   categoryFilter,
@@ -100,13 +102,13 @@ export function BoardFilterBar({
 }: BoardFilterBarProps) {
   const hasActiveFilters = assigneeFilter.length + priorityFilter.length + categoryFilter.length > 0;
 
-  const memberOptions: FilterOption[] = MEMBERS.map((m) => ({ id: m.id, label: m.name }));
+  const memberOptions: FilterOption[] = projectMembers.map((m) => ({ id: String(m.userId), label: m.name }));
   const categoryOptions: FilterOption[] = CATEGORIES.map((c) => ({ id: c.id, label: c.label }));
 
   const chips = [
     ...assigneeFilter.map((id) => ({
       key: `assignee-${id}`,
-      label: MEMBERS.find((m) => m.id === id)?.name ?? id,
+      label: projectMembers.find((m) => String(m.userId) === id)?.name ?? id,
       onRemove: () => onToggleAssignee(id),
     })),
     ...priorityFilter.map((id) => ({
