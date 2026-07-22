@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ml_delay_risk.models.delay_model import CATEGORICAL_COLUMNS, FREQUENCY_ENCODED_COLUMNS
-from App.backend_fastapi.ml_delay_risk.models.mock_issue_dataset import build_training_dataframe
+from ml_delay_risk.models.mock_issue_dataset import build_training_dataframe
 from ml_delay_risk.models.feature_engineering import RISK_CLASS_NAMES
 
 

@@ -6,6 +6,7 @@ import { DetailStatCard } from "../../../global/component/DetailStatCard";
 import { PriorityBadge } from "../../../board/components/PriorityBadge";
 import { TaskStatusPill } from "../../../board/components/TaskStatusPill";
 import { useAuth } from "../../../global/hooks/useAuth";
+import { useDashboardProgress } from "../../libs/hooks/useDashboardProgress";
 import { useDashboardTasks } from "../../libs/hooks/useDashboardTasks";
 import {
   daysUntilDue,
@@ -17,6 +18,12 @@ import {
   taskSearchText,
 } from "../../libs/utils/dashboardTaskUtils";
 import type { TaskStatus } from "../../../board/libs/types/task";
+
+const DELAY_RISK_BADGE_CLASS: Record<string, string> = {
+  위험: "bg-red-100 text-red-700",
+  주의: "bg-amber-100 text-amber-700",
+  정상: "bg-emerald-100 text-emerald-700",
+};
 
 const STATUS_FILTERS: Array<{ label: string; value: TaskStatus | "all" }> = [
   { label: "전체", value: "all" },
@@ -31,6 +38,7 @@ export function AllTasksPage() {
   const onBack = () => navigate("/dashboard");
   const { currentProjectId } = useAuth();
   const { data: tasks, loading, error, refetch } = useDashboardTasks(currentProjectId);
+  const { data: progress } = useDashboardProgress(currentProjectId);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState<TaskStatus | "all">("all");
   const [sortBy, setSortBy] = useState("dueDate");
@@ -49,6 +57,19 @@ export function AllTasksPage() {
       return (a.dueDate ?? "9999-12-31").localeCompare(b.dueDate ?? "9999-12-31");
     });
   }, [filterStatus, search, sortBy, tasks]);
+
+  const delayRiskByTaskId = useMemo(() => {
+    const map = new Map<string, string>();
+    (progress?.delayRisks ?? []).forEach(risk => map.set(risk.taskId, risk.result));
+    return map;
+  }, [progress]);
+
+  const delayRiskLabel = (taskId: string, status: TaskStatus): string | null => {
+    if (status === "done") return null; // 완료된 업무는 지연 위험도 분석 대상이 아님
+    const result = delayRiskByTaskId.get(taskId);
+    if (result) return result;
+    return progress?.hasPredictions ? "정상" : null;
+  };
 
   const counts = {
     total: tasks.length,
@@ -86,7 +107,7 @@ export function AllTasksPage() {
         <DetailStatCard label="전체 업무" value={loading ? "..." : counts.total} sub="프로젝트 전체" color="#3B5BDB" icon={Layers} />
         <DetailStatCard label="완료" value={loading ? "..." : counts.done} sub={loading ? "불러오는 중" : `완료율 ${donePct}%`} color="#10B981" icon={CheckCircle2} />
         <DetailStatCard label="진행 중" value={loading ? "..." : counts.inProgress} sub="활성 업무" color="#3B5BDB" icon={Clock} />
-        <DetailStatCard label="블로커" value={loading ? "..." : counts.blocked} sub="해결 필요" color="#EF4444" icon={AlertTriangle} />
+        <DetailStatCard label="블로커" value={loading ? "..." : counts.blocked} sub="즉시 해결 필요" color="#EF4444" icon={AlertTriangle} />
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -116,7 +137,7 @@ export function AllTasksPage() {
       </div>
 
       <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-        <table className="w-full text-sm min-w-[900px]">
+        <table className="w-full text-sm min-w-[1000px]">
           <thead>
             <tr className="border-b border-border bg-muted/40">
               <th className="pl-4 pr-2 py-3">
@@ -124,7 +145,7 @@ export function AllTasksPage() {
                   {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
                 </button>
               </th>
-              {["ID", "업무명", "담당자", "상태", "우선순위", "마감일", "출처", "액션"].map(h => (
+              {["ID", "업무명", "담당자", "상태", "우선순위", "지연 위험도", "마감일", "출처", "액션"].map(h => (
                 <th key={h} className="px-3 py-3 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{h}</th>
               ))}
             </tr>
@@ -157,6 +178,18 @@ export function AllTasksPage() {
                   </td>
                   <td className="px-3 py-3"><TaskStatusPill status={status} /></td>
                   <td className="px-3 py-3"><PriorityBadge priority={priority} /></td>
+                  <td className="px-3 py-3">
+                    {(() => {
+                      const risk = delayRiskLabel(task.id, status);
+                      return risk ? (
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${DELAY_RISK_BADGE_CLASS[risk] ?? "bg-slate-100 text-slate-500"}`}>
+                          {risk}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground">-</span>
+                      );
+                    })()}
+                  </td>
                   <td className="px-3 py-3">
                     <span className={`text-xs font-medium ${isDueSoon ? "text-amber-600" : "text-muted-foreground"}`}>
                       {formatDashboardDueDate(task.dueDate)}

@@ -3,8 +3,10 @@ package com.workflowai.dashboard.service;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.activity.Activity;
 import com.workflowai.activity.ActivityRepository;
+import com.workflowai.project.Project;
 import com.workflowai.project.ProjectMember;
 import com.workflowai.project.ProjectMemberRepository;
+import com.workflowai.project.ProjectRepository;
 import com.workflowai.task.Task;
 import com.workflowai.task.TaskRepository;
 import com.workflowai.user.User;
@@ -13,9 +15,9 @@ import com.workflowai.dashboard.DTO.ActivityItemDto;
 import com.workflowai.dashboard.DTO.CategoryProgressDto;
 import com.workflowai.dashboard.DTO.DashboardTaskDto;
 import com.workflowai.dashboard.DTO.DashboardSummaryResponse;
+import com.workflowai.dashboard.DTO.DelayRiskDto;
 import com.workflowai.dashboard.DTO.MilestoneProgressDto;
 import com.workflowai.dashboard.DTO.ProgressDetailResponse;
-import com.workflowai.dashboard.DTO.TaskDelayRiskDto;
 import com.workflowai.dashboard.DTO.UpcomingTaskDto;
 import com.workflowai.dashboard.DTO.WorkloadEntryDto;
 import com.workflowai.dashboard.entity.Milestone;
@@ -52,6 +54,7 @@ public class DashboardService {
     private final ProjectMemberRepository projectMemberRepository;
     private final DemoDataService demoDataService;
     private final FastApiDashboardClient fastApiDashboardClient;
+    private final ProjectRepository projectRepository;
 
     public DashboardService(
         TaskRepository taskRepository,
@@ -61,7 +64,8 @@ public class DashboardService {
         UserRepository userRepository,
         ProjectMemberRepository projectMemberRepository,
         DemoDataService demoDataService,
-        FastApiDashboardClient fastApiDashboardClient
+        FastApiDashboardClient fastApiDashboardClient,
+        ProjectRepository projectRepository
     ) {
         this.taskRepository = taskRepository;
         this.milestoneRepository = milestoneRepository;
@@ -71,6 +75,7 @@ public class DashboardService {
         this.projectMemberRepository = projectMemberRepository;
         this.demoDataService = demoDataService;
         this.fastApiDashboardClient = fastApiDashboardClient;
+        this.projectRepository = projectRepository;
     }
 
     public DashboardSummaryResponse getSummary(String projectIdParam) {
@@ -138,13 +143,42 @@ public class DashboardService {
         Map<Long, Task> tasksById = new LinkedHashMap<>();
         tasks.forEach(t -> tasksById.put(t.getId(), t));
 
-        List<TaskDelayRiskDto> delayRisks = latestPredictions.stream()
+        List<DelayRiskDto> delayRisks = latestPredictions.stream()
             .filter(p -> !RISK_RESULT_NORMAL.equals(p.getResult()))
             .map(p -> toDelayRiskDto(p, tasksById.get(p.getTargetId())))
             .filter(java.util.Objects::nonNull)
             .toList();
 
-        return new ProgressDetailResponse(total, done, progressPercent, milestones, categoryBreakdown, delayRisks, hasPredictions);
+        Project project = projectRepository.findById(projectId).orElse(null);
+        String projectDeadline = project == null || project.getDeadline() == null
+            ? null : project.getDeadline().toString();
+        String projectCreatedAt = project == null || project.getCreatedAt() == null
+            ? null : project.getCreatedAt().toLocalDate().toString();
+
+        return new ProgressDetailResponse(
+            total, done, progressPercent, milestones, categoryBreakdown, delayRisks, hasPredictions,
+            projectDeadline, projectCreatedAt
+        );
+    }
+
+    /**
+     * 현재 로그인한 사용자가 담당자(assignee)인 업무 중, AI 지연 위험도가 '정상'이 아닌
+     * 업무만 골라 반환한다. 새 모델이나 새 ml_predictions 행 타입이 필요한 게 아니라,
+     * getProgressDetail()이 만드는 것과 동일한 업무별(target_type='task') 최신 예측을
+     * 담당자 기준으로 한 번 더 걸러내는 조회다.
+     */
+    public List<DelayRiskDto> getMyDelayRisks(String projectIdParam, Long userId) {
+        Long projectId = demoDataService.resolveProjectId(projectIdParam);
+        List<Task> tasks = taskRepository.findByProjectIdOrderByCreatedAtDesc(projectId);
+
+        Map<Long, Task> tasksById = new LinkedHashMap<>();
+        tasks.forEach(t -> tasksById.put(t.getId(), t));
+
+        return latestPredictionsByTarget(projectId).stream()
+            .filter(p -> !RISK_RESULT_NORMAL.equals(p.getResult()))
+            .map(p -> toDelayRiskDtoForAssignee(p, tasksById.get(p.getTargetId()), userId))
+            .filter(java.util.Objects::nonNull)
+            .toList();
     }
 
     /** FastAPI에 재예측을 요청한 뒤(베스트-에포트) 최신 진행률 상세를 반환한다. */
@@ -265,13 +299,21 @@ public class DashboardService {
         return new ArrayList<>(latestByTarget.values());
     }
 
-    private TaskDelayRiskDto toDelayRiskDto(MlPrediction prediction, Task task) {
+    /** getMyDelayRisks 전용 — task가 없거나 담당자가 userId와 다르면 걸러낸다. */
+    private DelayRiskDto toDelayRiskDtoForAssignee(MlPrediction prediction, Task task, Long userId) {
+        if (task == null || !userId.equals(task.getAssigneeId())) {
+            return null;
+        }
+        return toDelayRiskDto(prediction, task);
+    }
+
+    private DelayRiskDto toDelayRiskDto(MlPrediction prediction, Task task) {
         if (task == null) {
             // 예측 이후 업무가 삭제된 경우 등 - 더 이상 존재하지 않는 업무는 화면에 표시하지 않는다.
             return null;
         }
         Double score = prediction.getScore() == null ? null : prediction.getScore().doubleValue();
-        return new TaskDelayRiskDto(
+        return new DelayRiskDto(
             String.valueOf(task.getId()),
             task.getTitle(),
             resolveUserName(task.getAssigneeId()),
@@ -306,7 +348,9 @@ public class DashboardService {
             task.getPriority(),
             task.getDescription(),
             task.getSourceType(),
-            task.getPosition()
+            task.getPosition(),
+            task.getCreatedAt() == null ? null : task.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
+            task.getUpdatedAt() == null ? null : task.getUpdatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         );
     }
 

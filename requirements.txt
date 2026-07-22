@@ -1,3 +1,5 @@
+# FastAPI 공용 런타임 의존성의 단일 기준 파일.
+# Dockerfile과 App/scripts/run_ai_fastapi.sh 모두 이 루트 파일을 설치한다.
 fastapi==0.139.0
 uvicorn[standard]==0.51.0
 python-multipart>=0.0.20
