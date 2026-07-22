@@ -1,21 +1,53 @@
 import { useEffect, useRef, useState } from "react";
 import { Sparkles, X, Send } from "lucide-react";
-import { CHAT_INIT, QUICK_QUESTIONS } from "../libs/mock/chat";
+import { buildChatInit, QUICK_QUESTIONS } from "../libs/mock/chat";
 import { useRagQuery } from "../libs/hooks/useRagQuery";
 import { useAuth } from "../../global/hooks/useAuth";
 import type { ChatMsg } from "../libs/types/chat";
 
 const NO_PROJECT_MESSAGE = "아직 연결된 프로젝트가 없습니다. 프로젝트를 만들고 회의록을 업로드한 뒤 다시 질문해주세요.";
 
+const CHAT_SESSION_KEY = "ai-assistant-chat-session";
+const CHAT_SESSION_TTL_MS = 5 * 60 * 1000;
+
+type ChatSession = { messages: ChatMsg[]; savedAt: number };
+
+function loadSavedMessages(): ChatMsg[] | null {
+  const raw = sessionStorage.getItem(CHAT_SESSION_KEY);
+  if (!raw) return null;
+  try {
+    const session = JSON.parse(raw) as ChatSession;
+    if (Date.now() - session.savedAt > CHAT_SESSION_TTL_MS) {
+      sessionStorage.removeItem(CHAT_SESSION_KEY);
+      return null;
+    }
+    return session.messages;
+  } catch {
+    sessionStorage.removeItem(CHAT_SESSION_KEY);
+    return null;
+  }
+}
+
 export function AIAssistant({ onClose }: { onClose: () => void }) {
-  const { currentProjectId } = useAuth();
-  const [messages, setMessages] = useState<ChatMsg[]>(CHAT_INIT.map(m => ({ role: m.role as "assistant", content: m.content })));
+  const { user, currentProjectId } = useAuth();
+  const [messages, setMessages] = useState<ChatMsg[]>(
+    () => loadSavedMessages() ?? buildChatInit(user?.name ?? "회원")
+  );
   const [input, setInput] = useState("");
   const { status, answer, error, ask } = useRagQuery();
   const loading = status === "loading";
   const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+  useEffect(() => {
+    return () => {
+      const session: ChatSession = { messages: messagesRef.current, savedAt: Date.now() };
+      sessionStorage.setItem(CHAT_SESSION_KEY, JSON.stringify(session));
+    };
+  }, []);
 
   useEffect(() => {
     if (status === "success" && answer) {
