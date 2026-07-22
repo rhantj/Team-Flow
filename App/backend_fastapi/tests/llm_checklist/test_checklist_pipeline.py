@@ -1,12 +1,29 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from llm_checklist.app.checklist_pipeline import (
     build_checklist_prompt,
     parse_checklist_response,
 )
 from llm_checklist.app.checklist_schema import ChecklistGenerateRequest
+
+
+def test_parse_non_dict_json_raises_valueerror():
+    # LLM이 객체가 아닌 배열을 반환해도 AttributeError가 아니라 ValueError로 실패해야 한다.
+    with pytest.raises(ValueError):
+        parse_checklist_response('[{"title": "x"}]')
+
+
+def test_request_rejects_overlong_title():
+    with pytest.raises(ValidationError):
+        ChecklistGenerateRequest(title="가" * 201)
+
+
+def test_request_rejects_too_many_existing_items():
+    with pytest.raises(ValidationError):
+        ChecklistGenerateRequest(title="작업", existing_items=[f"항목{i}" for i in range(101)])
 
 
 def test_parse_valid_json_returns_suggestions():

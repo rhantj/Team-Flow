@@ -31,6 +31,7 @@ class ChecklistControllerGenerateTest {
     @MockitoBean private DemoDataService demoDataService;
     @MockitoBean private ActivityService activityService;
     @MockitoBean private ChecklistAiService checklistAiService;
+    @MockitoBean private ChecklistApplyService checklistApplyService;
 
     private Task taskWithProject(Long projectId) {
         return new Task(projectId, "로그인 API", "backend", "todo", null,
@@ -68,16 +69,14 @@ class ChecklistControllerGenerateTest {
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(demoDataService.resolveUserId("1")).thenReturn(1L);
         when(taskRepository.findById(5L)).thenReturn(Optional.of(taskWithProject(1L)));
-        when(checklistRepository.findByTaskIdOrderByCreatedAtAsc(5L)).thenReturn(List.of());
-        when(checklistAiService.normalizeTitles(any(), any())).thenReturn(List.of("API 설계"));
-        when(checklistRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(checklistApplyService.saveGenerated(any(), any())).thenReturn(List.of(new Checklist(5L, "API 설계")));
 
         mockMvc.perform(post("/api/v1/projects/demo-project/tasks/5/checklists/apply-generated")
                 .contentType(MediaType.APPLICATION_JSON).content("{\"titles\":[\"API 설계\"]}"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data[0].title").value("API 설계"));
 
-        verify(checklistRepository).save(any());
+        verify(checklistApplyService).saveGenerated(any(), any());
         verify(activityService).record(any(), any(), any(), any(), any());
     }
 
@@ -85,8 +84,7 @@ class ChecklistControllerGenerateTest {
     void applyGeneratedReturns400WhenNoValidTitles() throws Exception {
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(5L)).thenReturn(Optional.of(taskWithProject(1L)));
-        when(checklistRepository.findByTaskIdOrderByCreatedAtAsc(5L)).thenReturn(List.of());
-        when(checklistAiService.normalizeTitles(any(), any())).thenReturn(List.of());
+        when(checklistApplyService.saveGenerated(any(), any())).thenReturn(List.of());
 
         mockMvc.perform(post("/api/v1/projects/demo-project/tasks/5/checklists/apply-generated")
                 .contentType(MediaType.APPLICATION_JSON).content("{\"titles\":[\" \"]}"))

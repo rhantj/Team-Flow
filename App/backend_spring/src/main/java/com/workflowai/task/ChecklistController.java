@@ -7,7 +7,6 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -31,22 +30,29 @@ public class ChecklistController {
     private final DemoDataService demoDataService;
     private final ActivityService activityService;
     private final ChecklistAiService checklistAiService;
-    // 업무 ID별 락. 같은 업무에 대한 자동 생성 요청이 동시에 들어와도 조회-후-저장 사이에
-    // 끼어들어 같은 항목이 중복 저장되는 것을 막는다(단일 인스턴스 배포 기준).
-    private final ConcurrentHashMap<Long, Object> generateLocks = new ConcurrentHashMap<>();
+    private final ChecklistApplyService checklistApplyService;
+    // 업무 ID를 고정 개수 버킷에 매핑한 스트라이프 락. 같은 업무 동시 저장 시 조회-후-저장 경합으로
+    // 중복 저장되는 것을 막으면서, 업무 수에 비례해 락 객체가 무한 증가하지 않도록 상한을 둔다(단일 인스턴스 기준).
+    private static final int APPLY_LOCK_STRIPES = 64;
+    private final Object[] applyLocks = new Object[APPLY_LOCK_STRIPES];
 
     public ChecklistController(
         ChecklistRepository checklistRepository,
         TaskRepository taskRepository,
         DemoDataService demoDataService,
         ActivityService activityService,
-        ChecklistAiService checklistAiService
+        ChecklistAiService checklistAiService,
+        ChecklistApplyService checklistApplyService
     ) {
         this.checklistRepository = checklistRepository;
         this.taskRepository = taskRepository;
         this.demoDataService = demoDataService;
         this.activityService = activityService;
         this.checklistAiService = checklistAiService;
+        this.checklistApplyService = checklistApplyService;
+        for (int i = 0; i < APPLY_LOCK_STRIPES; i++) {
+            this.applyLocks[i] = new Object();
+        }
     }
 
     private Task resolveTaskOrNull(String projectId, Long taskId) {
@@ -131,15 +137,11 @@ public class ChecklistController {
         if (task == null) {
             return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
         }
+        List<String> requestedTitles = request == null ? null : request.titles();
         List<Checklist> saved;
-        synchronized (generateLocks.computeIfAbsent(taskId, id -> new Object())) {
-            List<String> existingTitles = checklistRepository.findByTaskIdOrderByCreatedAtAsc(taskId).stream()
-                .map(Checklist::getTitle).toList();
-            List<String> titles = checklistAiService.normalizeTitles(
-                request == null ? null : request.titles(), existingTitles);
-            saved = titles.stream()
-                .map(title -> checklistRepository.save(new Checklist(taskId, title)))
-                .toList();
+        // 커밋까지 락 안에서 이뤄지도록, 트랜잭션 경계를 가진 서비스 호출을 락으로 감싼다.
+        synchronized (applyLocks[(int) Math.floorMod(taskId, APPLY_LOCK_STRIPES)]) {
+            saved = checklistApplyService.saveGenerated(taskId, requestedTitles);
         }
         if (saved.isEmpty()) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("NO_ITEMS", "저장할 체크리스트 항목이 없습니다."));

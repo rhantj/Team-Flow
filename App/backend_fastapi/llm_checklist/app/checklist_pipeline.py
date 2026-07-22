@@ -48,8 +48,14 @@ JSON 스키마:
 """
 
 
+MAX_REASON_LEN = 300
+
+
 def parse_checklist_response(raw: str) -> List[ChecklistItemSuggestion]:
     data = json.loads(_strip_code_fence(raw))
+    if not isinstance(data, dict):
+        # LLM이 객체가 아닌 배열/스칼라를 반환한 경우도 명시적 ValueError로 처리(AttributeError 방지).
+        raise ValueError("체크리스트 응답이 JSON 객체가 아닙니다.")
     items_raw = data.get("items")
     if not isinstance(items_raw, list) or not items_raw:
         raise ValueError("체크리스트 items가 비어 있거나 리스트가 아닙니다.")
@@ -60,7 +66,8 @@ def parse_checklist_response(raw: str) -> List[ChecklistItemSuggestion]:
         title = str(item.get("title", "")).strip()
         if not title:
             continue
-        items.append(ChecklistItemSuggestion(title=title[:MAX_TITLE_LEN], reason=str(item.get("reason", "")).strip()))
+        reason = str(item.get("reason", "")).strip()
+        items.append(ChecklistItemSuggestion(title=title[:MAX_TITLE_LEN], reason=reason[:MAX_REASON_LEN]))
     if not items:
         raise ValueError("유효한 체크리스트 항목이 없습니다.")
     return items[:MAX_ITEMS]
