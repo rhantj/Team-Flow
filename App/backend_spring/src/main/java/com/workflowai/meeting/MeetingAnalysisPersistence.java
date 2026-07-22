@@ -9,11 +9,18 @@ import com.workflowai.user.UserRepository;
 import java.time.LocalDate;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Component
 public class MeetingAnalysisPersistence {
+    private static final Logger log = LoggerFactory.getLogger(MeetingAnalysisPersistence.class);
     public static final String DEFAULT_ANALYSIS_ERROR_MESSAGE = "회의록 분석 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
     public static final String REUPLOAD_REQUIRED_ERROR_MESSAGE = "원본 음성 파일은 재분석을 위해 다시 업로드해야 합니다.";
     public static final String REUPLOAD_READ_ERROR_MESSAGE = "원본 회의록 내용을 읽을 수 없어 재분석을 위해 다시 업로드해야 합니다.";
@@ -27,6 +34,7 @@ public class MeetingAnalysisPersistence {
     private final RagIngestService ragIngestService;
     private final ProjectMemberRepository projectMemberRepository;
     private final NotificationService notificationService;
+    private final TransactionTemplate requiresNewNotificationTransaction;
 
     public MeetingAnalysisPersistence(
         MeetingRepository meetingRepository,
@@ -37,7 +45,8 @@ public class MeetingAnalysisPersistence {
         DemoDataService demoDataService,
         RagIngestService ragIngestService,
         ProjectMemberRepository projectMemberRepository,
-        NotificationService notificationService
+        NotificationService notificationService,
+        PlatformTransactionManager transactionManager
     ) {
         this.meetingRepository = meetingRepository;
         this.meetingAnalysisRepository = meetingAnalysisRepository;
@@ -48,6 +57,8 @@ public class MeetingAnalysisPersistence {
         this.ragIngestService = ragIngestService;
         this.projectMemberRepository = projectMemberRepository;
         this.notificationService = notificationService;
+        this.requiresNewNotificationTransaction = new TransactionTemplate(transactionManager);
+        this.requiresNewNotificationTransaction.setPropagationBehavior(TransactionTemplate.PROPAGATION_REQUIRES_NEW);
     }
 
     @Transactional
@@ -88,9 +99,9 @@ public class MeetingAnalysisPersistence {
         meetingRepository.save(meeting);
 
         if (meeting.getUploadedBy() != null) {
-            notificationService.notify(
+            notifyBestEffort(
                 meeting.getUploadedBy(), "MEETING_ANALYSIS_COMPLETED", "회의 분석이 완료되었습니다.",
-                "'" + meeting.getTitle() + "' 회의록 분석이 완료되었습니다.", "meeting", meetingId
+                "'" + meeting.getTitle() + "' 회의록 분석이 완료되었습니다.", meetingId
             );
         }
     }
@@ -101,9 +112,9 @@ public class MeetingAnalysisPersistence {
             meeting.setAnalysisStatus("failed");
             meetingRepository.save(meeting);
             if (meeting.getUploadedBy() != null) {
-                notificationService.notify(
+                notifyBestEffort(
                     meeting.getUploadedBy(), "MEETING_ANALYSIS_FAILED", "회의 분석에 실패했습니다.",
-                    "'" + meeting.getTitle() + "' 회의록 분석에 실패했습니다. 다시 시도해주세요.", "meeting", meetingId
+                    "'" + meeting.getTitle() + "' 회의록 분석에 실패했습니다. 다시 시도해주세요.", meetingId
                 );
             }
         });
@@ -139,6 +150,42 @@ public class MeetingAnalysisPersistence {
             content.append("\n근거: ").append(item.getBasis());
         }
         return content.toString();
+    }
+
+    /**
+     * 알림 발송은 분석 결과 저장의 부가 기능이라 실패해도 안 되고, 트랜잭션이 실제로
+     * 커밋되기 전에는(즉 분석 결과가 확정되기 전에는) 나가면 안 된다.
+     * 트랜잭션 동기화가 걸려 있으면(정상적인 @Transactional 호출 경로) afterCommit
+     * 콜백으로 미뤄서 커밋 이후에만 보내고, 동기화가 없는 컨텍스트(단위 테스트 등
+     * 트랜잭션 프록시 밖에서 직접 호출되는 경우)에서는 즉시 best-effort로 보낸다.
+     */
+    private void notifyBestEffort(Long userId, String type, String title, String content, Long meetingId) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    sendNotificationSafely(userId, type, title, content, meetingId);
+                }
+            });
+            return;
+        }
+        sendNotificationSafely(userId, type, title, content, meetingId);
+    }
+
+    /**
+     * afterCommit() 콜백은 원래 트랜잭션의 자원이 아직 스레드에서 완전히 언바인딩되기
+     * 전에 실행된다 (Spring은 cleanupAfterCompletion보다 afterCommit을 먼저 호출한다).
+     * 그 상태에서 NotificationService.notify()가 기본 전파(REQUIRED)로 저장을 하면
+     * 이미 커밋 처리 중인 트랜잭션에 잘못 합류해 실제로 커밋되지 않을 위험이 있다.
+     * REQUIRES_NEW로 감싸 항상 독립된 새 물리 트랜잭션에서 커밋되도록 강제한다.
+     */
+    private void sendNotificationSafely(Long userId, String type, String title, String content, Long meetingId) {
+        try {
+            requiresNewNotificationTransaction.executeWithoutResult(status ->
+                notificationService.notify(userId, type, title, content, "meeting", meetingId));
+        } catch (Exception e) {
+            log.warn("회의 분석 알림 발송 실패. meetingId={}, userId={}, type={}", meetingId, userId, type, e);
+        }
     }
 
     private Long resolveAssigneeByName(String name) {

@@ -104,18 +104,14 @@ public class TaskController {
     }
 
     /**
-     * assigneeId는 예전 데모 mock id("1"~"5")와 실제 사용자 DB id 문자열이 섞여 들어올 수 있다.
-     * mock id로 먼저 풀어보고, 매칭되는 데모 유저가 없으면 실제 유저 id로 간주해 그대로 파싱한다.
+     * assigneeId는 프론트에서 실제 사용자 DB id 문자열로 전달된다.
+     * 데모 mock id("1"~"5")로 먼저 풀어보는 방식은 실제 사용자 id와 값이 우연히 겹칠 때
+     * 엉뚱한 사용자로 배정되는 위험이 있어 쓰지 않는다 — 그대로 Long으로 파싱한다.
+     * 형식이 잘못된 값은 호출부에서 NumberFormatException을 잡아 400으로 응답한다.
      */
     private Long resolveAssigneeId(String assigneeIdParam) {
         if (assigneeIdParam == null || assigneeIdParam.isBlank()) return null;
-        Long resolved = demoDataService.resolveUserId(assigneeIdParam);
-        if (resolved != null) return resolved;
-        try {
-            return Long.parseLong(assigneeIdParam);
-        } catch (NumberFormatException e) {
-            return null;
-        }
+        return Long.parseLong(assigneeIdParam);
     }
 
     /** 해당 프로젝트+상태 컬럼의 맨 끝에 놓일 position(가장 큰 값 + 1, 비어있으면 0). */
@@ -151,6 +147,13 @@ public class TaskController {
             return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_DUE_DATE", "dueDate는 YYYY-MM-DD 형식이어야 합니다."));
         }
 
+        Long assigneeId;
+        try {
+            assigneeId = resolveAssigneeId(request.assigneeId());
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_ASSIGNEE_ID", "assigneeId 형식이 올바르지 않습니다."));
+        }
+
         Long createdBy = currentActorId();
         String status = request.status() == null ? "todo" : request.status();
         // category는 DB NOT NULL이라 누락 시 저장 단계에서 예외가 나기 전에 기본값으로 방어한다.
@@ -160,7 +163,7 @@ public class TaskController {
             request.title(),
             category,
             status,
-            resolveAssigneeId(request.assigneeId()),
+            assigneeId,
             dueDate,
             request.priority(),
             request.description(),
@@ -266,7 +269,12 @@ public class TaskController {
         String priorityBefore = task.getPriority();
         String descriptionBefore = task.getDescription();
 
-        Long newAssigneeId = resolveAssigneeId(request.assigneeId());
+        Long newAssigneeId;
+        try {
+            newAssigneeId = resolveAssigneeId(request.assigneeId());
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_ASSIGNEE_ID", "assigneeId 형식이 올바르지 않습니다."));
+        }
         task.applyUpdate(request.title(), request.category(), newAssigneeId, dueDate, request.priority(), request.description());
         taskRepository.save(task);
 
