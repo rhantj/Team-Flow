@@ -22,6 +22,7 @@ import {
 import { useMyTasks } from "../libs/hooks/useMyTasks";
 import { getDueToday, getDueThisWeek } from "../libs/utils/taskWidgets";
 import { getDoneCount, getInProgressCount, getBlockedCount, getTasksByStatus, formatDueDate } from "../../board/libs/utils/taskService";
+import type { TaskStatus } from "../../board/libs/types/task";
 
 // ─── local types ──────────────────────────────────────────────────────────────
 export type MyPageRole = "member" | "reviewer";
@@ -41,13 +42,15 @@ function MemberMyPage({ name, email, affiliation, field, github, profileImageUrl
 }) {
   const navigate = useNavigate();
   const [taskView, setTaskView] = useState<"all"|"today"|"week">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | TaskStatus>("all");
   const [showScore, setShowScore] = useState(false);
   const initials = name ? name[0] : MEMBER_USER.initials;
 
   const { tasks: myTasks, loadState, reload } = useMyTasks(projectId, userId);
   const dueToday = getDueToday(myTasks);
   const dueThisWeek = getDueThisWeek(myTasks);
-  const visibleTasks = taskView === "today" ? dueToday : taskView === "week" ? dueThisWeek : myTasks;
+  const deadlineFilteredTasks = taskView === "today" ? dueToday : taskView === "week" ? dueThisWeek : myTasks;
+  const visibleTasks = statusFilter === "all" ? deadlineFilteredTasks : deadlineFilteredTasks.filter(t => t.status === statusFilter);
   const todayNotDone = dueToday.filter(t => t.status !== "done");
   const thisWeekNotDone = dueThisWeek.filter(t => t.status !== "done");
 
@@ -156,21 +159,27 @@ function MemberMyPage({ name, email, affiliation, field, github, profileImageUrl
           <>
             {/* Left: task status (2/3) */}
             <div className="col-span-2 space-y-4">
-              {/* Stat cards */}
-              <div className="grid grid-cols-4 gap-3">
+              {/* Stat cards / 상태 필터 탭 */}
+              <div className="grid grid-cols-5 gap-3">
                 {[
-                  { label:"완료", value: taskCounts.done,      color:"#10B981", Icon: CheckCircle2 },
-                  { label:"진행 중", value: taskCounts.inprogress, color:"#3B5BDB", Icon: Clock },
-                  { label:"블로커", value: taskCounts.blocked,    color:"#EF4444", Icon: AlertTriangle },
-                  { label:"대기",   value: taskCounts.todo,       color:"#8892A4", Icon: Layers },
+                  { key:"all" as const,        label:"전체",    value: myTasks.length,      color:"#7048E8", Icon: BarChart3 },
+                  { key:"done" as const,       label:"완료",    value: taskCounts.done,      color:"#10B981", Icon: CheckCircle2 },
+                  { key:"inprogress" as const, label:"진행 중", value: taskCounts.inprogress, color:"#3B5BDB", Icon: Clock },
+                  { key:"blocked" as const,    label:"블로커",  value: taskCounts.blocked,    color:"#EF4444", Icon: AlertTriangle },
+                  { key:"todo" as const,       label:"대기",    value: taskCounts.todo,       color:"#8892A4", Icon: Layers },
                 ].map(s => (
-                  <div key={s.label} className="bg-card rounded-xl p-4 border border-border shadow-sm text-center">
+                  <button
+                    key={s.key}
+                    onClick={() => setStatusFilter(s.key)}
+                    className={`bg-card rounded-xl p-4 border shadow-sm text-center transition-all ${statusFilter === s.key ? "" : "border-border hover:border-slate-300"}`}
+                    style={statusFilter === s.key ? { borderColor: s.color, boxShadow: `0 0 0 2px ${s.color}` } : undefined}
+                  >
                     <div className="w-8 h-8 rounded-lg flex items-center justify-center mx-auto mb-2" style={{ background:`${s.color}15` }}>
                       <s.Icon className="w-4 h-4" style={{ color: s.color }} />
                     </div>
                     <div className="text-xl font-bold text-foreground">{s.value}</div>
                     <div className="text-[10px] text-muted-foreground">{s.label}</div>
-                  </div>
+                  </button>
                 ))}
               </div>
 

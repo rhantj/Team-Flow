@@ -250,7 +250,13 @@ export function Sidebar({ active, onSelect, onAI, collapsed, onToggleCollapsed, 
               <div className="text-[10px]" style={{ color: "var(--muted-foreground)" }}>{role}</div>
             </div>
           )}
-          {!collapsed && <Settings className="w-4 h-4 cursor-pointer shrink-0" style={{ color: "var(--muted-foreground)" }} />}
+          {!collapsed && (
+            <Settings
+              onClick={() => navigate("/mypage/edit")}
+              className="w-4 h-4 cursor-pointer shrink-0 hover:opacity-80 transition-opacity"
+              style={{ color: "var(--muted-foreground)" }}
+            />
+          )}
         </div>
       </div>
     </div>

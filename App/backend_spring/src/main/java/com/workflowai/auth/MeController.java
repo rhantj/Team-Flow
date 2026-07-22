@@ -45,6 +45,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class MeController {
     private static final Set<String> ALLOWED_AVATAR_TYPES = Set.of("image/png", "image/jpeg");
     private static final long MAX_AVATAR_BYTES = 10L * 1024 * 1024;
+    private static final int MAX_AVATAR_DIMENSION = 4096;
 
     private final UserRepository userRepository;
     private final ProjectMemberRepository projectMemberRepository;
@@ -148,7 +149,12 @@ public class MeController {
         // GIF/BMP 등도 디코딩할 수 있으므로, ImageReader가 실제로 인식한 포맷이 PNG/JPEG인지까지
         // 확인한다 — /uploads/**는 인증 없이 공개되므로 위장/오분류 파일이 그대로 서빙되는 것을 막는다.
         // 저장 확장자도 이 감지된 포맷을 그대로 쓴다 (Content-Type 헤더를 신뢰하지 않는다).
-        String detectedFormat = detectImageFormat(file);
+        String detectedFormat;
+        try {
+            detectedFormat = detectImageFormat(file);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("IMAGE_TOO_LARGE", e.getMessage()));
+        }
         if (detectedFormat == null) {
             return ResponseEntity.badRequest()
                 .body(ApiResponse.fail("INVALID_FILE_TYPE", "PNG 또는 JPG 파일만 업로드할 수 있습니다."));
@@ -208,6 +214,9 @@ public class MeController {
      * 같은 리더로 실제 픽셀 데이터까지 끝까지 디코딩되는지도 확인한다 — 헤더만 보고 포맷을
      * 판별하는 것만으로는 본문이 잘리거나 손상된 파일을 걸러내지 못한다. Content-Type 헤더는
      * 신뢰하지 않는다. 반환값은 저장 시 그대로 확장자로 쓰인다 ("png" 또는 "jpg"), 그 외에는 null.
+     * 가로/세로가 MAX_AVATAR_DIMENSION을 넘으면 IllegalArgumentException을 던진다 — 파일 용량은
+     * 10MB 이하로 작아도 압축을 풀면 거대한 비트맵이 되는 "압축 폭탄" 이미지로 메모리가 고갈되는
+     * 것을 막기 위해, 전체 디코딩(read)을 하기 전에 크기부터 먼저 확인한다.
      */
     private String detectImageFormat(MultipartFile file) {
         try (ImageInputStream iis = ImageIO.createImageInputStream(file.getInputStream())) {
@@ -231,8 +240,15 @@ public class MeController {
                 }
 
                 reader.setInput(iis);
+                if (reader.getWidth(0) > MAX_AVATAR_DIMENSION || reader.getHeight(0) > MAX_AVATAR_DIMENSION) {
+                    throw new IllegalArgumentException(
+                        "이미지 해상도는 " + MAX_AVATAR_DIMENSION + "x" + MAX_AVATAR_DIMENSION + " 이하여야 합니다."
+                    );
+                }
                 reader.read(0); // 헤더 인식과 별개로 전체 디코딩이 실제로 되는지 확인 (실패 시 IOException)
                 return extension;
+            } catch (IllegalArgumentException e) {
+                throw e; // 의도적으로 던진 해상도 초과 예외는 그대로 전파한다
             } catch (IOException | RuntimeException e) {
                 return null;
             } finally {
@@ -270,10 +286,20 @@ public class MeController {
         return "avatars/" + fileName;
     }
 
-    /** DB 반영이 확인된 뒤에만 호출한다. 정리 실패는 무시한다 — orphan 파일만 남을 뿐 서비스에는 영향 없다. */
+    /**
+     * DB 반영이 확인된 뒤에만 호출한다. 정리 실패는 무시한다 — orphan 파일만 남을 뿐 서비스에는
+     * 영향 없다. relativePath는 항상 storeAvatar()가 만든 값이라 정상적으로는 안전하지만,
+     * DB 값이 손상/변조됐을 가능성까지 방어적으로 차단하기 위해 avatars 디렉터리를 벗어나는
+     * 경로는 지우지 않는다 (MeetingAnalysisService의 zip-slip 가드와 동일한 패턴).
+     */
     private void deleteAvatarFile(String relativePath) {
         try {
-            Files.deleteIfExists(Path.of(uploadsDir, relativePath).toAbsolutePath().normalize());
+            Path avatarsDir = Path.of(uploadsDir, "avatars").toAbsolutePath().normalize();
+            Path target = Path.of(uploadsDir, relativePath).toAbsolutePath().normalize();
+            if (!target.startsWith(avatarsDir)) {
+                return;
+            }
+            Files.deleteIfExists(target);
         } catch (IOException ignored) {
         }
     }

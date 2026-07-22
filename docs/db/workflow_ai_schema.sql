@@ -33,7 +33,6 @@ CREATE TABLE users (
     provider_id     VARCHAR(255) NOT NULL,
     password_hash   VARCHAR(255),
     affiliation        VARCHAR(100),
-    field              JSONB NOT NULL DEFAULT '[]'::jsonb, -- [미사용/레거시] field_tags로 대체됨
     field_tags         JSONB NOT NULL DEFAULT '[]'::jsonb,
     github_username    VARCHAR(100),
     profile_image_path VARCHAR(255),
@@ -47,8 +46,7 @@ COMMENT ON COLUMN users.provider IS 'google 등 OAuth 제공자 또는 local(이
 COMMENT ON COLUMN users.provider_id IS 'OAuth sub(불변 식별자) 또는 local 계정의 경우 email과 동일';
 COMMENT ON COLUMN users.password_hash IS 'BCrypt 해시. provider=local 계정만 값이 있고 OAuth 계정은 NULL';
 COMMENT ON COLUMN users.affiliation IS '소속 (예: 컴퓨터공학과 3학년)';
-COMMENT ON COLUMN users.field IS '[미사용/레거시] field_tags로 대체됨. 모든 환경 전환 확인 후 제거 예정';
-COMMENT ON COLUMN users.field_tags IS '전공/관심 분야 태그 배열 (예: ["백엔드", "인프라"]). field 컬럼을 대체한다';
+COMMENT ON COLUMN users.field_tags IS '전공/관심 분야 태그 배열 (예: ["백엔드", "인프라"])';
 COMMENT ON COLUMN users.github_username IS 'GitHub 아이디만 저장한다 (URL 아님)';
 COMMENT ON COLUMN users.profile_image_path IS '업로드된 프로필 사진의 uploads 디렉토리 기준 상대 경로 (예: avatars/5.png)';
 
