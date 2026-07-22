@@ -146,7 +146,6 @@ class TaskControllerPositionTest {
         when(projectMemberRepository.findByProjectIdAndUserId(1L, 1L))
             .thenReturn(Optional.of(new ProjectMember(1L, 1L, ProjectRole.LEADER)));
         when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(demoDataService.resolveUserId("1")).thenReturn(1L);
         when(projectMemberRepository.findAllByProjectId(1L)).thenReturn(List.of(
             new ProjectMember(1L, 1L, ProjectRole.LEADER),
             new ProjectMember(1L, 3L, ProjectRole.MEMBER)

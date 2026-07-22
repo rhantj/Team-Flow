@@ -5,7 +5,7 @@ import { HTML5Backend } from "react-dnd-html5-backend";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { RefreshCw } from "lucide-react";
 import { BoardToolbar } from "../components/BoardToolbar";
-import { BoardFilterBar } from "../components/BoardFilterBar";
+import { BoardFilterBar, UNASSIGNED_FILTER_ID } from "../components/BoardFilterBar";
 import { KanbanBoard } from "../components/KanbanBoard";
 import { TaskDetailPanel } from "../components/TaskDetailPanel";
 import { TaskResultPanel } from "../components/TaskResultPanel";
@@ -44,11 +44,12 @@ export function BoardView() {
   const priorityFilter = useMemo(() => parseFilterParam(searchParams, "priority"), [searchParams]);
   const categoryFilter = useMemo(() => parseFilterParam(searchParams, "category"), [searchParams]);
 
-  const filteredTasks = useMemo(() => tasks.filter((t) =>
-    (assigneeFilter.length === 0 || assigneeFilter.includes(t.assignee)) &&
-    (priorityFilter.length === 0 || priorityFilter.includes(t.priority)) &&
-    (categoryFilter.length === 0 || categoryFilter.includes(t.category))
-  ), [tasks, assigneeFilter, priorityFilter, categoryFilter]);
+  const filteredTasks = useMemo(() => tasks.filter((t) => {
+    const assigneeFilterValue = t.assignee || UNASSIGNED_FILTER_ID;
+    return (assigneeFilter.length === 0 || assigneeFilter.includes(assigneeFilterValue)) &&
+      (priorityFilter.length === 0 || priorityFilter.includes(t.priority)) &&
+      (categoryFilter.length === 0 || categoryFilter.includes(t.category));
+  }), [tasks, assigneeFilter, priorityFilter, categoryFilter]);
 
   const toggleFilterValue = (key: (typeof FILTER_PARAMS)[number], value: string) => {
     const current = parseFilterParam(searchParams, key);

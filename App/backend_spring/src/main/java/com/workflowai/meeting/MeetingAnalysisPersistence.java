@@ -1,6 +1,7 @@
 package com.workflowai.meeting;
 
 import com.workflowai.common.DemoDataService;
+import com.workflowai.notification.NotificationService;
 import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.rag.RagIngestService;
 import com.workflowai.user.User;
@@ -25,6 +26,7 @@ public class MeetingAnalysisPersistence {
     private final DemoDataService demoDataService;
     private final RagIngestService ragIngestService;
     private final ProjectMemberRepository projectMemberRepository;
+    private final NotificationService notificationService;
 
     public MeetingAnalysisPersistence(
         MeetingRepository meetingRepository,
@@ -34,7 +36,8 @@ public class MeetingAnalysisPersistence {
         UserRepository userRepository,
         DemoDataService demoDataService,
         RagIngestService ragIngestService,
-        ProjectMemberRepository projectMemberRepository
+        ProjectMemberRepository projectMemberRepository,
+        NotificationService notificationService
     ) {
         this.meetingRepository = meetingRepository;
         this.meetingAnalysisRepository = meetingAnalysisRepository;
@@ -44,6 +47,7 @@ public class MeetingAnalysisPersistence {
         this.demoDataService = demoDataService;
         this.ragIngestService = ragIngestService;
         this.projectMemberRepository = projectMemberRepository;
+        this.notificationService = notificationService;
     }
 
     @Transactional
@@ -82,6 +86,13 @@ public class MeetingAnalysisPersistence {
 
         meeting.setAnalysisStatus("completed");
         meetingRepository.save(meeting);
+
+        if (meeting.getUploadedBy() != null) {
+            notificationService.notify(
+                meeting.getUploadedBy(), "MEETING_ANALYSIS_COMPLETED", "회의 분석이 완료되었습니다.",
+                "'" + meeting.getTitle() + "' 회의록 분석이 완료되었습니다.", "meeting", meetingId
+            );
+        }
     }
 
     @Transactional
@@ -89,6 +100,12 @@ public class MeetingAnalysisPersistence {
         meetingRepository.findById(meetingId).ifPresent(meeting -> {
             meeting.setAnalysisStatus("failed");
             meetingRepository.save(meeting);
+            if (meeting.getUploadedBy() != null) {
+                notificationService.notify(
+                    meeting.getUploadedBy(), "MEETING_ANALYSIS_FAILED", "회의 분석에 실패했습니다.",
+                    "'" + meeting.getTitle() + "' 회의록 분석에 실패했습니다. 다시 시도해주세요.", "meeting", meetingId
+                );
+            }
         });
     }
 

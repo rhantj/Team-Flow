@@ -13,14 +13,19 @@ import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.NotificationService;
 import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.rag.RagIngestService;
+import com.workflowai.security.UserPrincipal;
 import com.workflowai.user.UserRepository;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -58,6 +63,16 @@ class TaskControllerDeleteTest {
                 notificationService, projectMemberRepository, ragIngestService
             ))
             .build();
+        SecurityContextHolder.getContext().setAuthentication(
+            new UsernamePasswordAuthenticationToken(
+                new UserPrincipal(1L, "user1@workflow.ai", "테스트유저"), null, List.of()
+            )
+        );
+    }
+
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
     }
 
     private Task existingTask() {
@@ -72,7 +87,6 @@ class TaskControllerDeleteTest {
     void notifiesAssigneeOnDelete() throws Exception {
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(anyLong())).thenReturn(Optional.of(existingTask()));
-        when(demoDataService.resolveUserId("1")).thenReturn(1L);
 
         mockMvc.perform(delete("/api/v1/projects/demo-project/tasks/42"))
             .andExpect(status().isOk());
