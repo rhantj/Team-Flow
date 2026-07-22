@@ -46,6 +46,21 @@ async def test_get_anchor_embeddings_still_async_and_caches():
 # process_inputs / process_outputs 요약 reducer 테스트
 # (LangSmith 트레이스에 전체 임베딩 벡터/업무별 보정치 대신 요약만 기록되는지 검증)
 # ============================================================
+def test_summarize_embed_inputs_does_not_leak_original_text():
+    """_embed의 process_inputs가 없으면 @traceable이 함수 인자(text_value, 업무
+    원문일 수 있음)를 가공 없이 그대로 LangSmith에 로깅한다 - 리뷰 지적사항.
+    이 reducer가 원문 대신 글자 수만 반환하는지 검증한다."""
+    long_text = "실제 업무 내용이 담긴 민감할 수 있는 원문 텍스트입니다."
+    result = mod._summarize_embed_inputs({"text_value": long_text})
+    assert result == {"text_length": len(long_text)}
+    assert long_text not in result.values()
+
+
+def test_summarize_embed_inputs_handles_missing_text_value():
+    result = mod._summarize_embed_inputs({})
+    assert result == {"text_length": 0}
+
+
 def test_summarize_embed_outputs():
     result = mod._summarize_embed_outputs([0.1, 0.2, 0.3])
     assert result == {"embedding_dim": 3}
