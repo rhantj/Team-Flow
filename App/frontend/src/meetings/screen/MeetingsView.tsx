@@ -1402,9 +1402,14 @@ export function MeetingsView() {
           <div className="text-sm font-bold text-foreground leading-snug">{meetTitle}</div>
           <div className="text-xs text-muted-foreground mt-0.5">{meetDate} · {meetKind}</div>
           <div className="flex -space-x-1.5 mt-2">
-            {partIds.map(id => { const m = MEMBERS.find(me => me.id === id)!; return (
-              <div key={id} title={m.name} className="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-white text-[9px] font-bold" style={{ background:m.color }}>{m.initials}</div>
-            ); })}
+            {partIds.map(id => {
+              const m = projectMembers.find(pm => String(pm.userId) === id);
+              if (!m) return null;
+              const color = PARTICIPANT_COLORS[m.userId % PARTICIPANT_COLORS.length];
+              return (
+                <div key={id} title={m.name} className="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-white text-[9px] font-bold" style={{ background:color }}>{m.name.slice(0,1)}</div>
+              );
+            })}
           </div>
         </div>
         {/* Tabs */}
@@ -1575,7 +1580,7 @@ export function MeetingsView() {
         <div ref={pdfCaptureRef} style={{ background: "#ffffff", padding: "40px", width: "760px", fontFamily: "'Malgun Gothic','Apple SD Gothic Neo',sans-serif", color: "#1a1a1a" }}>
           <h1 style={{ fontSize: "22px", fontWeight: 700, margin: "0 0 4px" }}>{meetTitle}</h1>
           <div style={{ fontSize: "12px", color: "#666666", marginBottom: "24px" }}>
-            {meetDate} · {meetKind} · 참석자 {partIds.map(id => MEMBERS.find(m => m.id === id)?.name ?? id).join(", ")}
+            {meetDate} · {meetKind} · 참석자 {partIds.map(id => projectMembers.find(m => String(m.userId) === id)?.name ?? id).join(", ")}
           </div>
 
           <h2 style={{ fontSize: "15px", fontWeight: 700, margin: "20px 0 8px", borderBottom: "1px solid #dddddd", paddingBottom: "4px" }}>회의 요약</h2>
