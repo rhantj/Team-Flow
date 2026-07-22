@@ -88,6 +88,30 @@ def test_predict_class_probabilities_returns_valid_distribution(monkeypatch):
     assert sum(probabilities) == pytest.approx(1.0, abs=1e-6)
 
 
+def test_predict_maps_has_milestone_to_legacy_has_parent_artifact(monkeypatch):
+    class CapturingBooster:
+        best_iteration = 1
+
+        def predict(self, row_df, num_iteration):
+            assert list(row_df.columns) == ["has_parent"]
+            assert bool(row_df.iloc[0]["has_parent"]) is True
+            return [[0.7, 0.2, 0.1]]
+
+    artifact = delay_model.ModelArtifact(
+        booster=CapturingBooster(),
+        feature_names=["has_parent"],
+        categorical_columns=[],
+        frequency_maps={},
+        proxy_deadline_map={},
+        global_median_duration_hours=72.0,
+    )
+    monkeypatch.setattr(delay_model, "_artifact_cache", artifact)
+
+    probabilities = delay_model.predict_class_probabilities({"has_milestone": True})
+
+    assert probabilities == [0.7, 0.2, 0.1]
+
+
 def test_predict_class_probabilities_supports_random_forest_artifact(monkeypatch):
     train_x = pd.DataFrame(
         {

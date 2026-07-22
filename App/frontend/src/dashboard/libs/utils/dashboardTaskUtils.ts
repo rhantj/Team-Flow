@@ -17,7 +17,7 @@ export function normalizePriority(priority: string | null | undefined): Priority
 
 export function formatDashboardDueDate(dueDate: string | null | undefined): string {
   if (!dueDate) return "미정";
-  const [, month, day] = dueDate.split("-");
+  const [, month, day] = dueDate.slice(0, 10).split("-");
   return month && day ? `${month}.${day}` : dueDate;
 }
 
@@ -28,6 +28,32 @@ export function daysUntilDue(dueDate: string | null | undefined): number | null 
   const due = new Date(`${dueDate}T00:00:00`);
   if (Number.isNaN(due.getTime())) return null;
   return Math.ceil((due.getTime() - today.getTime()) / 86400000);
+}
+
+/** ISO 날짜/일시 문자열부터 지금까지 경과한 시간을 "일" 단위로 내림 계산한다.
+ * 캘린더 날짜 경계가 아니라 실제 경과 시간 기준(체류시간 근사 — 백엔드 ML 피처
+ * hours_in_current_status와 동일한 방식)이라 "3일 이상"류 임계값 판정에 적합하다. */
+export function daysSince(dateStr: string | null | undefined): number | null {
+  if (!dateStr) return null;
+  const past = new Date(dateStr);
+  if (Number.isNaN(past.getTime())) return null;
+  return Math.max(0, Math.floor((Date.now() - past.getTime()) / 86400000));
+}
+
+/** "오늘"/"어제"/"n일 전"(30일 이상이면 MM.DD) — 캘린더 날짜 경계 기준 상대 날짜 표기.
+ * daysSince와 달리 사람이 읽는 라벨이라 자정 기준으로 날짜를 비교한다. */
+export function formatRelativeDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return "미정";
+  const past = new Date(dateStr);
+  if (Number.isNaN(past.getTime())) return "미정";
+  const pastDay = new Date(past.getFullYear(), past.getMonth(), past.getDate()).getTime();
+  const today = new Date();
+  const todayDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const diffDays = Math.round((todayDay - pastDay) / 86400000);
+  if (diffDays <= 0) return "오늘";
+  if (diffDays === 1) return "어제";
+  if (diffDays < 30) return `${diffDays}일 전`;
+  return formatDashboardDueDate(dateStr);
 }
 
 export function sourceLabel(sourceType: string | null | undefined): string {

@@ -101,6 +101,10 @@ services:
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       GENERATION_MODEL: ${GENERATION_MODEL:-gemma2}
+      # RAG 챗봇 임베딩 모델 (embedding_service.py, 컨테이너 내부 로컬 추론)
+      HF_EMBEDDING_MODEL: ${HF_EMBEDDING_MODEL:-rhantj/bge-m3-workflow-query-robust}
+      # 위 모델의 커밋 revision 고정 (재현성 - 원격 저장소 갱신에 배포가 조용히 끌려가지 않게)
+      HF_EMBEDDING_MODEL_REVISION: ${HF_EMBEDDING_MODEL_REVISION:-dc328732ab2c3330d38305199e26b2d060586af3}
       # 회의록 AI 분석 전용 (RAG Assistant의 GENERATION_MODEL과 분리)
       MEETING_ANALYSIS_PROVIDER: ${MEETING_ANALYSIS_PROVIDER:-auto}
       MEETING_ANALYSIS_MODEL: ${MEETING_ANALYSIS_MODEL:-qwen2.5:1.5b}
@@ -139,7 +143,7 @@ services:
     build:
       context: ./frontend
       args:
-        VITE_ENABLE_DEMO_AUTH: ${VITE_ENABLE_DEMO_AUTH:-false}
+        VITE_ENABLE_DEMO_AUTH: ${VITE_ENABLE_DEMO_AUTH:-true}
     container_name: workflow-frontend
     environment:
       API_PROXY_TARGET: http://backend-spring:8080

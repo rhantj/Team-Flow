@@ -8,6 +8,8 @@ import json
 import logging
 import os
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from io import BytesIO
 from datetime import date
 from typing import List, Optional
@@ -19,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from llm_rag_assistant.app.routers.chat_router import router as rag_router
+from llm_rag_assistant.app.services.embedding_service import preload_embedding_model
 from ml_workload_score.app.routers.workload_router import router as workload_router
 from ai_contribution_report.app.routers.contribution_router import router as contribution_report_router
 from ml_delay_risk.routers.delay_router import router as delay_risk_router
@@ -35,7 +38,17 @@ DEFAULT_HF_MEETING_ANALYSIS_TIMEOUT_SECONDS = 35.0
 DEFAULT_HF_MEETING_ANALYSIS_MAX_TOKENS = 900
 HF_CHAT_COMPLETIONS_URL = "https://router.huggingface.co/v1/chat/completions"
 
-app = FastAPI(title="WorkFlow AI FastAPI", version="0.1.0")
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # 첫 RAG 요청이 임베딩 모델 다운로드/로딩 지연(콜드 스타트)을 떠안지 않도록 기동 시 미리 로드한다.
+    try:
+        await preload_embedding_model()
+    except Exception:
+        logger.exception("RAG 임베딩 모델 사전 로드 실패 - 첫 요청 시 재시도됩니다.")
+    yield
+
+
+app = FastAPI(title="WorkFlow AI FastAPI", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

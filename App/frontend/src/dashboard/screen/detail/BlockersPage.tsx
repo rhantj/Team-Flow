@@ -72,7 +72,7 @@ export function BlockersPage() {
                       <PriorityBadge priority={priority} />
                       <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{task.category ?? "미분류"}</span>
                       <span className="text-[10px] font-mono text-muted-foreground">{task.id}</span>
-                      {isRisk && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200">AI 지연 위험</span>}
+                      {isRisk && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200">지연 위험</span>}
                     </div>
                     <div className="text-sm font-semibold text-foreground">{task.title}</div>
                   </div>

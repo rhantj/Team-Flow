@@ -113,7 +113,7 @@ export function DashboardView() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <StatCard icon={Layers} label="전체 업무" value={isSummaryPending ? "..." : totalTasks} sub={isSummaryPending ? "불러오는 중" : `완료 ${doneTasks}개`} color="#3B5BDB" onClick={() => onCardClick("all-tasks")} />
         <StatCard icon={TrendingUp} label="완료율" value={isSummaryPending ? "..." : `${progressPct}%`} sub={isSummaryPending ? "불러오는 중" : "실제 업무 기준"} color="#10B981" onClick={() => onCardClick("progress")} />
-        <StatCard icon={AlertTriangle} label="블로커" value={isSummaryPending ? "..." : blockedTasks} sub={isSummaryPending ? "불러오는 중" : "해결 필요"} color="#EF4444" onClick={() => onCardClick("blockers")} />
+        <StatCard icon={AlertTriangle} label="블로커" value={isSummaryPending ? "..." : blockedTasks} sub={isSummaryPending ? "불러오는 중" : "즉시 해결 필요"} color="#EF4444" onClick={() => onCardClick("blockers")} />
         <StatCard icon={Clock} label="진행 중" value={isSummaryPending ? "..." : inProgressTasks} sub={isSummaryPending ? "불러오는 중" : "활성 업무"} color="#F59E0B" onClick={() => onCardClick("inprogress")} />
       </div>
 
@@ -124,7 +124,7 @@ export function DashboardView() {
               <div className="text-sm font-semibold text-foreground">카테고리별 진행</div>
               <div className="text-xs text-muted-foreground mt-0.5">업무 카테고리 기준</div>
             </div>
-            <div className="text-2xl font-bold" style={{ color: "var(--primary)" }}>{progressPct}%</div>
+            <div className="text-2xl font-bold" style={{ color: "var(--primary)" }}>{summaryLoading ? "..." : progressPct}%</div>
           </div>
           <div className="w-full bg-muted rounded-full h-2 mb-4">
             <div className="h-2 rounded-full transition-all" style={{ width: `${Math.min(Math.max(progressPct, 0), 100)}%`, background: "linear-gradient(90deg, #3B5BDB, #7048E8)" }} />

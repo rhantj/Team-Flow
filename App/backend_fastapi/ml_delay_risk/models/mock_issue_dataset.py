@@ -238,6 +238,13 @@ def _generate_task(
 STALLED_VOLUME_FACTOR = 0.35
 STALLED_QUIET_TAIL_FRACTION = 0.5
 
+COMMENT_USAGE_PROB = 0.15
+"""실제 서비스에서 업무 댓글(task_comments) 기능을 거의 안 쓸 것으로 예상되므로, 대부분의
+업무는 댓글이 아예 없도록 만든다 — 이 확률로만 댓글이 "쓰이는" 업무로 취급하고, 나머지는
+빈 DataFrame(=hours_since_last_comment/num_comments_before_cutoff/num_unique_commenters가
+전부 기본값)을 반환한다. 실제 사용 패턴을 학습 데이터에 반영해, 서빙 시점에도 대부분
+비어있을 이 피처들에 모델이 과도하게 의존하지 않도록 한다."""
+
 
 def _generate_comments(
     rng: np.random.Generator,
@@ -246,10 +253,13 @@ def _generate_comments(
     users: list[int],
     stalled: bool,
 ) -> pd.DataFrame:
-    lam = max(0.2, elapsed_hours / 72)
+    if rng.random() >= COMMENT_USAGE_PROB:
+        return pd.DataFrame(columns=["author_id", "created_at"])
+
+    lam = max(0.3, elapsed_hours / 150)
     if stalled:
         lam *= STALLED_VOLUME_FACTOR
-    num_comments = min(int(rng.poisson(lam)), 15)
+    num_comments = min(int(rng.poisson(lam)), 5)
     if num_comments == 0:
         return pd.DataFrame(columns=["author_id", "created_at"])
     max_offset = elapsed_hours * (1 - STALLED_QUIET_TAIL_FRACTION) if stalled else elapsed_hours

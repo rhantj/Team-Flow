@@ -48,6 +48,14 @@ jobs:
           echo "health check failed after retries"
           exit 1
 
+      - name: Clean up unused Docker cache
+        if: steps.health_check.outcome == 'success'
+        run: |
+          ssh -i ~/.ssh/oci_deploy_key "${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }}" '
+            docker image prune -f
+            docker builder prune -f
+          '
+
       - name: Rollback to previous commit on deploy or health check failure
         id: rollback
         if: always() && (steps.deploy.outcome == 'failure' || steps.health_check.outcome == 'failure')

@@ -48,6 +48,7 @@ function renderPanel(status: TaskStatus, overrides: Partial<Parameters<typeof Ta
   render(
     <TaskDetailPanel
       task={makeTask(status)}
+      projectMembers={[]}
       onClose={vi.fn()}
       onQuickAction={onQuickAction}
       onShowToast={onShowToast}

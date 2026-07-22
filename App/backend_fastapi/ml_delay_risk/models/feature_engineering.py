@@ -260,7 +260,7 @@ def build_dynamic_features(
     proxy_deadline_hours: float,
     current_assignee: Optional[str],
     is_bot_author: Callable[[Any], bool],
-    recent_activity_window_days: int,
+    recent_activity_window_days: int,  ## N=3일
 ) -> dict[str, Any]:
     """cutoff 시점까지의 events/comments/worklogs만으로 계산하는 시계열 피처."""
     ordered_events = sorted((e for e in events if e.get("created")), key=lambda e: e["created"])
@@ -326,7 +326,7 @@ def build_dynamic_features(
     blocked_ratio = blocked_hours / proxy_deadline_hours if proxy_deadline_hours > 0 else 0.0
     hours_until_deadline = proxy_deadline_hours - elapsed_hours
 
-    # 최근 활동 모멘텀: 기한 임박 + 최근 N일간 무활동은 '위험'의 강력한 전조
+    # 최근 활동 모멘텀: 기한 임박 + 최근 N=3일간 무활동은 '위험'의 강력한 전조
     window_start = cutoff - timedelta(days=recent_activity_window_days)
     recent_comments = sum(1 for c in ordered_comments if c["created"] >= window_start)
     recent_status_or_assignee_events = sum(

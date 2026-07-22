@@ -3,7 +3,7 @@ package com.workflowai.dashboard.DTO;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 @Schema(description = "업무별 AI 지연 위험도 (ml_predictions 최신 행 기준)")
-public record TaskDelayRiskDto(
+public record DelayRiskDto(
     @Schema(description = "업무 ID", example = "5") String taskId,
     @Schema(description = "업무 제목", example = "결제 시스템 연동") String taskTitle,
     @Schema(description = "담당자 이름", example = "최동혁") String assigneeName,

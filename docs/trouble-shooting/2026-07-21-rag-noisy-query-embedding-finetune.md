@@ -79,9 +79,34 @@ jupyter notebook  # 01 -> 02 -> 03 -> 04 순서로 실행
 
 ## 상태
 
-실험 노트북/데이터 파이프라인 준비 완료. **실제 학습·평가 실행 및 결과 수치는 아직 기록되지
-않음** — 노트북을 순서대로 실행한 뒤 이 문서의 "실험 결과" 절을 추가할 것.
+실험 완료, 운영 반영 완료 (feature/rag-query-robust-embedding).
 
 ## 실험 결과
 
-_(01~04 노트북 실행 후 `final_comparison.json` 수치와 결론을 여기에 추가)_
+`document_고무서/output/embedding-finetune/04_training/final_comparison.json` (eval 26건, recall@1 기준):
+
+| | clean | noisy |
+| --- | --- | --- |
+| baseline (BAAI/bge-m3) | 0.769 | 0.779 |
+| finetuned (LoRA) | 0.808 | 0.808 |
+
+recall@3/5, MRR 상단은 이미 포화(1.0)라 recall@1에서만 차이가 나며, 개선 폭은 크지 않지만
+(noisy 지표가 clean 지표와 동일해짐) 목표였던 "노이즈 유무에 따른 격차 해소"는 달성했다.
+
+## 운영 반영 내역
+
+1. LoRA 어댑터를 `BAAI/bge-m3`에 병합(`merge_and_unload()`)해 HF Hub
+   `rhantj/bge-m3-workflow-query-robust` (public)에 업로드.
+2. HF 서버리스 Inference API는 커스텀 업로드 모델을 서빙하지 않아(`StopIteration`),
+   원격 API 호출 대신 `embedding_service.py`가 컨테이너 내부에서 `sentence-transformers`로
+   직접 로드/추론하도록 변경. `core/config.py`의 `hf_embedding_model_revision`으로 커밋
+   SHA를 고정해, 원격 저장소에 새 커밋이 올라가도 배포가 조용히 다른 가중치를 받아쓰지
+   않게 함.
+3. **Supabase(운영 DB) `document_chunks` 138건 전부 재임베딩 완료** (2026-07-22,
+   `python -m llm_rag_assistant.scripts.reembed_document_chunks`). 차원이 그대로
+   1024라 스키마 변경(ALTER TABLE)은 불필요했음.
+4. 새 환경/새 배포 시 체크리스트: 임베딩 모델이나 `hf_embedding_model_revision`을 바꾸면
+   **반드시** 위 재임베딩 스크립트를 대상 DB에 대해 다시 실행할 것 — 실행하지 않으면
+   기존 벡터가 옛 모델의 벡터 공간에 남아있어 검색 정확도가 저하된다. 이 단계는
+   자동화돼 있지 않으므로(모델이 안 바뀌는 한 매 배포마다 돌릴 필요는 없음) 배포자가
+   수동으로 챙겨야 한다.
