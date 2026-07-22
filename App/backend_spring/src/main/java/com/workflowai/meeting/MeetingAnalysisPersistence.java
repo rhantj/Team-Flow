@@ -9,11 +9,14 @@ import com.workflowai.user.UserRepository;
 import java.time.LocalDate;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 @Component
 public class MeetingAnalysisPersistence {
+    private static final Logger log = LoggerFactory.getLogger(MeetingAnalysisPersistence.class);
     public static final String DEFAULT_ANALYSIS_ERROR_MESSAGE = "회의록 분석 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
     public static final String REUPLOAD_REQUIRED_ERROR_MESSAGE = "원본 음성 파일은 재분석을 위해 다시 업로드해야 합니다.";
     public static final String REUPLOAD_READ_ERROR_MESSAGE = "원본 회의록 내용을 읽을 수 없어 재분석을 위해 다시 업로드해야 합니다.";
@@ -88,9 +91,9 @@ public class MeetingAnalysisPersistence {
         meetingRepository.save(meeting);
 
         if (meeting.getUploadedBy() != null) {
-            notificationService.notify(
+            notifyBestEffort(
                 meeting.getUploadedBy(), "MEETING_ANALYSIS_COMPLETED", "회의 분석이 완료되었습니다.",
-                "'" + meeting.getTitle() + "' 회의록 분석이 완료되었습니다.", "meeting", meetingId
+                "'" + meeting.getTitle() + "' 회의록 분석이 완료되었습니다.", meetingId
             );
         }
     }
@@ -101,9 +104,9 @@ public class MeetingAnalysisPersistence {
             meeting.setAnalysisStatus("failed");
             meetingRepository.save(meeting);
             if (meeting.getUploadedBy() != null) {
-                notificationService.notify(
+                notifyBestEffort(
                     meeting.getUploadedBy(), "MEETING_ANALYSIS_FAILED", "회의 분석에 실패했습니다.",
-                    "'" + meeting.getTitle() + "' 회의록 분석에 실패했습니다. 다시 시도해주세요.", "meeting", meetingId
+                    "'" + meeting.getTitle() + "' 회의록 분석에 실패했습니다. 다시 시도해주세요.", meetingId
                 );
             }
         });
@@ -139,6 +142,18 @@ public class MeetingAnalysisPersistence {
             content.append("\n근거: ").append(item.getBasis());
         }
         return content.toString();
+    }
+
+    /**
+     * 알림 발송은 분석 결과 저장의 부가 기능이라, 실패해도 @Transactional 메서드 전체를
+     * 롤백시키면 안 된다 — 예외를 잡아 로그만 남기고 삼킨다.
+     */
+    private void notifyBestEffort(Long userId, String type, String title, String content, Long meetingId) {
+        try {
+            notificationService.notify(userId, type, title, content, "meeting", meetingId);
+        } catch (Exception e) {
+            log.warn("회의 분석 알림 발송 실패. meetingId={}, userId={}, type={}", meetingId, userId, type, e);
+        }
     }
 
     private Long resolveAssigneeByName(String name) {

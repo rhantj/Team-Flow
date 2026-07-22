@@ -2,6 +2,7 @@ package com.workflowai.meeting;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -102,6 +103,29 @@ class MeetingAnalysisPersistenceTest {
         assertThat(savedActionItem.getRecommendedAssigneeId()).isNull();
         assertThat(savedActionItem.getFinalAssigneeId()).isNull();
         verify(ragIngestService).ingestBestEffort(1L, "meeting", 5L, "요약\n결정사항: 결정1\n위험요소: 위험1");
+    }
+
+    @Test
+    void saveAnalysisSuccessStillCompletesWhenNotificationFails() {
+        // 알림 발송은 부가 기능이라 실패해도 분석 결과 저장(@Transactional) 자체는 롤백되면 안 된다.
+        MeetingAnalysisPersistence persistence = newPersistence();
+        Meeting meeting = new Meeting(1L, "정기회의", "document", null, "processing", LocalDate.now(), "정기회의", "a.txt", 10L, null);
+        when(meetingRepository.findById(5L)).thenReturn(Optional.of(meeting));
+        when(meetingAttendeeRepository.findByMeetingId(5L)).thenReturn(List.of());
+        when(meetingAnalysisRepository.save(any(MeetingAnalysis.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        doThrow(new RuntimeException("notification service down"))
+            .when(notificationService).notify(any(), any(), any(), any(), any(), any());
+
+        MeetingAnalysisResult result = new MeetingAnalysisResult(
+            "요약", List.of(), List.of(), List.of(), List.of(),
+            new MeetingMeta("정기회의", "2026-07-15", List.of())
+        );
+
+        persistence.saveAnalysisSuccess(5L, result, "FASTAPI");
+
+        ArgumentCaptor<Meeting> meetingCaptor = ArgumentCaptor.forClass(Meeting.class);
+        verify(meetingRepository).save(meetingCaptor.capture());
+        assertThat(meetingCaptor.getValue().getAnalysisStatus()).isEqualTo("completed");
     }
 
     @Test
