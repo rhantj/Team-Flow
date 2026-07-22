@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Objects;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -117,6 +118,7 @@ public class TaskController {
     )
     @PostMapping
     @PreAuthorize("@projectAccess.isMember(#projectId)")
+    @Transactional
     public ResponseEntity<ApiResponse<TaskListItem>> createTask(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @RequestBody TaskCreateRequest request
@@ -167,6 +169,7 @@ public class TaskController {
     )
     @PatchMapping("/{taskId}/position")
     @PreAuthorize("@projectAccess.isMember(#projectId)")
+    @Transactional
     public ResponseEntity<ApiResponse<TaskListItem>> updatePosition(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId,
@@ -217,6 +220,7 @@ public class TaskController {
     )
     @PatchMapping("/{taskId}")
     @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER')")
+    @Transactional
     public ResponseEntity<ApiResponse<TaskListItem>> updateTask(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId,
@@ -287,6 +291,7 @@ public class TaskController {
     )
     @DeleteMapping("/{taskId}")
     @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER')")
+    @Transactional
     public ResponseEntity<ApiResponse<Void>> deleteTask(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId
@@ -300,6 +305,9 @@ public class TaskController {
         Long deleteActorId = currentActorId();
         activityService.record(projectDbId, deleteActorId, "TASK_DELETED", task.getId(), "'" + task.getTitle() + "' 업무를 삭제했습니다.");
         if (task.getAssigneeId() != null && !task.getAssigneeId().equals(deleteActorId)) {
+            // targetId가 가리키는 업무는 이 트랜잭션이 끝나면 더 이상 존재하지 않는다 — 의도된 동작이다.
+            // 삭제 알림은 targetId로 업무를 다시 조회하지 않고 title을 메시지에 그대로 박아 보여주므로,
+            // 대상이 사라져도 알림 내용 자체는 그대로 유효하다.
             notificationService.notify(
                 task.getAssigneeId(), "TASK_DELETED", "담당 업무가 삭제되었습니다.",
                 "'" + task.getTitle() + "' 업무가 삭제되었습니다.", "task", task.getId()

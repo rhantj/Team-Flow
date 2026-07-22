@@ -4,7 +4,7 @@ import { ChevronRight, Search, Calendar, Bell, LogOut, Menu } from "lucide-react
 import { TAB_TITLES } from "../../lib/constants/nav";
 import type { Tab } from "../../../board/libs/types/task";
 import {
-  fetchNotifications, fetchUnreadNotificationCount, markAllNotificationsRead,
+  fetchNotifications, fetchUnreadNotificationCount, markNotificationsRead,
   type NotificationResponse,
 } from "../../api/notificationApi";
 import { useAuth } from "../../hooks/useAuth";
@@ -79,9 +79,10 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
     setNotifOpen(opening);
     if (!opening) return;
 
-    // 목록을 먼저 불러와 화면에 반영한 뒤에만 읽음 처리한다. 두 요청을 동시에 보내면 목록을
-    // 불러오는 그 사이에 새로 도착한 알림까지 "모두 읽음" 처리에 휩쓸려, 사용자가 보지도
-    // 못한 알림이 안 읽음 배지에서 사라지는 경우가 생긴다.
+    // 목록을 먼저 불러와 화면에 반영한 뒤, 그 목록에 실제로 있던 id들만 읽음 처리한다.
+    // "전체 읽음"을 따로 호출하면 목록을 불러오는 사이에 새로 도착한 알림까지 휩쓸려,
+    // 사용자가 보지도 못한 알림이 안 읽음 배지에서 사라질 수 있다 — 방금 화면에 보여준
+    // id만 넘기면 그 뒤에 도착하는 알림은 이 요청과 무관하므로 안전하다.
     let list: NotificationResponse[];
     try {
       list = await fetchNotifications();
@@ -93,9 +94,11 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
     setNotifications(list);
     setNotifError(false);
 
+    const unreadIds = list.filter((n) => !n.read).map((n) => n.id);
     try {
-      await markAllNotificationsRead();
-      setUnreadCount(0);
+      await markNotificationsRead(unreadIds);
+      const count = await fetchUnreadNotificationCount();
+      setUnreadCount(count);
     } catch (err) {
       console.error("알림 읽음 처리에 실패했습니다.", err);
       // 실패 시 배지 숫자는 그대로 둔다 — 안 읽음 처리에 실패했는데 0으로 낮추면 실제로
