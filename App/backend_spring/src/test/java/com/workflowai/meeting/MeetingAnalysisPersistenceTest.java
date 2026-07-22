@@ -396,4 +396,43 @@ class MeetingAnalysisPersistenceTest {
         assertThat(meetingCaptor.getValue().getAnalysisStatus()).isEqualTo("failed");
         verify(meetingAnalysisRepository, never()).save(any());
     }
+
+    @Test
+    void failureNotificationIsDeferredUntilAfterCommitWhenTransactionSynchronizationIsActive() {
+        MeetingAnalysisPersistence persistence = newPersistence();
+        Meeting meeting = new Meeting(1L, "정기회의", "document", null, "processing", LocalDate.now(), "정기회의", "a.txt", 10L, null);
+        when(meetingRepository.findById(7L)).thenReturn(Optional.of(meeting));
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            persistence.saveAnalysisFailure(7L, "FastAPI 연결 실패");
+
+            verify(notificationService, never()).notify(any(), any(), any(), any(), any(), any());
+
+            List<TransactionSynchronization> synchronizations = TransactionSynchronizationManager.getSynchronizations();
+            assertThat(synchronizations).hasSize(1);
+            synchronizations.forEach(TransactionSynchronization::afterCommit);
+
+            verify(notificationService).notify(10L, "MEETING_ANALYSIS_FAILED", "회의 분석에 실패했습니다.",
+                "'정기회의' 회의록 분석에 실패했습니다. 다시 시도해주세요.", "meeting", 7L);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void failureNotificationIsNeverSentWhenTransactionRollsBackWithoutCommit() {
+        MeetingAnalysisPersistence persistence = newPersistence();
+        Meeting meeting = new Meeting(1L, "정기회의", "document", null, "processing", LocalDate.now(), "정기회의", "a.txt", 10L, null);
+        when(meetingRepository.findById(7L)).thenReturn(Optional.of(meeting));
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            persistence.saveAnalysisFailure(7L, "FastAPI 연결 실패");
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        verify(notificationService, never()).notify(any(), any(), any(), any(), any(), any());
+    }
 }
