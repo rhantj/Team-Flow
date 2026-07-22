@@ -280,6 +280,9 @@ docs/superpowers/
 .worktrees/
 .superpowers/
 
+# Supabase CLI 로컬 캐시/링크 정보 (프로젝트 ref, pooler 호스트 등 민감정보 포함 - 버전관리 대상 아님)
+supabase/
+
 # FS-3 ml_delay_risk: 학습된 바이너리 모델 산출물 (재현 불가 + 저장소 비대화)
 # `python -m ml_delay_risk.train`으로 로컬에서 재생성할 것.
 App/backend_fastapi/ml_delay_risk/models/*.pkl
