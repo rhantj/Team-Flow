@@ -1,8 +1,6 @@
 package com.workflowai.task;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -19,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -26,78 +25,70 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc(addFilters = false)
 class ChecklistControllerGenerateTest {
 
-    @Autowired
-    private MockMvc mockMvc;
+    @Autowired private MockMvc mockMvc;
+    @MockitoBean private ChecklistRepository checklistRepository;
+    @MockitoBean private TaskRepository taskRepository;
+    @MockitoBean private DemoDataService demoDataService;
+    @MockitoBean private ActivityService activityService;
+    @MockitoBean private ChecklistAiService checklistAiService;
+    @MockitoBean private ChecklistApplyService checklistApplyService;
 
-    @MockitoBean
-    private ChecklistRepository checklistRepository;
-
-    @MockitoBean
-    private TaskRepository taskRepository;
-
-    @MockitoBean
-    private DemoDataService demoDataService;
-
-    @MockitoBean
-    private ActivityService activityService;
-
-    @MockitoBean
-    private ChecklistGenerator checklistGenerator;
-
-    private Task existingTask() {
-        return new Task(
-            1L, "백엔드 로그인 API", "backend", "todo", 3L,
-            LocalDate.of(2026, 7, 1), "medium", "로그인 성공/실패 케이스를 모두 처리한다.",
-            "MANUAL", null, 1L, 0.0
-        );
+    private Task taskWithProject(Long projectId) {
+        return new Task(projectId, "로그인 API", "backend", "todo", null,
+            LocalDate.parse("2026-08-01"), "HIGH", "설명", null, null, 1L, 0.0);
     }
 
     @Test
-    void generatesChecklistItemsAndAppendsToExisting() throws Exception {
+    void generatePreviewReturnsTitlesWithoutSaving() throws Exception {
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
-        when(taskRepository.findById(42L)).thenReturn(Optional.of(existingTask()));
-        when(demoDataService.resolveUserId("1")).thenReturn(1L);
-        when(checklistGenerator.generate(any(Task.class)))
-            .thenReturn(List.of("API 명세 확정", "단위 테스트 작성"));
-        when(checklistRepository.save(any(Checklist.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(taskRepository.findById(5L)).thenReturn(Optional.of(taskWithProject(1L)));
+        when(checklistRepository.findByTaskIdOrderByCreatedAtAsc(5L)).thenReturn(List.of());
+        when(checklistAiService.generatePreview(any(), any()))
+            .thenReturn(new ChecklistPreviewResult(List.of("API 설계", "구현"), "ollama"));
 
-        mockMvc.perform(post("/api/v1/projects/demo-project/tasks/42/checklists/generate"))
+        mockMvc.perform(post("/api/v1/projects/demo-project/tasks/5/checklists/generate-preview"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.success").value(true))
-            .andExpect(jsonPath("$.data.length()").value(2))
-            .andExpect(jsonPath("$.data[0].title").value("API 명세 확정"))
-            .andExpect(jsonPath("$.data[0].done").value(false))
-            .andExpect(jsonPath("$.data[1].title").value("단위 테스트 작성"));
+            .andExpect(jsonPath("$.data.engine").value("ollama"))
+            .andExpect(jsonPath("$.data.titles[0]").value("API 설계"));
 
-        verify(activityService).record(eq(1L), any(), eq("CHECKLIST_CREATED"), eq(42L), eq("체크리스트 2개를 자동 생성했습니다."));
+        verify(checklistRepository, never()).save(any());
     }
 
     @Test
-    void skipsTitlesThatAlreadyExistOnRepeatedGeneration() throws Exception {
-        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
-        when(taskRepository.findById(42L)).thenReturn(Optional.of(existingTask()));
-        when(demoDataService.resolveUserId("1")).thenReturn(1L);
-        when(checklistGenerator.generate(any(Task.class)))
-            .thenReturn(List.of("API 명세 확정", "단위 테스트 작성"));
-        when(checklistRepository.findByTaskIdOrderByCreatedAtAsc(42L))
-            .thenReturn(List.of(new Checklist(42L, "API 명세 확정")));
-        when(checklistRepository.save(any(Checklist.class))).thenAnswer(inv -> inv.getArgument(0));
-
-        mockMvc.perform(post("/api/v1/projects/demo-project/tasks/42/checklists/generate"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.length()").value(1))
-            .andExpect(jsonPath("$.data[0].title").value("단위 테스트 작성"));
-
-        verify(checklistRepository, never()).save(argThat(c -> c.getTitle().equals("API 명세 확정")));
-    }
-
-    @Test
-    void returnsNotFoundWhenTaskMissing() throws Exception {
+    void generatePreviewReturns404WhenTaskMissing() throws Exception {
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(999L)).thenReturn(Optional.empty());
 
-        mockMvc.perform(post("/api/v1/projects/demo-project/tasks/999/checklists/generate"))
+        mockMvc.perform(post("/api/v1/projects/demo-project/tasks/999/checklists/generate-preview"))
             .andExpect(status().isNotFound())
             .andExpect(jsonPath("$.error.code").value("TASK_NOT_FOUND"));
+    }
+
+    @Test
+    void applyGeneratedSavesNormalizedTitles() throws Exception {
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(demoDataService.resolveUserId("1")).thenReturn(1L);
+        when(taskRepository.findById(5L)).thenReturn(Optional.of(taskWithProject(1L)));
+        when(checklistApplyService.saveGenerated(any(), any())).thenReturn(List.of(new Checklist(5L, "API 설계")));
+
+        mockMvc.perform(post("/api/v1/projects/demo-project/tasks/5/checklists/apply-generated")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"titles\":[\"API 설계\"]}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data[0].title").value("API 설계"));
+
+        verify(checklistApplyService).saveGenerated(any(), any());
+        verify(activityService).record(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void applyGeneratedReturns400WhenNoValidTitles() throws Exception {
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(taskRepository.findById(5L)).thenReturn(Optional.of(taskWithProject(1L)));
+        when(checklistApplyService.saveGenerated(any(), any())).thenReturn(List.of());
+
+        mockMvc.perform(post("/api/v1/projects/demo-project/tasks/5/checklists/apply-generated")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"titles\":[\" \"]}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("NO_ITEMS"));
     }
 }

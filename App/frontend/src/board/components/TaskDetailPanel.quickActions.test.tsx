@@ -15,7 +15,8 @@ vi.mock("../libs/utils/checklistApi", () => ({
   createChecklistItem: vi.fn(),
   updateChecklistItem: vi.fn(),
   deleteChecklistItem: vi.fn(),
-  generateChecklist: vi.fn(),
+  generateChecklistPreview: vi.fn().mockResolvedValue({ titles: [], engine: "ollama" }),
+  applyGeneratedChecklist: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("../libs/utils/taskCommentApi", () => ({

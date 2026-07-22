@@ -7,9 +7,6 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -32,23 +29,30 @@ public class ChecklistController {
     private final TaskRepository taskRepository;
     private final DemoDataService demoDataService;
     private final ActivityService activityService;
-    private final ChecklistGenerator checklistGenerator;
-    // 업무 ID별 락. 같은 업무에 대한 자동 생성 요청이 동시에 들어와도 조회-후-저장 사이에
-    // 끼어들어 같은 항목이 중복 저장되는 것을 막는다(단일 인스턴스 배포 기준).
-    private final ConcurrentHashMap<Long, Object> generateLocks = new ConcurrentHashMap<>();
+    private final ChecklistAiService checklistAiService;
+    private final ChecklistApplyService checklistApplyService;
+    // 업무 ID를 고정 개수 버킷에 매핑한 스트라이프 락. 같은 업무 동시 저장 시 조회-후-저장 경합으로
+    // 중복 저장되는 것을 막으면서, 업무 수에 비례해 락 객체가 무한 증가하지 않도록 상한을 둔다(단일 인스턴스 기준).
+    private static final int APPLY_LOCK_STRIPES = 64;
+    private final Object[] applyLocks = new Object[APPLY_LOCK_STRIPES];
 
     public ChecklistController(
         ChecklistRepository checklistRepository,
         TaskRepository taskRepository,
         DemoDataService demoDataService,
         ActivityService activityService,
-        ChecklistGenerator checklistGenerator
+        ChecklistAiService checklistAiService,
+        ChecklistApplyService checklistApplyService
     ) {
         this.checklistRepository = checklistRepository;
         this.taskRepository = taskRepository;
         this.demoDataService = demoDataService;
         this.activityService = activityService;
-        this.checklistGenerator = checklistGenerator;
+        this.checklistAiService = checklistAiService;
+        this.checklistApplyService = checklistApplyService;
+        for (int i = 0; i < APPLY_LOCK_STRIPES; i++) {
+            this.applyLocks[i] = new Object();
+        }
     }
 
     private Task resolveTaskOrNull(String projectId, Long taskId) {
@@ -104,10 +108,10 @@ public class ChecklistController {
         return ResponseEntity.ok(ApiResponse.ok(ChecklistItemDto.from(checklist)));
     }
 
-    @Operation(summary = "체크리스트 자동 생성", description = "업무 정보를 바탕으로 체크리스트 항목을 자동 생성해 기존 목록에 추가합니다.")
-    @PostMapping("/generate")
+    @Operation(summary = "체크리스트 AI 미리보기", description = "업무 정보를 바탕으로 AI가 체크리스트 항목을 제안합니다. 저장하지 않습니다.")
+    @PostMapping("/generate-preview")
     @PreAuthorize("@projectAccess.isMember(#projectId)")
-    public ResponseEntity<ApiResponse<List<ChecklistItemDto>>> generateChecklist(
+    public ResponseEntity<ApiResponse<ChecklistPreviewDto>> generatePreview(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "업무 ID") @PathVariable Long taskId
     ) {
@@ -115,23 +119,37 @@ public class ChecklistController {
         if (task == null) {
             return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
         }
+        List<String> existingTitles = checklistRepository.findByTaskIdOrderByCreatedAtAsc(taskId).stream()
+            .map(Checklist::getTitle).toList();
+        ChecklistPreviewResult result = checklistAiService.generatePreview(task, existingTitles);
+        return ResponseEntity.ok(ApiResponse.ok(new ChecklistPreviewDto(result.titles(), result.engine())));
+    }
+
+    @Operation(summary = "체크리스트 AI 결과 적용", description = "미리보기에서 확정한 항목을 기존 체크리스트 뒤에 저장합니다.")
+    @PostMapping("/apply-generated")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
+    public ResponseEntity<ApiResponse<List<ChecklistItemDto>>> applyGenerated(
+        @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
+        @Parameter(description = "업무 ID") @PathVariable Long taskId,
+        @RequestBody ChecklistApplyRequest request
+    ) {
+        Task task = resolveTaskOrNull(projectId, taskId);
+        if (task == null) {
+            return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
+        }
+        List<String> requestedTitles = request == null ? null : request.titles();
         List<Checklist> saved;
-        synchronized (generateLocks.computeIfAbsent(taskId, id -> new Object())) {
-            List<Checklist> existing = checklistRepository.findByTaskIdOrderByCreatedAtAsc(taskId);
-            Set<String> existingTitles = existing.stream().map(Checklist::getTitle).collect(Collectors.toSet());
-            List<String> titles = checklistGenerator.generate(task).stream()
-                .filter(title -> !existingTitles.contains(title))
-                .toList();
-            saved = titles.stream()
-                .map(title -> checklistRepository.save(new Checklist(taskId, title)))
-                .toList();
+        // 커밋까지 락 안에서 이뤄지도록, 트랜잭션 경계를 가진 서비스 호출을 락으로 감싼다.
+        synchronized (applyLocks[(int) Math.floorMod(taskId, APPLY_LOCK_STRIPES)]) {
+            saved = checklistApplyService.saveGenerated(taskId, requestedTitles);
         }
-        if (!saved.isEmpty()) {
-            activityService.record(
-                task.getProjectId(), currentActorId(), "CHECKLIST_CREATED", taskId,
-                "체크리스트 " + saved.size() + "개를 자동 생성했습니다."
-            );
+        if (saved.isEmpty()) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("NO_ITEMS", "저장할 체크리스트 항목이 없습니다."));
         }
+        activityService.record(
+            task.getProjectId(), currentActorId(), "CHECKLIST_CREATED", taskId,
+            "AI 체크리스트 " + saved.size() + "개를 추가했습니다."
+        );
         List<ChecklistItemDto> dtos = saved.stream().map(ChecklistItemDto::from).toList();
         return ResponseEntity.ok(ApiResponse.ok(dtos));
     }

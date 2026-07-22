@@ -9,12 +9,13 @@ import { getCatDetailFields } from "../libs/utils/catFields";
 import { STATUS_ACTIONS, visibleSecondaryActions } from "../libs/utils/taskActions";
 import { PARTICIPANT_COLORS } from "../../global/lib/mock/members";
 import type { MemberResponse } from "../../global/api/projectsApi";
-import { fetchChecklist, createChecklistItem, updateChecklistItem, deleteChecklistItem, generateChecklist } from "../libs/utils/checklistApi";
+import { fetchChecklist, createChecklistItem, updateChecklistItem, deleteChecklistItem } from "../libs/utils/checklistApi";
 import { fetchTaskComments, createTaskComment, updateTaskComment, deleteTaskComment, type TaskCommentDto } from "../libs/utils/taskCommentApi";
 import { fetchTaskActivity, type TaskActivityDto } from "../libs/utils/activityApi";
 import { DEMO_PROJECT_ID, sendTaskNudge, type NudgeKind } from "../libs/utils/taskApi";
 import { useAuth } from "../../global/hooks/useAuth";
 import type { Task, ChecklistItem } from "../libs/types/task";
+import ChecklistGenerateModal from "./ChecklistGenerateModal";
 
 type FeedType = "comment" | "status" | "system";
 interface FeedItem { id: string; type: FeedType; who: string; when: string; msg: string; at: number; commentId?: string; isFeedback?: boolean; }
@@ -97,7 +98,7 @@ export function TaskDetailPanel({ task, projectMembers, onClose, onQuickAction, 
 
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
   const [checklistState, setChecklistState] = useState<"loading" | "ready" | "error">("loading");
-  const [generatingChecklist, setGeneratingChecklist] = useState(false);
+  const [generateModalOpen, setGenerateModalOpen] = useState(false);
   const [newItemTitle, setNewItemTitle] = useState("");
   const [addingItem, setAddingItem] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -198,20 +199,6 @@ export function TaskDetailPanel({ task, projectMembers, onClose, onQuickAction, 
       onShowToast("체크리스트 추가에 실패했습니다.");
     } finally {
       setAddingItem(false);
-    }
-  };
-
-  const handleGenerateChecklist = async () => {
-    if (generatingChecklist) return;
-    setGeneratingChecklist(true);
-    try {
-      const generated = await generateChecklist(task.id, projectId);
-      setChecklist((cur) => [...cur, ...generated]);
-      onShowToast(`체크리스트 ${generated.length}개를 생성했습니다.`);
-    } catch {
-      onShowToast("체크리스트 자동 생성에 실패했습니다.");
-    } finally {
-      setGeneratingChecklist(false);
     }
   };
 
@@ -418,13 +405,12 @@ export function TaskDetailPanel({ task, projectMembers, onClose, onQuickAction, 
                   })}
                   <div className="my-1 border-t border-border" />
                   <button
-                    onClick={() => { setMenuOpen(false); void handleGenerateChecklist(); }}
-                    disabled={generatingChecklist}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium hover:bg-muted text-left transition-colors disabled:opacity-50"
+                    onClick={() => { setMenuOpen(false); setGenerateModalOpen(true); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium hover:bg-muted text-left transition-colors"
                     style={{ color: "#7048E8" }}
                   >
                     <Sparkles className="w-3.5 h-3.5" />
-                    {generatingChecklist ? "생성 중..." : "체크리스트 자동 생성"}
+                    체크리스트 자동 생성
                   </button>
                   {isLeader && (
                     <>
@@ -474,6 +460,15 @@ export function TaskDetailPanel({ task, projectMembers, onClose, onQuickAction, 
           </div>
         </>
       )}
+
+      <ChecklistGenerateModal
+        taskId={task.id}
+        projectId={projectId}
+        open={generateModalOpen}
+        onClose={() => setGenerateModalOpen(false)}
+        onApplied={(items) => setChecklist((cur) => [...cur, ...items])}
+        onShowToast={onShowToast}
+      />
 
       <div className="flex-1 overflow-y-auto scrollbar-thin">
         {/* 담당자 / 마감일 */}

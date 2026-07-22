@@ -55,9 +55,28 @@ export async function deleteChecklistItem(taskId: string, itemId: string, projec
   await apiFetch<null>(`${checklistPath(taskId, projectId)}/${itemId}`, { method: "DELETE" });
 }
 
-export async function generateChecklist(taskId: string, projectId: number = DEMO_PROJECT_ID): Promise<ChecklistItem[]> {
-  const items = await apiFetch<ChecklistItemDto[]>(`${checklistPath(taskId, projectId)}/generate`, {
+export interface ChecklistPreview {
+  titles: string[];
+  engine: string;
+}
+
+export async function generateChecklistPreview(
+  taskId: string,
+  projectId: number = DEMO_PROJECT_ID
+): Promise<ChecklistPreview> {
+  return apiFetch<ChecklistPreview>(`${checklistPath(taskId, projectId)}/generate-preview`, {
     method: "POST",
+  });
+}
+
+export async function applyGeneratedChecklist(
+  taskId: string,
+  titles: string[],
+  projectId: number = DEMO_PROJECT_ID
+): Promise<ChecklistItem[]> {
+  const items = await apiFetch<ChecklistItemDto[]>(`${checklistPath(taskId, projectId)}/apply-generated`, {
+    method: "POST",
+    body: JSON.stringify({ titles }),
   });
   return items.map(toItem);
 }
