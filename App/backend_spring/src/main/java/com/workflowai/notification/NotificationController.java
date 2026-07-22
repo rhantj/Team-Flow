@@ -5,6 +5,7 @@ import com.workflowai.security.CurrentUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
+import java.util.Objects;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -53,8 +54,19 @@ public class NotificationController {
         if (request.ids() == null || request.ids().isEmpty()) {
             return ResponseEntity.ok(ApiResponse.ok(null));
         }
+        // 목록 조회가 최신순 최대 50건이므로, 정상적인 클라이언트라면 ids도 그 범위를 넘지 않는다.
+        // null/음수/중복 id 및 비정상적으로 큰 요청을 방어적으로 걸러낸다.
+        List<Long> normalizedIds = request.ids().stream()
+            .filter(Objects::nonNull)
+            .filter(id -> id > 0)
+            .distinct()
+            .limit(50)
+            .toList();
+        if (normalizedIds.isEmpty()) {
+            return ResponseEntity.ok(ApiResponse.ok(null));
+        }
         Long userId = CurrentUser.id();
-        List<Notification> owned = notificationRepository.findByIdInAndUserId(request.ids(), userId);
+        List<Notification> owned = notificationRepository.findByIdInAndUserId(normalizedIds, userId);
         owned.forEach(Notification::markRead);
         notificationRepository.saveAll(owned);
         return ResponseEntity.ok(ApiResponse.ok(null));

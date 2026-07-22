@@ -6,7 +6,6 @@ import {
   Award,
   BarChart3,
   CheckCircle2,
-  ClipboardCheck,
   Download,
   Eye,
   EyeOff,
@@ -166,7 +165,6 @@ export function ContributorsView() {
   const selectedMember = mergedReports.find((report) => report.memberId === selectedMemberId) ?? mergedReports[0];
   const averageScore = Math.round(mergedReports.reduce((sum, report) => sum + report.score, 0) / mergedReports.length);
   const publishedCount = Object.values(publicFlags).filter(Boolean).length;
-  const evidenceCount = mergedReports.reduce((sum, report) => sum + report.evidence.length, 0);
   const completedTasks = mergedReports.reduce((sum, report) => sum + report.todoDone, 0);
   const totalTasks = mergedReports.reduce((sum, report) => sum + report.todoTotal, 0);
   const statusMeta = STATUS_META[selectedTeam.evalStatus];
@@ -234,7 +232,7 @@ export function ContributorsView() {
             { label: "팀 평균 점수", value: `${averageScore}점`, icon: Award, color: "#2563EB" },
             { label: "평가 대상", value: `${mergedReports.length}명`, icon: Users, color: "#7C3AED" },
             { label: "공개 완료", value: `${publishedCount}/${mergedReports.length}`, icon: Eye, color: "#059669" },
-            { label: "근거 항목", value: `${evidenceCount}개`, icon: ClipboardCheck, color: "#D97706" },
+            { label: "전체 업무 완료율", value: `${percent(completedTasks, totalTasks)}%`, icon: CheckCircle2, color: "#D97706" },
           ].map((item) => (
             <div key={item.label} className="bg-card border border-border rounded-lg p-4 shadow-sm">
               <div className="flex items-center justify-between">
@@ -263,9 +261,6 @@ export function ContributorsView() {
                     >
                       {statusMeta.label}
                     </span>
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    GitHub {selectedTeam.github ? "연결됨" : "미연결"} · 산출물 {selectedTeam.submitted}/{selectedTeam.deliverables}개 제출 · 전체 업무 완료율 {percent(completedTasks, totalTasks)}%
                   </div>
                 </div>
                 <div className="relative w-full sm:w-64">
@@ -457,51 +452,6 @@ export function ContributorsView() {
           </main>
 
           <aside className="space-y-4 min-w-0">
-            <section className="bg-card border border-border rounded-lg shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-border">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div
-                      className="w-11 h-11 rounded-full flex items-center justify-center text-white text-base font-bold shrink-0"
-                      style={{ background: selectedMember.color }}
-                    >
-                      {selectedMember.name[0]}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-base font-bold text-foreground truncate">{selectedMember.name}</div>
-                      <div className="text-xs text-muted-foreground">{selectedMember.role}</div>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="text-3xl font-bold" style={{ color: selectedTone.color }}>{selectedMember.score}</div>
-                    <div
-                      className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                      style={{ color: selectedTone.color, background: selectedTone.bg }}
-                    >
-                      {selectedTone.label}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-4 space-y-3">
-                {Object.entries(selectedMember.categories).map(([key, value]) => (
-                  <div key={key}>
-                    <div className="flex items-center justify-between text-xs mb-1">
-                      <span className="text-muted-foreground">{CATEGORY_LABELS[key as CategoryKey]}</span>
-                      <span className="font-bold text-foreground">{value}</span>
-                    </div>
-                    <div className="h-2 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className="h-full rounded-full"
-                        style={{ width: `${value}%`, background: selectedMember.color }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-
             <section className="bg-card border border-border rounded-lg p-4 shadow-sm">
               <div className="flex items-center gap-2 mb-3">
                 <MessageSquare className="w-4 h-4 text-blue-600" />

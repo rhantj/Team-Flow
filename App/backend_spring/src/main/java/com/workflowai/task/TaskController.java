@@ -328,6 +328,9 @@ public class TaskController {
         @Parameter(description = "업무 ID") @PathVariable Long taskId,
         @RequestBody NudgeRequest request
     ) {
+        if (request.kind() == null || request.kind().isBlank()) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_NUDGE_KIND", "알 수 없는 알림 종류입니다."));
+        }
         String messageTemplate = NUDGE_MESSAGE_TEMPLATES.get(request.kind());
         if (messageTemplate == null) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_NUDGE_KIND", "알 수 없는 알림 종류입니다."));

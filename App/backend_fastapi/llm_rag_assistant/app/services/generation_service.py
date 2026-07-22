@@ -12,11 +12,19 @@ _SYSTEM_PROMPT = (
 )
 
 
+class RagConfigurationError(RuntimeError):
+    """RAG 답변 생성에 필요한 설정(예: HF_TOKEN)이 누락된 경우.
+
+    일반 RuntimeError를 그대로 쓰면 라우터가 실제 코드 결함까지 함께 503으로
+    감춰버릴 수 있어, "지금은 답변 불가"임을 명확히 나타내는 전용 타입으로 분리했다.
+    """
+
+
 async def generate_answer(question: str, sources: list[dict]) -> str:
     settings = get_settings()
 
     if not settings.hf_token:
-        raise RuntimeError("HF_TOKEN is not configured.")
+        raise RagConfigurationError("HF_TOKEN is not configured.")
 
     if not sources:
         context = "(관련 자료 없음)"

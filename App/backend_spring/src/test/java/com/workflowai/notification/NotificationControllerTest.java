@@ -114,4 +114,48 @@ class NotificationControllerTest {
         verify(notificationRepository, never()).findByIdInAndUserId(eq(List.of()), eq(5L));
         verify(notificationRepository, never()).saveAll(List.of());
     }
+
+    @Test
+    void filtersOutNullAndNonPositiveIdsAndDedupesBeforeLookup() throws Exception {
+        authenticateAs(5L);
+        Notification n1 = new Notification(5L, "TASK_ASSIGNED", "제목1", "내용1", "task", 10L);
+        when(notificationRepository.findByIdInAndUserId(eq(List.of(10L)), eq(5L))).thenReturn(List.of(n1));
+
+        mockMvc.perform(patch("/api/v1/notifications/read")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"ids\":[10,10,null,-1,0]}"))
+            .andExpect(status().isOk());
+
+        verify(notificationRepository).findByIdInAndUserId(List.of(10L), 5L);
+        verify(notificationRepository).saveAll(List.of(n1));
+    }
+
+    @Test
+    void doesNothingWhenAllIdsAreInvalidAfterFiltering() throws Exception {
+        authenticateAs(5L);
+
+        mockMvc.perform(patch("/api/v1/notifications/read")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"ids\":[null,-1,0]}"))
+            .andExpect(status().isOk());
+
+        verify(notificationRepository, never()).findByIdInAndUserId(org.mockito.ArgumentMatchers.any(), eq(5L));
+        verify(notificationRepository, never()).saveAll(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void capsIdsAtFifty() throws Exception {
+        authenticateAs(5L);
+        List<Long> tooMany = java.util.stream.LongStream.rangeClosed(1, 60).boxed().toList();
+        List<Long> expectedCapped = tooMany.subList(0, 50);
+        String idsJson = tooMany.toString();
+        when(notificationRepository.findByIdInAndUserId(eq(expectedCapped), eq(5L))).thenReturn(List.of());
+
+        mockMvc.perform(patch("/api/v1/notifications/read")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"ids\":" + idsJson + "}"))
+            .andExpect(status().isOk());
+
+        verify(notificationRepository).findByIdInAndUserId(expectedCapped, 5L);
+    }
 }
