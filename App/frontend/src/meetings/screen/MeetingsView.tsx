@@ -707,7 +707,7 @@ export function MeetingsView() {
   const groupedMeetingTodos = meeting?.todos ? groupMeetingTodoLines(meeting.todos) : [];
   const isMeetingTodosRegistered = Boolean(meeting?.todos?.length) && meeting!.todos!.every(line => {
     const parsed = parseMeetingTodoLine(line);
-    const matchedMember = projectMembers.find(m => m.name === parsed.assigneeName);
+    const matchedMember = projectMembers.find(m => m.name.trim() === parsed.assigneeName.trim());
     const assigneeId = matchedMember ? String(matchedMember.userId) : "";
     const key = buildTodoRegistrationKey(meetingIdentifier, parsed.title, assigneeId, parsed.dueDate);
     return getStoredTasks().some(task => buildTodoRegistrationKey(task.sourceMeetingTitle ?? "", task.title, task.assignee, task.dueDate) === key);
@@ -1157,7 +1157,7 @@ export function MeetingsView() {
 
     const parsedTodos = meeting.todos.map(line => {
       const parsed = parseMeetingTodoLine(line);
-      const matchedMember = projectMembers.find(m => m.name === parsed.assigneeName);
+      const matchedMember = projectMembers.find(m => m.name.trim() === parsed.assigneeName.trim());
       const assigneeId = matchedMember ? String(matchedMember.userId) : "";
       return { ...parsed, assigneeId };
     });
@@ -1735,6 +1735,7 @@ export function MeetingsView() {
                         <select value={assigneeId} onChange={e => setTodoAssignees(p => ({ ...p, [todo.id]: e.target.value }))}
                           className={`text-xs rounded-lg border px-2 py-1.5 outline-none focus:border-blue-400 cursor-pointer ${isUnassigned ? "border-amber-300 bg-amber-50 text-amber-700" : "border-border bg-card text-foreground"}`}>
                           <option value="">⚠ 미배정</option>
+                          {projectMembers.length === 0 && <option value="" disabled>프로젝트 멤버 불러오는 중...</option>}
                           {projectMembers.map(m => <option key={m.userId} value={String(m.userId)}>{m.name}</option>)}
                         </select>
                       </td>
@@ -1794,6 +1795,7 @@ export function MeetingsView() {
                       <select value={newTodoAssignee} onChange={e => setNewTodoAssignee(e.target.value)}
                         className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-xs outline-none focus:border-blue-400">
                         <option value="">담당자 선택</option>
+                        {projectMembers.length === 0 && <option value="" disabled>프로젝트 멤버 불러오는 중...</option>}
                         {projectMembers.map(m => <option key={m.userId} value={String(m.userId)}>{m.name}</option>)}
                       </select>
                     </div>
