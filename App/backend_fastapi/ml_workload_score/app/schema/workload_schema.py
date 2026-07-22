@@ -13,6 +13,10 @@ class WorkloadMemberResult(BaseModel):
     overload_score: float
     is_anomaly: bool
     anomaly_type: str
+    # --- 편중도 근거 패널용 신규 필드 (build_features()가 이미 계산하던 값) ---
+    task_count_active_rel: float
+    difficulty_avg_rel: float
+    overdue_count: int
 
 
 class WorkloadScoreData(BaseModel):
@@ -22,6 +26,9 @@ class WorkloadScoreData(BaseModel):
     method: str  # "MAD (소규모 팀)" | "Isolation Forest (대규모)"
     members: List[WorkloadMemberResult]
     note: Optional[str] = None
+    # anomaly_type(과부하/저활동 의심) 판정에 실제로 쓰인 팀 평균 완료율(0~1).
+    # 멤버가 없으면(빈 팀) 계산 자체가 없었으므로 None.
+    team_mean_completion: Optional[float] = None
 
 
 class WorkloadScoreResponse(BaseModel):

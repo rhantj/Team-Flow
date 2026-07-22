@@ -18,7 +18,7 @@ import {
 } from "../../libs/utils/dashboardTaskUtils";
 
 const GROUPS = [
-  { label: "이미 지남", key: "overdue", color: "#6B7280", bg: "bg-slate-50 border-slate-200" },
+  { label: "이미 지연", key: "overdue", color: "#6B7280", bg: "bg-slate-50 border-slate-200" },
   { label: "오늘 마감", key: "today", color: "#EF4444", bg: "bg-red-50 border-red-200" },
   { label: "3일 이내", key: "3day", color: "#F97316", bg: "bg-orange-50 border-orange-200" },
   { label: "7일 이내", key: "week", color: "#F59E0B", bg: "bg-amber-50 border-amber-200" },
@@ -88,7 +88,7 @@ export function UrgentTasksPage() {
         <DetailStatCard label="오늘 마감" value={loading ? "..." : counts.today} sub="즉시 확인 필요" color="#EF4444" icon={AlertCircle} />
         <DetailStatCard label="3일 이내" value={loading ? "..." : counts["3day"]} sub="긴급 처리 필요" color="#F97316" icon={AlertTriangle} />
         <DetailStatCard label="7일 이내" value={loading ? "..." : counts.week} sub="이번 주 완료 목표" color="#F59E0B" icon={Clock} />
-        <DetailStatCard label="이미 지남" value={loading ? "..." : counts.overdue} sub="담당자 확인 필요" color="#6B7280" icon={AlertTriangle} />
+        <DetailStatCard label="이미 지연" value={loading ? "..." : counts.overdue} sub="담당자 확인 필요" color="#6B7280" icon={AlertTriangle} />
       </div>
 
       <AIBox text="미구현된 기능입니다." />

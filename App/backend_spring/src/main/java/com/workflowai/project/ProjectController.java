@@ -6,6 +6,8 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,10 +34,31 @@ public class ProjectController {
         return ApiResponse.ok(projectService.findAllForUser(CurrentUser.id()));
     }
 
-    @Operation(summary = "프로젝트 생성", description = "생성한 사용자는 자동으로 팀장(LEADER)이 된다.")
+    @Operation(
+        summary = "프로젝트 생성 (온보딩)",
+        description = "생성한 사용자는 자동으로 팀장(LEADER)이 되어 project_members에 등록된다. "
+            + "프로젝트명은 필수이며, 일정/산출물/기술스택 정보는 선택 입력이다. 유효성 검사 실패 시 400을 반환한다."
+    )
     @PostMapping
-    public ApiResponse<ProjectResponse> create(@Valid @RequestBody CreateProjectRequest request) {
-        return ApiResponse.ok(projectService.create(CurrentUser.id(), request));
+    public ResponseEntity<ApiResponse<ProjectResponse>> create(@Valid @RequestBody CreateProjectRequest request) {
+        try {
+            return ResponseEntity.ok(ApiResponse.ok(projectService.create(CurrentUser.id(), request)));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.fail("INVALID_PROJECT_INPUT", e.getMessage()));
+        }
+    }
+
+    @Operation(
+        summary = "초대 코드로 프로젝트 참여",
+        description = "코드가 유효하면 현재 로그인한 사용자를 팀원(MEMBER)으로 project_members에 등록한다."
+    )
+    @PostMapping("/join")
+    public ResponseEntity<ApiResponse<ProjectResponse>> join(@Valid @RequestBody JoinProjectRequest request) {
+        try {
+            return ResponseEntity.ok(ApiResponse.ok(projectService.joinByCode(CurrentUser.id(), request.code())));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.fail("INVALID_INVITE_CODE", e.getMessage()));
+        }
     }
 
     @Operation(summary = "프로젝트 상세 조회")
@@ -45,14 +68,18 @@ public class ProjectController {
         return ApiResponse.ok(projectService.find(projectId));
     }
 
-    @Operation(summary = "프로젝트 수정", description = "팀장만 가능하다.")
+    @Operation(summary = "프로젝트 수정", description = "팀장만 가능하다. 팀원/심사자가 호출하면 403을 반환한다.")
     @PatchMapping("/{projectId}")
     @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER')")
-    public ApiResponse<ProjectResponse> update(
+    public ResponseEntity<ApiResponse<ProjectResponse>> update(
         @PathVariable Long projectId,
         @RequestBody UpdateProjectRequest request
     ) {
-        return ApiResponse.ok(projectService.update(projectId, request));
+        try {
+            return ResponseEntity.ok(ApiResponse.ok(projectService.update(projectId, request)));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.fail("INVALID_PROJECT_INPUT", e.getMessage()));
+        }
     }
 
     @Operation(summary = "프로젝트 삭제", description = "팀장만 가능하다.")

@@ -14,6 +14,8 @@ public record DashboardTaskDto(
     @Schema(description = "우선순위", example = "high") String priority,
     @Schema(description = "업무 설명") String description,
     @Schema(description = "업무 생성 출처", example = "MEETING_AI") String sourceType,
-    @Schema(description = "같은 상태 안에서의 칸반 카드 순서", example = "0.0") double position
+    @Schema(description = "같은 상태 안에서의 칸반 카드 순서", example = "0.0") double position,
+    @Schema(description = "업무 생성 시각(ISO-8601)", example = "2026-07-01T09:00:00") String createdAt,
+    @Schema(description = "업무 마지막 수정 시각(ISO-8601)", example = "2026-07-19T15:30:00") String updatedAt
 ) {
 }

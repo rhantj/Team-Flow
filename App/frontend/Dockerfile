@@ -12,9 +12,8 @@ COPY . .
 # (apiClient는 /api/v1, ragApi는 /v1을 벗겨 /api로 사용 — 단일 값으로 둘 다 충족)
 ARG VITE_API_BASE_URL=/api/v1
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
-# 데모 로그인 버튼을 Docker에서도 보이게 함(임시 - 나중에 기능 제거 시 같이 정리).
-# 끄고 싶으면 VITE_ENABLE_DEMO_AUTH=false로 빌드.
-ARG VITE_ENABLE_DEMO_AUTH=true
+# 데모 로그인 버튼은 기본 비활성화한다. 로컬 docker-compose에서만 true로 명시한다.
+ARG VITE_ENABLE_DEMO_AUTH=false
 ENV VITE_ENABLE_DEMO_AUTH=$VITE_ENABLE_DEMO_AUTH
 RUN pnpm build
 

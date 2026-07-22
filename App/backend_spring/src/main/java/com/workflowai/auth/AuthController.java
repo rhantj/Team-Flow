@@ -1,6 +1,8 @@
 package com.workflowai.auth;
 
 import com.workflowai.common.ApiResponse;
+import com.workflowai.presence.PresenceService;
+import com.workflowai.security.CurrentUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
@@ -25,6 +27,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 @Tag(name = "인증", description = "Google OAuth 로그인/회원가입, JWT 발급 및 재발급")
@@ -36,6 +39,8 @@ public class AuthController {
 
     private final GoogleOAuthService googleOAuthService;
     private final AuthService authService;
+    private final TestLoginService testLoginService;
+    private final PresenceService presenceService;
     private final String frontendBaseUrl;
     private final boolean forceSecureCookies;
     private final boolean devLoginEnabled;
@@ -43,12 +48,16 @@ public class AuthController {
     public AuthController(
         GoogleOAuthService googleOAuthService,
         AuthService authService,
+        TestLoginService testLoginService,
+        PresenceService presenceService,
         @Value("${workflow.frontend.base-url}") String frontendBaseUrl,
         @Value("${workflow.security.force-secure-cookies:false}") boolean forceSecureCookies,
-        @Value("${workflow.demo.dev-login-enabled:true}") boolean devLoginEnabled
+        @Value("${workflow.demo.dev-login-enabled:false}") boolean devLoginEnabled
     ) {
         this.googleOAuthService = googleOAuthService;
         this.authService = authService;
+        this.testLoginService = testLoginService;
+        this.presenceService = presenceService;
         this.frontendBaseUrl = frontendBaseUrl;
         this.forceSecureCookies = forceSecureCookies;
         this.devLoginEnabled = devLoginEnabled;
@@ -151,6 +160,99 @@ public class AuthController {
             log.warn("데모 토큰 로그인 실패: {}", demoUserId, e);
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiResponse.fail("DEMO_USER_NOT_FOUND", "테스트 계정을 찾을 수 없습니다."));
+        }
+    }
+
+    @Operation(
+        summary = "[중간보고/시연용] 아이디+비밀번호 테스트 로그인",
+        description = "leader/member1~4/reviewer 6개 테스트 계정을 비밀번호 1111로 로그인한다. "
+            + "내부적으로 기존 데모 계정(dev-login) 시딩을 재사용하며, 같은 계정이 이미 접속 중(heartbeat TTL 이내)이면 409를 반환한다."
+    )
+    @PostMapping("/test-login")
+    public ResponseEntity<ApiResponse<AuthTokenResponse>> testLogin(@Valid @RequestBody TestLoginRequest request) {
+        if (!devLoginEnabled) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.fail("DEV_LOGIN_DISABLED", "개발용 로그인이 비활성화되어 있습니다."));
+        }
+        try {
+            return ResponseEntity.ok(ApiResponse.ok(testLoginService.login(request.username(), request.password())));
+        } catch (TestAccountAlreadyActiveException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.fail("TEST_ACCOUNT_ALREADY_ACTIVE", e.getMessage()));
+        } catch (InvalidTestCredentialsException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ApiResponse.fail("INVALID_TEST_CREDENTIALS", e.getMessage()));
+        }
+    }
+
+    @Operation(
+        summary = "[중간보고/시연용] 테스트 로그인 접속 상태 해제",
+        description = "테스트 계정 로그아웃 시 호출해 접속 상태를 즉시 제거한다. Authorization 헤더가 없거나 유효하지 않아도 200을 반환한다(idempotent)."
+    )
+    @PostMapping("/test-logout")
+    public ApiResponse<Void> testLogout(
+        @RequestHeader(name = "X-Workflow-Test-Session-Id", required = false) String testSessionId
+    ) {
+        releaseCurrentTestSession(testSessionId);
+        return ApiResponse.ok(null);
+    }
+
+    @Operation(
+        summary = "[중간보고/시연용] 접속 상태 heartbeat",
+        description = "프론트가 로그인 중 주기적으로 호출해 접속 상태를 갱신한다(TTL 40초). 호출이 끊기면 자동으로 접속 종료 처리된다."
+    )
+    @PostMapping("/test-session/heartbeat")
+    public ApiResponse<Void> heartbeat(
+        @RequestHeader(name = "X-Workflow-Test-Session-Id", required = false) String testSessionId
+    ) {
+        try {
+            presenceService.touch(CurrentUser.id(), testSessionId);
+        } catch (RuntimeException e) {
+            log.debug("heartbeat 무시: 인증 정보 없음");
+        }
+        return ApiResponse.ok(null);
+    }
+
+    private void releaseCurrentTestSession(String testSessionId) {
+        try {
+            presenceService.release(CurrentUser.id(), testSessionId);
+        } catch (RuntimeException e) {
+            log.debug("test-logout 무시: 인증 정보 없음");
+        }
+    }
+
+    @Operation(
+        summary = "실제 회원가입 (이메일/비밀번호)",
+        description = "이메일/비밀번호로 실제 계정을 생성한다. roleType=REVIEWER면 토큰을 발급하지 않고 "
+            + "PENDING_REVIEWER_APPROVAL 상태로만 계정을 만든다(관리자 승인 절차는 아직 없음 — 최소 구현). "
+            + "이메일 중복이면 409, 입력값이 유효하지 않으면 400을 반환한다."
+    )
+    @PostMapping("/signup")
+    public ResponseEntity<ApiResponse<SignupResponse>> signup(@Valid @RequestBody SignupRequest request) {
+        try {
+            return ResponseEntity.ok(ApiResponse.ok(
+                authService.signup(request.email(), request.password(), request.name(), request.roleType())
+            ));
+        } catch (EmailAlreadyExistsException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.fail("EMAIL_ALREADY_EXISTS", e.getMessage()));
+        } catch (InvalidSignupInputException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.fail("INVALID_SIGNUP_INPUT", e.getMessage()));
+        }
+    }
+
+    @Operation(
+        summary = "실제 로그인 (이메일/비밀번호)",
+        description = "이메일/비밀번호로 로그인한다. Google OAuth로 가입한 계정(비밀번호 없음)이면 401과 함께 "
+            + "Google 로그인 안내 메시지를 반환한다."
+    )
+    @PostMapping("/login")
+    public ResponseEntity<ApiResponse<AuthTokenResponse>> login(@Valid @RequestBody LoginRequest request) {
+        try {
+            return ResponseEntity.ok(ApiResponse.ok(authService.loginWithPassword(request.email(), request.password())));
+        } catch (GoogleAccountRequiredException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ApiResponse.fail("GOOGLE_ACCOUNT_REQUIRED", e.getMessage()));
+        } catch (ReviewerApprovalPendingException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.fail("REVIEWER_APPROVAL_PENDING", e.getMessage()));
+        } catch (InvalidCredentialsException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ApiResponse.fail("INVALID_CREDENTIALS", e.getMessage()));
         }
     }
 

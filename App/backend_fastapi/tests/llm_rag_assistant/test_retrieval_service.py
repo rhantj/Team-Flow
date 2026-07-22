@@ -131,3 +131,30 @@ async def test_search_skips_reservation_when_no_meeting_chunks_exist_at_all() ->
 
     assert len(conn.calls) == 2
     assert result == general_rows
+
+
+@pytest.mark.asyncio
+async def test_search_filters_by_assignee_id_when_provided() -> None:
+    assignee_rows = [{"source_type": "task", "source_id": 1, "content": "내 업무", "similarity": 0.9}]
+    conn = _FakeConn(assignee_rows)
+    pool = _FakePool(conn)
+
+    result = await search_similar_chunks(pool, project_id=1, query_embedding=[0.1], top_k=5, assignee_id=42)
+
+    assert result == assignee_rows
+    query, args = conn.calls[0]
+    assert "assignee_id" in query
+    assert args == ("[0.10000000]", 1, 42, 5)
+
+
+@pytest.mark.asyncio
+async def test_search_does_not_fall_back_to_general_search_when_assignee_has_no_chunks() -> None:
+    """담당 업무가 없을 때 프로젝트 전체 검색으로 대체하면 다른 사람의 업무가 컨텍스트에 섞여
+    LLM이 그걸 질문자 본인의 담당 업무처럼 답할 수 있다 - 반드시 빈 결과를 그대로 반환해야 한다."""
+    conn = _FakeConn([])
+    pool = _FakePool(conn)
+
+    result = await search_similar_chunks(pool, project_id=1, query_embedding=[0.1], top_k=5, assignee_id=42)
+
+    assert result == []
+    assert len(conn.calls) == 1

@@ -3,23 +3,24 @@ import { X } from "lucide-react";
 import { CATEGORIES } from "../libs/mock/tasks";
 import { getCat } from "../libs/utils/taskService";
 import { updateTask, DEMO_PROJECT_ID } from "../libs/utils/taskApi";
-import { MEMBERS } from "../../global/lib/mock/members";
 import { useAuth } from "../../global/hooks/useAuth";
+import type { MemberResponse } from "../../global/api/projectsApi";
 import type { Priority, Task } from "../libs/types/task";
 
 interface EditTaskModalProps {
   task: Task | null;
+  projectMembers: MemberResponse[];
   onClose: () => void;
   onUpdated: (task: Task) => void;
 }
 
-export function EditTaskModal({ task, onClose, onUpdated }: EditTaskModalProps) {
+export function EditTaskModal({ task, projectMembers, onClose, onUpdated }: EditTaskModalProps) {
   const { currentProjectId } = useAuth();
   const [selCat, setSelCat] = useState("");
   const [customCat, setCustomCat] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [assigneeId, setAssigneeId] = useState("1");
+  const [assigneeId, setAssigneeId] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [priority, setPriority] = useState<Priority>("medium");
   const [submitting, setSubmitting] = useState(false);
@@ -31,12 +32,12 @@ export function EditTaskModal({ task, onClose, onUpdated }: EditTaskModalProps) 
     setSelCat(knownCat ? task.category : "other");
     setCustomCat(knownCat ? "" : task.category);
     setTitle(task.title);
-    setDescription("");
-    setAssigneeId(task.assignee || "1");
+    setDescription(task.description ?? "");
+    setAssigneeId(task.assignee ?? "");
     setDueDate(task.dueDate);
     setPriority(task.priority);
     setError(null);
-  }, [task]);
+  }, [task, projectMembers]);
 
   if (!task) return null;
 
@@ -116,7 +117,8 @@ export function EditTaskModal({ task, onClose, onUpdated }: EditTaskModalProps) 
               <div>
                 <label className="text-xs font-semibold text-foreground block mb-1.5">담당자</label>
                 <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className="w-full rounded-xl border border-border bg-input-background px-4 py-2.5 text-sm outline-none focus:border-blue-400">
-                  {MEMBERS.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.role})</option>)}
+                  <option value="">⚠ 미배정</option>
+                  {projectMembers.map((m) => <option key={m.userId} value={String(m.userId)}>{m.name} ({m.role})</option>)}
                 </select>
               </div>
               <div>

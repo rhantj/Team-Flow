@@ -4,6 +4,11 @@ import com.workflowai.security.JwtService;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
 import io.jsonwebtoken.Claims;
+import java.util.Locale;
+import java.util.Set;
+import java.util.regex.Pattern;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -11,15 +16,32 @@ import org.springframework.transaction.annotation.Transactional;
 public class AuthService {
     private static final String PROVIDER_GOOGLE = "google";
     private static final String PROVIDER_DEMO = "demo";
+    private static final String PROVIDER_LOCAL = "local";
+    private static final String ROLE_TYPE_MEMBER = "MEMBER";
+    private static final String ROLE_TYPE_REVIEWER = "REVIEWER";
+    private static final String REVIEWER_STATUS_PENDING = "PENDING";
+    private static final int MIN_PASSWORD_LENGTH = 8;
+    private static final Pattern EMAIL_PATTERN = Pattern.compile(
+        "^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$",
+        Pattern.CASE_INSENSITIVE
+    );
+    private static final Set<String> ALLOWED_ROLE_TYPES = Set.of(ROLE_TYPE_MEMBER, ROLE_TYPE_REVIEWER);
 
     private final GoogleOAuthService googleOAuthService;
     private final UserRepository userRepository;
     private final JwtService jwtService;
+    private final PasswordEncoder passwordEncoder;
 
-    public AuthService(GoogleOAuthService googleOAuthService, UserRepository userRepository, JwtService jwtService) {
+    public AuthService(
+        GoogleOAuthService googleOAuthService,
+        UserRepository userRepository,
+        JwtService jwtService,
+        PasswordEncoder passwordEncoder
+    ) {
         this.googleOAuthService = googleOAuthService;
         this.userRepository = userRepository;
         this.jwtService = jwtService;
+        this.passwordEncoder = passwordEncoder;
     }
 
     @Transactional
@@ -42,6 +64,68 @@ public class AuthService {
         return issueTokens(user);
     }
 
+    /** 이메일/비밀번호 회원가입. REVIEWER는 토큰을 발급하지 않고 승인 대기 상태로만 계정을 만든다. */
+    @Transactional
+    public SignupResponse signup(String email, String password, String name, String roleType) {
+        String normalizedEmail = normalizeEmail(email);
+        String normalizedName = normalizeName(name);
+        String normalizedRoleType = normalizeRoleType(roleType);
+        if (normalizedName.isBlank()) {
+            throw new InvalidSignupInputException("이름과 이메일을 입력해주세요.");
+        }
+        if (!EMAIL_PATTERN.matcher(normalizedEmail).matches()) {
+            throw new InvalidSignupInputException("올바른 이메일 형식으로 입력해주세요.");
+        }
+        if (password == null || password.length() < MIN_PASSWORD_LENGTH) {
+            throw new InvalidSignupInputException("비밀번호는 " + MIN_PASSWORD_LENGTH + "자 이상이어야 합니다.");
+        }
+        if (userRepository.existsByEmail(normalizedEmail)) {
+            throw new EmailAlreadyExistsException();
+        }
+
+        String passwordHash = passwordEncoder.encode(password);
+        boolean isReviewerApplication = ROLE_TYPE_REVIEWER.equals(normalizedRoleType);
+        User newUser = new User(normalizedEmail, normalizedName, PROVIDER_LOCAL, normalizedEmail, passwordHash);
+        if (isReviewerApplication) {
+            newUser.setReviewerStatus(REVIEWER_STATUS_PENDING);
+        }
+        User user;
+        try {
+            user = userRepository.saveAndFlush(newUser);
+        } catch (DataIntegrityViolationException e) {
+            // PostgreSQL은 제약조건 위반 시 트랜잭션을 abort 상태로 만들어, 같은 트랜잭션 안에서
+            // 재조회 쿼리를 날리면 "current transaction is aborted"로 500이 난다. users 테이블의
+            // 유니크 제약(uq_users_email, uq_users_provider)은 로컬 가입 시 전부 email 기준이라
+            // 재조회 없이 바로 중복 이메일로 판단한다.
+            throw new EmailAlreadyExistsException();
+        }
+
+        if (isReviewerApplication) {
+            return SignupResponse.pendingReviewerApproval();
+        }
+        return SignupResponse.active(issueTokens(user));
+    }
+
+    /**
+     * 이메일/비밀번호 로그인. Google 전용 계정(password_hash 없음)은 별도 안내 메시지로 거부하고,
+     * 아직 승인되지 않은 REVIEWER 신청 계정(reviewer_status=PENDING)은 로그인 자체를 막는다.
+     */
+    public AuthTokenResponse loginWithPassword(String email, String password) {
+        String normalizedEmail = normalizeEmail(email);
+        User user = userRepository.findByEmail(normalizedEmail)
+            .orElseThrow(InvalidCredentialsException::new);
+        if (user.getPasswordHash() == null) {
+            throw new GoogleAccountRequiredException();
+        }
+        if (!passwordEncoder.matches(password, user.getPasswordHash())) {
+            throw new InvalidCredentialsException();
+        }
+        if (REVIEWER_STATUS_PENDING.equals(user.getReviewerStatus())) {
+            throw new ReviewerApprovalPendingException();
+        }
+        return issueTokens(user);
+    }
+
     public AuthTokenResponse refresh(String refreshToken) {
         Claims claims = jwtService.parseRefreshToken(refreshToken);
         Long userId = Long.valueOf(claims.getSubject());
@@ -55,5 +139,23 @@ public class AuthService {
         String refreshToken = jwtService.issueRefreshToken(user);
         UserSummary summary = new UserSummary(user.getId(), user.getEmail(), user.getName());
         return new AuthTokenResponse(accessToken, refreshToken, jwtService.accessTokenTtlSeconds(), summary);
+    }
+
+    private String normalizeEmail(String email) {
+        return email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String normalizeName(String name) {
+        return name == null ? "" : name.trim();
+    }
+
+    private String normalizeRoleType(String roleType) {
+        String normalized = roleType == null || roleType.isBlank()
+            ? ROLE_TYPE_MEMBER
+            : roleType.trim().toUpperCase(Locale.ROOT);
+        if (!ALLOWED_ROLE_TYPES.contains(normalized)) {
+            throw new InvalidSignupInputException("가입 유형은 MEMBER 또는 REVIEWER만 선택할 수 있습니다.");
+        }
+        return normalized;
     }
 }

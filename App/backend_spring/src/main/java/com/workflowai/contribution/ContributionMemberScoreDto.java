@@ -5,5 +5,9 @@ public record ContributionMemberScoreDto(
     Double workload_component,
     Double task_component,
     Double meeting_component,
-    Double contribution_score
+    Double contribution_score,
+    String anomaly_type,
+    Double task_count_active_rel,
+    Double difficulty_avg_rel,
+    Integer overdue_count
 ) {}

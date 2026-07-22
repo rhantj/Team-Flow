@@ -1,79 +1,76 @@
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { Mail, Lock, Eye, EyeOff, ArrowRight, Check } from "lucide-react";
+import { User, Lock, Eye, EyeOff, ArrowRight, Check } from "lucide-react";
 import { AuthBrandPanel } from "../components/AuthBrandPanel";
 import { AuthInput } from "../components/AuthInput";
 import { useAuth } from "../../global/hooks/useAuth";
-import { API_BASE_URL, type ApiEnvelope } from "../../global/api/apiClient";
+import { apiFetch, ApiRequestError } from "../../global/api/apiClient";
 import type { AuthTokenResponse } from "../../global/api/authTypes";
 import { tokenStore } from "../../global/api/tokenStore";
 
-const DEV_TEST_ACCOUNTS = [
-  { id: "1", name: "김민준", role: "팀장", email: "kim.minjun@university.ac.kr" },
-  { id: "2", name: "이서연", role: "팀원", email: "lee.seoyeon@university.ac.kr" },
-  { id: "3", name: "박지수", role: "팀원", email: "park.jisu@university.ac.kr" },
-  { id: "4", name: "최동혁", role: "심사자", email: "choi.prof@university.ac.kr" },
+const TEST_ACCOUNTS = [
+  { username: "leader", name: "허영주", role: "팀장" },
+  { username: "member1", name: "박상준", role: "팀원" },
+  { username: "member2", name: "유소은", role: "팀원" },
+  { username: "member3", name: "이은주", role: "팀원" },
+  { username: "member4", name: "박지수", role: "팀원" },
+  { username: "member5", name: "홍길동", role: "팀원" },
+  { username: "reviewer", name: "고무서", role: "심사자" },
 ];
-const demoAuthEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_AUTH === "true";
+const TEST_PASSWORD = "1111";
+const testLoginGuideEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_AUTH === "true";
 
 export function LoginScreen() {
   const navigate = useNavigate();
   const { loginWithGoogle, refreshMe } = useAuth();
   const [searchParams] = useSearchParams();
-  const [devLoginError, setDevLoginError] = useState<string | null>(null);
-  const [devLoggingInId, setDevLoggingInId] = useState<string | null>(null);
-  const [email, setEmail] = useState("kim.minjun@university.ac.kr");
-  const [password, setPassword] = useState("workflow1234");
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(false);
   const oauthFailed = searchParams.get("error") === "oauth_failed";
 
-  const handleDevLogin = async (demoUserId: string) => {
-    if (devLoggingInId) return;
-    setDevLoginError(null);
-    setDevLoggingInId(demoUserId);
+  const handleLogin = async () => {
+    if (loggingIn) return;
+    if (!username.trim() || !password.trim()) {
+      setLoginError("아이디 또는 비밀번호가 올바르지 않습니다.");
+      return;
+    }
+    setLoginError(null);
+    setLoggingIn(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/dev-login-token/${demoUserId}`);
-      const contentType = response.headers.get("Content-Type") ?? "";
-      if (!contentType.toLowerCase().includes("application/json")) {
-        throw new Error("인증 서버가 아직 준비되지 않았습니다. 잠시 후 다시 시도해주세요.");
-      }
-      const body = await response.json() as ApiEnvelope<AuthTokenResponse>;
-      if (!response.ok || !body.success || !body.data?.accessToken || !body.data?.refreshToken) {
-        throw new Error(body.error?.message ?? "개발용 로그인에 실패했습니다.");
-      }
+      const id = username.trim();
+      const isRealAccount = id.includes("@");
+      const tokens = isRealAccount
+        ? await apiFetch<AuthTokenResponse>("/auth/login", {
+            method: "POST",
+            body: JSON.stringify({ email: id, password }),
+          })
+        : await apiFetch<AuthTokenResponse>("/auth/test-login", {
+            method: "POST",
+            body: JSON.stringify({ username: id, password }),
+          });
       tokenStore.clear();
-      tokenStore.setTokens(body.data.accessToken, body.data.refreshToken);
+      tokenStore.setTokens(tokens.accessToken, tokens.refreshToken, tokens.testSessionId ?? null);
       await refreshMe();
       navigate("/projects", { replace: true });
     } catch (error) {
-      setDevLoginError(error instanceof Error ? error.message : "개발용 로그인에 실패했습니다.");
+      if (error instanceof ApiRequestError) {
+        setLoginError(error.message);
+      } else {
+        setLoginError("로그인에 실패했습니다. 잠시 후 다시 시도해주세요.");
+      }
     } finally {
-      setDevLoggingInId(null);
+      setLoggingIn(false);
     }
   };
 
-  // 현재 서버에는 별도 ID/PW 인증 API가 없어 로컬/데모에서는 개발용 토큰 발급 흐름을 재사용한다.
-  const handleIdPwLogin = () => {
-    if (!demoAuthEnabled) {
-      setDevLoginError("ID/PW 로그인 API가 아직 연결되지 않았습니다. Google 로그인을 이용해주세요.");
-      return;
-    }
-    const id = email.trim();
-    const matched = DEV_TEST_ACCOUNTS.find(account => (
-      account.id === id ||
-      account.name === id ||
-      account.email === id
-    ));
-    if (!matched) {
-      setDevLoginError("등록된 테스트 계정이 아닙니다. 이메일, 이름 또는 번호(1~4)를 입력해주세요.");
-      return;
-    }
-    if (!password.trim()) {
-      setDevLoginError("비밀번호를 입력해주세요.");
-      return;
-    }
-    void handleDevLogin(matched.id);
+  const fillTestAccount = (accountUsername: string) => {
+    setLoginError(null);
+    setUsername(accountUsername);
+    setPassword(TEST_PASSWORD);
   };
 
   return (
@@ -93,49 +90,51 @@ export function LoginScreen() {
             </div>
           )}
 
-          <div className="space-y-4">
-            <AuthInput label="이메일 또는 ID" type="text" placeholder="name@university.ac.kr"
-              value={email} onChange={setEmail} icon={Mail} />
-            <AuthInput
-              label="비밀번호" type={showPassword ? "text" : "password"} placeholder="비밀번호 입력"
-              value={password} onChange={setPassword} icon={Lock}
-              right={
-                <button type="button" onClick={() => setShowPassword(v => !v)} className="text-muted-foreground hover:text-foreground transition-colors">
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              }
-            />
-          </div>
-
-          <div className="flex items-center justify-between mt-3 mb-6">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <div onClick={() => setRemember(v => !v)}
-                className={`w-4 h-4 rounded border flex items-center justify-center transition-all cursor-pointer ${remember ? "border-blue-500 bg-blue-500" : "border-border"}`}>
-                {remember && <Check className="w-3 h-3 text-white" />}
-              </div>
-              <span className="text-xs text-muted-foreground">로그인 유지</span>
-            </label>
-            <button className="text-xs font-medium text-blue-600 hover:text-blue-700 transition-colors">비밀번호 찾기</button>
-          </div>
-
-          {devLoginError && (
-            <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-600">
-              {devLoginError}
+          <form onSubmit={(event) => { event.preventDefault(); void handleLogin(); }}>
+            <div className="space-y-4">
+              <AuthInput label="아이디 또는 이메일" type="text" placeholder="아이디(예: leader) 또는 이메일"
+                value={username} onChange={setUsername} icon={User} />
+              <AuthInput
+                label="비밀번호" type={showPassword ? "text" : "password"} placeholder="비밀번호 입력"
+                value={password} onChange={setPassword} icon={Lock}
+                right={
+                  <button type="button" onClick={() => setShowPassword(v => !v)} className="text-muted-foreground hover:text-foreground transition-colors">
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                }
+              />
             </div>
-          )}
 
-          <button
-            onClick={handleIdPwLogin}
-            disabled={Boolean(devLoggingInId)}
-            className="w-full py-3 rounded-xl text-white text-sm font-semibold transition-all disabled:opacity-70 hover:opacity-90 flex items-center justify-center gap-2"
-            style={{ background: "linear-gradient(135deg, #3B5BDB 0%, #4F6EF7 100%)" }}
-          >
-            {devLoggingInId ? (
-              <><div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> 로그인 중...</>
-            ) : (
-              <><ArrowRight className="w-4 h-4" /> 로그인</>
+            <div className="flex items-center justify-between mt-3 mb-6">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <div onClick={() => setRemember(v => !v)}
+                  className={`w-4 h-4 rounded border flex items-center justify-center transition-all cursor-pointer ${remember ? "border-blue-500 bg-blue-500" : "border-border"}`}>
+                  {remember && <Check className="w-3 h-3 text-white" />}
+                </div>
+                <span className="text-xs text-muted-foreground">로그인 유지</span>
+              </label>
+              <button type="button" className="text-xs font-medium text-blue-600 hover:text-blue-700 transition-colors">비밀번호 찾기</button>
+            </div>
+
+            {loginError && (
+              <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-600">
+                {loginError}
+              </div>
             )}
-          </button>
+
+            <button
+              type="submit"
+              disabled={loggingIn}
+              className="w-full py-3 rounded-xl text-white text-sm font-semibold transition-all disabled:opacity-70 hover:opacity-90 flex items-center justify-center gap-2"
+              style={{ background: "linear-gradient(135deg, #3B5BDB 0%, #4F6EF7 100%)" }}
+            >
+              {loggingIn ? (
+                <><div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> 로그인 중...</>
+              ) : (
+                <><ArrowRight className="w-4 h-4" /> 로그인</>
+              )}
+            </button>
+          </form>
 
           <div className="flex items-center gap-3 my-5">
             <div className="flex-1 h-px bg-border" />
@@ -158,28 +157,28 @@ export function LoginScreen() {
             </button>
           </p>
 
-          {demoAuthEnabled && (
+          {testLoginGuideEnabled && (
             <div className="mt-8 pt-6 border-t border-border">
               <p className="text-center text-[11px] font-semibold text-amber-600 mb-3">
-                ⚠ 개발/데모 전용 — 아래는 실제 계정 인증이 아닙니다
+                ⚠ 중간보고/시연용 테스트 계정 — 비밀번호는 전부 1111입니다
               </p>
-
-              <p className="text-center text-[11px] font-semibold text-muted-foreground mb-3">개발용 테스트 계정으로 입장</p>
               <div className="grid grid-cols-2 gap-2">
-                {DEV_TEST_ACCOUNTS.map((account) => (
+                {TEST_ACCOUNTS.map((account) => (
                   <button
-                    key={account.id}
-                    onClick={() => void handleDevLogin(account.id)}
-                    disabled={Boolean(devLoggingInId)}
-                    className="flex flex-col items-center gap-0.5 py-2.5 rounded-xl border border-dashed border-border bg-muted/40 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                    key={account.username}
+                    type="button"
+                    onClick={() => fillTestAccount(account.username)}
+                    className="flex flex-col items-center gap-0.5 py-2.5 rounded-xl border border-dashed border-border bg-muted/40 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+                    title={`${account.name} / ${account.role}`}
                   >
-                    <span>{account.name}</span>
-                    <span className="text-[10px] text-muted-foreground">
-                      {devLoggingInId === account.id ? "로그인 중..." : account.role}
-                    </span>
+                    <span>{account.username}</span>
+                    <span className="text-[10px] text-muted-foreground">{account.name} · {account.role}</span>
                   </button>
                 ))}
               </div>
+              <p className="text-center text-[10px] text-muted-foreground mt-2">
+                계정을 누르면 아이디/비밀번호가 자동으로 채워집니다. 로그인 버튼을 눌러 접속하세요.
+              </p>
             </div>
           )}
         </div>

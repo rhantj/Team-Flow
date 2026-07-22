@@ -54,8 +54,10 @@ async function refreshTokens(): Promise<boolean> {
 
 export async function apiFetch<T>(path: string, options: RequestInit = {}, retry = true): Promise<T> {
   const accessToken = tokenStore.getAccessToken();
+  const testSessionId = tokenStore.getTestSessionId();
   const headers = new Headers(options.headers);
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+  if (testSessionId) headers.set("X-Workflow-Test-Session-Id", testSessionId);
   if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }

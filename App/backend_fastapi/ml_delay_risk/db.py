@@ -105,14 +105,41 @@ def load_task_comments_for_project(project_id: int, engine: Engine | None = None
     return df
 
 
-# delay_service.py의 num_events_before_cutoff/activity_count_recent_window 계산용 —
-# activities.target_id는 폴리모픽(FK 제약 없음)이라 type='업무 변경'으로 반드시 필터링해서
-# 업무가 아닌 다른 대상(회의록/GitHub 등)의 활동이 같은 id로 섞여 들어오지 않게 한다.
+# delay_service.py의 num_events_before_cutoff/activity_count_recent_window 계산용.
+#
+# (주의) activities.target_id는 폴리모픽(FK 제약 없음)이라, 업무가 아닌 다른 대상(회의록/
+# GitHub 등)의 활동이 같은 id로 섞여 들어올 수 있다. target_id가 tasks에 존재하는지만
+# 확인해서는 이 충돌을 막지 못하므로, Spring의 TaskController/ChecklistController가 실제로
+# 기록하는 업무 활동 타입도 반드시 함께 제한한다. 기존 type='업무 변경' 값은 실제 저장값과
+# 일치하지 않아 모든 업무 활동을 누락했으므로 사용하지 않는다.
+TASK_ACTIVITY_TYPES = (
+    "TASK_CREATED",
+    "STATUS_CHANGED",
+    "ASSIGNEE_CHANGED",
+    "TASK_UPDATED",
+    "TASK_DELETED",
+    "CHECKLIST_CREATED",
+    "CHECKLIST_COMPLETED",
+)
+
 _TASK_ACTIVITIES_QUERY = text(
     """
-    SELECT target_id AS task_id, created_at
-    FROM public.activities
-    WHERE project_id = :project_id AND type = '업무 변경'
+    SELECT a.target_id AS task_id, a.created_at
+    FROM public.activities a
+    WHERE a.project_id = :project_id
+      AND a.type IN (
+          'TASK_CREATED',
+          'STATUS_CHANGED',
+          'ASSIGNEE_CHANGED',
+          'TASK_UPDATED',
+          'TASK_DELETED',
+          'CHECKLIST_CREATED',
+          'CHECKLIST_COMPLETED'
+      )
+      AND EXISTS (
+          SELECT 1 FROM public.tasks t
+          WHERE t.id = a.target_id AND t.project_id = a.project_id
+      )
     """
 )
 

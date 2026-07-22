@@ -12,6 +12,7 @@ import {
 import { StatusBadge } from "../../global/component/StatusBadge";
 import { DelivBadge } from "../../deliverables/components/DelivBadge";
 import { SectionTitle } from "../../global/component/SectionTitle";
+import { ProjectSettingsSection } from "./ProjectSettingsSection";
 import {
   MEMBER_USER, MY_FEEDBACKS, PUBLIC_SCORE,
 } from "../libs/mock/mypage";
@@ -218,6 +219,8 @@ function MemberMyPage({ name, email, onLogout, projectId, userId }: { name: stri
                   )}
                 </div>
               </div>
+
+              <ProjectSettingsSection />
 
               {/* Public score (if revealed) */}
               {PUBLIC_SCORE.revealed && (
@@ -481,7 +484,7 @@ function ReviewerMyPage({ name, email, onLogout }: { name: string; email: string
                       </div>
                     </div>
                     <div className="px-5 py-3 space-y-2">
-                      {Object.entries({ "워크로드":r.categories.workload, "업무 수행":r.categories.task, "회의 참여":r.categories.meeting }).map(([label, val]) => (
+                      {Object.entries({ "업무 수행":r.categories.task, "회의 참여":r.categories.meeting, "업무 편중도":r.categories.workload }).map(([label, val]) => (
                         <div key={label} className="flex items-center gap-3">
                           <span className="text-[10px] text-muted-foreground w-16 shrink-0">{label}</span>
                           <div className="flex-1 h-1.5 bg-muted rounded-full"><div className="h-1.5 rounded-full" style={{ width:`${val}%`, background: r.color }} /></div>

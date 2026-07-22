@@ -36,7 +36,11 @@ async def score_contribution(project_id: int):
 
         attendance, total_meetings = load_meeting_attendance(project_id)
         members = compute_contribution_scores(workload_data.members, attendance, total_meetings)
-        data = ContributionScoreData(project_id=project_id, members=members)
+        data = ContributionScoreData(
+            project_id=project_id,
+            members=members,
+            team_mean_completion=workload_data.team_mean_completion,
+        )
         return {"success": True, "data": data}
     except Exception:
         logger.exception("기여도 점수 계산 실패 (project_id=%s)", project_id)

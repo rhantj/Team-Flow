@@ -60,6 +60,17 @@ export async function fetchAttendanceSummary(projectId: string): Promise<Meeting
   return apiFetch<MeetingAttendanceSummaryDto[]>(`/projects/${projectId}/meetings/attendance-summary`);
 }
 
+export interface MeetingAttendanceDetailDto {
+  meetingId: string;
+  title: string;
+  meetingDate: string | null;
+  attended: boolean;
+}
+
+export async function fetchAttendanceDetail(projectId: string, userId: number): Promise<MeetingAttendanceDetailDto[]> {
+  return apiFetch<MeetingAttendanceDetailDto[]>(`/projects/${projectId}/meetings/attendance-detail?userId=${userId}`);
+}
+
 export async function fetchMeeting(projectId: string, meetingId: string): Promise<MeetingAnalysisResponse> {
   return apiFetch<MeetingAnalysisResponse>(`/projects/${projectId}/meetings/${meetingId}`);
 }

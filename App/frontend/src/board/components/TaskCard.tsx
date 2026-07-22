@@ -2,31 +2,38 @@ import { useRef } from "react";
 import { useDrag, useDrop } from "react-dnd";
 import { CatTag } from "./CatTag";
 import { PriorityBadge } from "./PriorityBadge";
-import { MEMBERS } from "../../global/lib/mock/members";
+import { PARTICIPANT_COLORS } from "../../global/lib/mock/members";
+import { useAuth } from "../../global/hooks/useAuth";
+import type { MemberResponse } from "../../global/api/projectsApi";
 import { TASK_DRAG_TYPE, type TaskDragItem } from "../libs/utils/dnd";
+import { canMoveTask } from "../libs/utils/taskActions";
 import { formatDueDate } from "../libs/utils/taskService";
 import type { Task } from "../libs/types/task";
 
 interface TaskCardProps {
   task: Task;
   catId: string;
+  projectMembers: MemberResponse[];
   compact?: boolean;
   selected?: boolean;
   onSelect: () => void;
   onReorder: (draggedId: string, targetId: string, position: "before" | "after") => void;
 }
 
-export function TaskCard({ task, catId, compact, selected, onSelect, onReorder }: TaskCardProps) {
-  const m = MEMBERS.find(me => me.id === task.assignee);
+export function TaskCard({ task, catId, projectMembers, compact, selected, onSelect, onReorder }: TaskCardProps) {
+  const m = projectMembers.find(me => String(me.userId) === task.assignee);
   const ref = useRef<HTMLDivElement>(null);
+  const { user, currentProject } = useAuth();
+  const canMove = canMoveTask(currentProject?.role === "팀장", task, user?.id);
 
   const [{ isDragging }, dragRef] = useDrag(
     () => ({
       type: TASK_DRAG_TYPE,
       item: { id: task.id, status: task.status },
+      canDrag: () => canMove,
       collect: (monitor) => ({ isDragging: monitor.isDragging() }),
     }),
-    [task.id, task.status]
+    [task.id, task.status, canMove]
   );
 
   const [{ isOver, insertPosition }, dropRef] = useDrop<TaskDragItem, void, { isOver: boolean; insertPosition: "before" | "after" | null }>(
@@ -68,7 +75,7 @@ export function TaskCard({ task, catId, compact, selected, onSelect, onReorder }
       <div
         ref={setRefs}
         onClick={onSelect}
-        className={`bg-card rounded-xl border cursor-grab active:cursor-grabbing transition-all hover:shadow-md ${compact ? "p-2.5" : "p-3"} ${
+        className={`bg-card rounded-xl border transition-all hover:shadow-md ${canMove ? "cursor-grab active:cursor-grabbing" : "cursor-default"} ${compact ? "p-2.5" : "p-3"} ${
           selected ? "border-blue-400 shadow-md ring-1 ring-blue-200" : "border-border shadow-sm hover:border-slate-300"
         }`}
         style={{ opacity: isDragging ? 0.4 : 1 }}
@@ -89,9 +96,9 @@ export function TaskCard({ task, catId, compact, selected, onSelect, onReorder }
             {m && (
               <div
                 className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0"
-                style={{ background: m.color }}
+                style={{ background: PARTICIPANT_COLORS[m.userId % PARTICIPANT_COLORS.length] }}
               >
-                {m.initials}
+                {m.name.slice(0, 1)}
               </div>
             )}
           </div>

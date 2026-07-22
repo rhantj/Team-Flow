@@ -315,7 +315,11 @@ def detect_overload_anomalies_robust(feature_df: pd.DataFrame, z_threshold: floa
         return "이상 패턴(방향 불명확)"
 
     result["anomaly_type"] = result.apply(tag_direction, axis=1)
-    return result.sort_values("overload_score_0_100", ascending=False)
+    result = result.sort_values("overload_score_0_100", ascending=False)
+    # anomaly_type 판정에 실제로 쓰인 팀 평균 완료율을 함께 실어 보낸다 - 프론트가
+    # 팀 평균보다 높음/낮음 문구를 이 실측값과 함께 보여줄 수 있도록.
+    result.attrs["team_mean_completion"] = float(team_mean_completion)
+    return result
 
 
 def _summarize_detect_overload_inputs(inputs: dict) -> dict:
@@ -404,18 +408,23 @@ def detect_overload_anomalies(feature_df: pd.DataFrame, contamination: float = N
         result["overload_score_0_100"] = 50.0
 
     # 방향성 태깅: completion_rate와 task_count로 '과부하형' vs '저활동형' 구분
+    team_mean_completion = feature_df["completion_rate"].mean()
+
     def tag_direction(row):
         if not row["is_anomaly"]:
             return "정상"
-        if row["task_count_active_rel"] > 1.0 and row["completion_rate"] < feature_df["completion_rate"].mean():
+        if row["task_count_active_rel"] > 1.0 and row["completion_rate"] < team_mean_completion:
             return "과부하 의심"
-        elif row["task_count_active_rel"] < 1.0 and row["completion_rate"] > feature_df["completion_rate"].mean():
+        elif row["task_count_active_rel"] < 1.0 and row["completion_rate"] > team_mean_completion:
             return "저활동 의심"
         return "이상 패턴(방향 불명확)"
 
     result["anomaly_type"] = result.apply(tag_direction, axis=1)
 
-    return result.sort_values("overload_score_0_100", ascending=False)
+    result = result.sort_values("overload_score_0_100", ascending=False)
+    # MAD 경로와 동일하게, anomaly_type 판정에 쓰인 팀 평균 완료율을 함께 실어 보낸다.
+    result.attrs["team_mean_completion"] = float(team_mean_completion)
+    return result
 
 
 # ============================================================

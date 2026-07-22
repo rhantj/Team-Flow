@@ -25,6 +25,10 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
     password: ${SPRING_DATASOURCE_PASSWORD:root}
     hikari:
+      # Supabase 무료/저가 플랜 pooler는 세션 모드 동시 접속이 15개로 제한된다.
+      # 기본값(10)은 인스턴스 하나만 떠도 대부분을 차지해버려서 다른 클라이언트(SQL 콘솔 등)가
+      # 붙지 못하는 문제가 반복됐다 — 넉넉히 남기도록 작게 유지한다.
+      maximum-pool-size: ${SPRING_DATASOURCE_HIKARI_MAX_POOL_SIZE:4}
       data-source-properties:
         # Supabase Supavisor(pgbouncer) 트랜잭션 풀러(6543)는 커넥션마다 다른
         # 물리 세션을 재사용하므로, PgJDBC 서버사이드 prepared statement 캐시를
@@ -38,10 +42,16 @@ spring:
     properties:
       hibernate:
         format_sql: true
+  flyway:
+    enabled: ${SPRING_FLYWAY_ENABLED:false}
+    # Flyway는 기본 비활성화다. 명시적으로 켠 기존 DB에서는 schema_history 부재로 기동 실패하지 않게 baseline을 기본 허용한다.
+    baseline-on-migrate: ${SPRING_FLYWAY_BASELINE_ON_MIGRATE:true}
+    locations: classpath:db/migration
 
 workflow:
   ai:
     base-url: ${WORKFLOW_AI_FASTAPI_URL:http://localhost:8000}
+    internal-key: ${RAG_INTERNAL_API_KEY}
   cors:
     allowed-origins: ${WORKFLOW_CORS_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
   jwt:
@@ -62,6 +72,10 @@ workflow:
     force-secure-cookies: ${WORKFLOW_FORCE_SECURE_COOKIES:false}
   demo:
     seed-enabled: ${WORKFLOW_DEMO_SEED_ENABLED:true}
-    dev-login-enabled: ${WORKFLOW_DEMO_DEV_LOGIN_ENABLED:true}
+    dev-login-enabled: ${WORKFLOW_DEMO_DEV_LOGIN_ENABLED:false}
   uploads:
     dir: ${WORKFLOW_UPLOADS_DIR:uploads}
+  supabase:
+    url: ${SUPABASE_URL:}
+    service-role-key: ${SUPABASE_SERVICE_ROLE_KEY:}
+    storage-bucket: ${SUPABASE_STORAGE_BUCKET:task-results}

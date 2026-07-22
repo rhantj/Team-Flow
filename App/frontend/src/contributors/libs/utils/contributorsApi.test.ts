@@ -44,9 +44,14 @@ describe("fetchContributionScore", () => {
           task_component: 80.0,
           meeting_component: 80.0,
           contribution_score: 86.7,
+          anomaly_type: "과부하 의심",
+          task_count_active_rel: 1.8,
+          difficulty_avg_rel: 1.4,
+          overdue_count: 2,
         },
       ],
       note: null,
+      team_mean_completion: 0.65,
     });
 
     const result = await fetchContributionScore(1);
@@ -63,9 +68,14 @@ describe("fetchContributionScore", () => {
           taskComponent: 80.0,
           meetingComponent: 80.0,
           contributionScore: 86.7,
+          anomalyType: "과부하 의심",
+          taskCountActiveRel: 1.8,
+          difficultyAvgRel: 1.4,
+          overdueCount: 2,
         },
       ],
       note: null,
+      teamMeanCompletion: 0.65,
     });
   });
 
@@ -75,6 +85,7 @@ describe("fetchContributionScore", () => {
       project_id: 1,
       members: [],
       note: "배정된 업무가 없어 기여도 점수를 계산할 수 없습니다.",
+      team_mean_completion: null,
     });
 
     const result = await fetchContributionScore(1);
@@ -82,6 +93,7 @@ describe("fetchContributionScore", () => {
     expect(result).toEqual({
       members: [],
       note: "배정된 업무가 없어 기여도 점수를 계산할 수 없습니다.",
+      teamMeanCompletion: null,
     });
   });
 });

@@ -30,4 +30,25 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("delete from Task t where t.sourceMeetingId = :meetingId")
     int deleteBySourceMeetingId(@Param("meetingId") Long meetingId);
+
+    @Query("""
+        select t.projectId as projectId,
+               count(t.id) as totalCount,
+               sum(case when t.status = :doneStatus then 1 else 0 end) as doneCount
+        from Task t
+        where t.projectId in :projectIds
+        group by t.projectId
+        """)
+    List<TaskProgressView> summarizeProgressByProjectIds(
+        @Param("projectIds") List<Long> projectIds,
+        @Param("doneStatus") String doneStatus
+    );
+
+    interface TaskProgressView {
+        Long getProjectId();
+
+        Long getTotalCount();
+
+        Long getDoneCount();
+    }
 }

@@ -26,35 +26,57 @@ $$ LANGUAGE plpgsql;
 -- ----------------------------------------------------------------------------
 
 CREATE TABLE users (
-    id          BIGSERIAL PRIMARY KEY,
-    email       VARCHAR(255) NOT NULL,
-    name        VARCHAR(100) NOT NULL,
-    provider    VARCHAR(20)  NOT NULL,
-    provider_id VARCHAR(255) NOT NULL,
-    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    id            BIGSERIAL PRIMARY KEY,
+    email         VARCHAR(255) NOT NULL,
+    name          VARCHAR(100) NOT NULL,
+    provider      VARCHAR(20)  NOT NULL,
+    provider_id   VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255),
+    reviewer_status VARCHAR(20),
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_users_email UNIQUE (email),
     CONSTRAINT uq_users_provider UNIQUE (provider, provider_id)
 );
 COMMENT ON TABLE users IS '사용자';
-COMMENT ON COLUMN users.provider IS 'google 등 OAuth 제공자';
-COMMENT ON COLUMN users.provider_id IS 'OAuth sub (불변 식별자)';
+COMMENT ON COLUMN users.provider IS 'google/local/demo 등 계정 출처';
+COMMENT ON COLUMN users.provider_id IS 'OAuth sub 또는 로컬 계정은 email과 동일값 (불변 식별자)';
+COMMENT ON COLUMN users.password_hash IS '로컬(이메일/비밀번호) 회원가입 계정만 사용. BCrypt 해시. Google/데모 계정은 NULL.';
+COMMENT ON COLUMN users.reviewer_status IS 'REVIEWER로 가입 신청한 계정만 사용: PENDING/APPROVED. NULL이면 심사자 신청 이력 없음.';
 
 CREATE TRIGGER trg_users_updated_at
     BEFORE UPDATE ON users
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE TABLE projects (
-    id          BIGSERIAL PRIMARY KEY,
-    title       VARCHAR(200) NOT NULL,
-    type        VARCHAR(50),
-    deadline    DATE,
-    description TEXT,
-    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id              BIGSERIAL PRIMARY KEY,
+    title           VARCHAR(200) NOT NULL,
+    type            VARCHAR(50),
+    deadline        DATE,
+    description     TEXT,
+    start_date      DATE,
+    mid_check_date  DATE,
+    member_limit    INTEGER,
+    deliverables    JSONB,
+    tech_stack      JSONB,
+    goals           TEXT,
+    invite_code     VARCHAR(20),
+    created_by      BIGINT,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_projects_invite_code UNIQUE (invite_code),
+    CONSTRAINT fk_projects_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 COMMENT ON TABLE projects IS '프로젝트';
-COMMENT ON COLUMN projects.type IS '캡스톤디자인/해커톤/공모전 등';
+COMMENT ON COLUMN projects.type IS '캡스톤디자인/팀프로젝트/공모전/해커톤/기타';
+COMMENT ON COLUMN projects.deadline IS '최종 마감일';
+COMMENT ON COLUMN projects.mid_check_date IS '중간 점검/중간보고일 (선택)';
+COMMENT ON COLUMN projects.member_limit IS '예상 참여 인원 수';
+COMMENT ON COLUMN projects.deliverables IS '목표 산출물 목록 (예: ["발표자료","보고서"])';
+COMMENT ON COLUMN projects.tech_stack IS '기술 스택/주요 기능 키워드 목록';
+COMMENT ON COLUMN projects.goals IS '진행 목표/간단 메모';
+COMMENT ON COLUMN projects.invite_code IS '초대 코드 (온보딩 시 자동 생성)';
+COMMENT ON COLUMN projects.created_by IS '생성자 user id';
 
 CREATE TRIGGER trg_projects_updated_at
     BEFORE UPDATE ON projects
@@ -146,12 +168,51 @@ CREATE TABLE task_comments (
     task_id    BIGINT NOT NULL,
     author_id  BIGINT NOT NULL,
     content    TEXT NOT NULL,
+    type       VARCHAR(20) NOT NULL DEFAULT 'COMMENT', -- 'COMMENT' | 'FEEDBACK'(팀장 전용)
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_task_comments_task   FOREIGN KEY (task_id)   REFERENCES tasks(id) ON DELETE CASCADE,
     CONSTRAINT fk_task_comments_author FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE
 );
 COMMENT ON TABLE task_comments IS '업무 코멘트';
 CREATE INDEX idx_task_comments_task ON task_comments (task_id);
+
+CREATE TABLE task_results (
+    id         BIGSERIAL PRIMARY KEY,
+    task_id    BIGINT NOT NULL UNIQUE,
+    content    TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_task_results_task FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+);
+COMMENT ON TABLE task_results IS '업무당 1개, 작업 내용 작성 upsert';
+
+CREATE TRIGGER trg_task_results_updated_at
+    BEFORE UPDATE ON task_results
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE task_result_links (
+    id         BIGSERIAL PRIMARY KEY,
+    task_id    BIGINT NOT NULL,
+    url        TEXT NOT NULL,
+    title      VARCHAR(200) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_task_result_links_task FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_task_result_links_task ON task_result_links (task_id);
+
+CREATE TABLE task_result_files (
+    id           BIGSERIAL PRIMARY KEY,
+    task_id      BIGINT NOT NULL,
+    file_name    VARCHAR(255) NOT NULL,
+    storage_path TEXT NOT NULL, -- Supabase Storage 내 object 경로 (버킷 하위)
+    size         BIGINT NOT NULL,
+    content_type VARCHAR(100),
+    uploaded_by  BIGINT,
+    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_task_result_files_task     FOREIGN KEY (task_id)     REFERENCES tasks(id) ON DELETE CASCADE,
+    CONSTRAINT fk_task_result_files_uploader FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX idx_task_result_files_task ON task_result_files (task_id);
 
 -- ----------------------------------------------------------------------------
 -- 3. 회의록 AI
@@ -242,12 +303,15 @@ CREATE TABLE document_chunks (
     source_id   BIGINT NOT NULL,
     content     TEXT NOT NULL,
     embedding   JSONB,
+    assignee_id BIGINT NULL,
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_chunks_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    CONSTRAINT fk_chunks_project  FOREIGN KEY (project_id)  REFERENCES projects(id) ON DELETE CASCADE,
+    CONSTRAINT fk_chunks_assignee FOREIGN KEY (assignee_id) REFERENCES users(id)    ON DELETE SET NULL
 );
 COMMENT ON TABLE document_chunks IS 'RAG 임베딩 청크';
 COMMENT ON COLUMN document_chunks.source_type IS 'meeting/task/deliverable/github (폴리모픽)';
 COMMENT ON COLUMN document_chunks.embedding IS 'pgvector 미사용 시 JSONB로 임시 표현 (§6.4 참고)';
+COMMENT ON COLUMN document_chunks.assignee_id IS 'task/action_item 담당자 (RAG 질의 개인화용, 없으면 NULL)';
 
 CREATE TABLE assistant_messages (
     id         BIGSERIAL PRIMARY KEY,
@@ -377,8 +441,10 @@ COMMENT ON TABLE audit_logs IS '심사자 조회 등 감사 로그';
 --     source_type VARCHAR(20) NOT NULL,
 --     source_id   BIGINT NOT NULL,
 --     content     TEXT NOT NULL,
---     embedding   VECTOR(1536),  -- 임베딩 모델 차원 수에 맞게 조정
+--     embedding   VECTOR(1536),  -- 임베딩 모델 차원 수에 맞게 조정 (운영은 bge-m3라 1024)
+--     assignee_id BIGINT NULL,   -- task/action_item 담당자 (RAG 질의 개인화용)
 --     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
---     CONSTRAINT fk_chunks_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+--     CONSTRAINT fk_chunks_project  FOREIGN KEY (project_id)  REFERENCES projects(id) ON DELETE CASCADE,
+--     CONSTRAINT fk_chunks_assignee FOREIGN KEY (assignee_id) REFERENCES users(id)    ON DELETE SET NULL
 -- );
 -- ============================================================================

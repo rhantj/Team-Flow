@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.workflowai.common.DemoDataService;
+import com.workflowai.notification.NotificationService;
 import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.rag.RagIngestService;
 import com.workflowai.user.User;
@@ -33,11 +34,12 @@ class MeetingAnalysisPersistenceTest {
     @Mock private DemoDataService demoDataService;
     @Mock private RagIngestService ragIngestService;
     @Mock private ProjectMemberRepository projectMemberRepository;
+    @Mock private NotificationService notificationService;
 
     private MeetingAnalysisPersistence newPersistence() {
         return new MeetingAnalysisPersistence(
             meetingRepository, meetingAnalysisRepository, meetingActionItemRepository, meetingAttendeeRepository,
-            userRepository, demoDataService, ragIngestService, projectMemberRepository
+            userRepository, demoDataService, ragIngestService, projectMemberRepository, notificationService
         );
     }
 
@@ -273,15 +275,6 @@ class MeetingAnalysisPersistenceTest {
         stubSaves();
         // 참석자로 체크된 4명 중 프로젝트 멤버이자 회의 참석자로 저장된 사람은 박지수(3L)뿐이다.
         stubMember("박지수", 3L);
-        Map<String, Long> outsiderIds = Map.of(
-            "고무서", 201L, "곽진아", 202L, "허영주", 203L,
-            "유소은", 204L, "박상준", 205L, "이은주", 206L
-        );
-        outsiderIds.forEach((name, userId) -> {
-            User outsider = mock(User.class);
-            when(outsider.getId()).thenReturn(userId);
-            when(userRepository.findFirstByName(name)).thenReturn(Optional.of(outsider));
-        });
         when(meetingAttendeeRepository.findByMeetingId(5L)).thenReturn(List.of(
             new MeetingAttendee(5L, 1L), new MeetingAttendee(5L, 2L),
             new MeetingAttendee(5L, 3L), new MeetingAttendee(5L, 4L)

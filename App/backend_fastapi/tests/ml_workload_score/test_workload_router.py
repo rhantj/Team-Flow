@@ -26,6 +26,9 @@ def test_score_workload_returns_success_when_service_succeeds() -> None:
                 overload_score=82.5,
                 is_anomaly=True,
                 anomaly_type="과부하 의심",
+                task_count_active_rel=1.8,
+                difficulty_avg_rel=1.4,
+                overdue_count=2,
             )
         ],
     )

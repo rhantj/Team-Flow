@@ -18,8 +18,8 @@ import {
 import { AuthBrandPanel } from "../components/AuthBrandPanel";
 import { AuthInput } from "../components/AuthInput";
 import { useAuth } from "../../global/hooks/useAuth";
-import { API_BASE_URL, type ApiEnvelope } from "../../global/api/apiClient";
-import type { AuthTokenResponse } from "../../global/api/authTypes";
+import { API_BASE_URL, apiFetch, ApiRequestError, type ApiEnvelope } from "../../global/api/apiClient";
+import type { AuthTokenResponse, SignupResponse } from "../../global/api/authTypes";
 import { tokenStore } from "../../global/api/tokenStore";
 
 const demoAuthEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_AUTH === "true";
@@ -49,6 +49,7 @@ export function SignupScreen() {
     setCertificateName(event.target.files?.[0]?.name ?? "");
   };
 
+  // 데모 전용: "승인 완료 시연하기" 버튼(demoAuthEnabled일 때만 노출)에서만 사용 — 실제 회원가입 흐름과는 무관.
   const loginWithDevAccount = async (demoUserId: string) => {
     const response = await fetch(`${API_BASE_URL}/auth/dev-login-token/${demoUserId}`);
     const contentType = response.headers.get("Content-Type") ?? "";
@@ -60,7 +61,7 @@ export function SignupScreen() {
       throw new Error(body.error?.message ?? "회원가입 처리에 실패했습니다.");
     }
     tokenStore.clear();
-    tokenStore.setTokens(body.data.accessToken, body.data.refreshToken);
+    tokenStore.setTokens(body.data.accessToken, body.data.refreshToken, null);
     await refreshMe();
   };
 
@@ -69,20 +70,29 @@ export function SignupScreen() {
     setSignupError(null);
     setLoading(true);
     try {
-      if (isProfessor) {
+      const response = await apiFetch<SignupResponse>("/auth/signup", {
+        method: "POST",
+        body: JSON.stringify({
+          email: email.trim(),
+          password: pw,
+          name: name.trim(),
+          roleType: isProfessor ? "REVIEWER" : "MEMBER",
+        }),
+      });
+
+      if (response.status === "PENDING_REVIEWER_APPROVAL") {
         setApprovalSubmitted(true);
         return;
       }
 
-      if (!demoAuthEnabled) {
-        loginWithGoogle();
-        return;
+      if (response.tokens) {
+        tokenStore.clear();
+        tokenStore.setTokens(response.tokens.accessToken, response.tokens.refreshToken, null);
+        await refreshMe();
       }
-
-      await loginWithDevAccount("1");
       navigate("/projects", { replace: true });
     } catch (error) {
-      setSignupError(error instanceof Error ? error.message : "회원가입 처리에 실패했습니다.");
+      setSignupError(error instanceof ApiRequestError ? error.message : "회원가입 처리에 실패했습니다.");
     } finally {
       setLoading(false);
     }
@@ -96,7 +106,7 @@ export function SignupScreen() {
     setSignupError(null);
     setLoading(true);
     try {
-      await loginWithDevAccount("4");
+      await loginWithDevAccount("6");
       navigate("/projects", { replace: true });
     } catch (error) {
       setSignupError(error instanceof Error ? error.message : "심사자 승인 시연에 실패했습니다.");

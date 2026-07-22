@@ -5,15 +5,17 @@ import { HTML5Backend } from "react-dnd-html5-backend";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { RefreshCw } from "lucide-react";
 import { BoardToolbar } from "../components/BoardToolbar";
-import { BoardFilterBar } from "../components/BoardFilterBar";
+import { BoardFilterBar, UNASSIGNED_FILTER_ID } from "../components/BoardFilterBar";
 import { KanbanBoard } from "../components/KanbanBoard";
 import { TaskDetailPanel } from "../components/TaskDetailPanel";
+import { TaskResultPanel } from "../components/TaskResultPanel";
 import { AddTaskModal } from "../components/AddTaskModal";
 import { EditTaskModal } from "../components/EditTaskModal";
 import { fetchTasks, updateTaskPosition, deleteTask, DEMO_PROJECT_ID } from "../libs/utils/taskApi";
-import { NEXT_STATUS } from "../libs/utils/taskActions";
+import { NEXT_STATUS, quickMoveTargetStatus } from "../libs/utils/taskActions";
 import { reorderTasks } from "../libs/utils/taskService";
 import { useAuth } from "../../global/hooks/useAuth";
+import { getProjectMembers, type MemberResponse } from "../../global/api/projectsApi";
 import type { Task, TaskStatus } from "../libs/types/task";
 
 const FILTER_PARAMS = ["assignee", "priority", "category"] as const;
@@ -25,6 +27,7 @@ function parseFilterParam(searchParams: URLSearchParams, key: string): string[] 
 export function BoardView() {
   const { currentProjectId } = useAuth();
   const projectId = currentProjectId ?? DEMO_PROJECT_ID;
+  const [projectMembers, setProjectMembers] = useState<MemberResponse[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [searchParams, setSearchParams] = useSearchParams();
@@ -33,6 +36,7 @@ export function BoardView() {
   const [modalStatus, setModalStatus] = useState<TaskStatus>("todo");
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [workResultOpen, setWorkResultOpen] = useState(false);
 
   const selTask = selId ? tasks.find((t) => t.id === selId) ?? null : null;
 
@@ -40,11 +44,12 @@ export function BoardView() {
   const priorityFilter = useMemo(() => parseFilterParam(searchParams, "priority"), [searchParams]);
   const categoryFilter = useMemo(() => parseFilterParam(searchParams, "category"), [searchParams]);
 
-  const filteredTasks = useMemo(() => tasks.filter((t) =>
-    (assigneeFilter.length === 0 || assigneeFilter.includes(t.assignee)) &&
-    (priorityFilter.length === 0 || priorityFilter.includes(t.priority)) &&
-    (categoryFilter.length === 0 || categoryFilter.includes(t.category))
-  ), [tasks, assigneeFilter, priorityFilter, categoryFilter]);
+  const filteredTasks = useMemo(() => tasks.filter((t) => {
+    const assigneeFilterValue = t.assignee || UNASSIGNED_FILTER_ID;
+    return (assigneeFilter.length === 0 || assigneeFilter.includes(assigneeFilterValue)) &&
+      (priorityFilter.length === 0 || priorityFilter.includes(t.priority)) &&
+      (categoryFilter.length === 0 || categoryFilter.includes(t.category));
+  }), [tasks, assigneeFilter, priorityFilter, categoryFilter]);
 
   const toggleFilterValue = (key: (typeof FILTER_PARAMS)[number], value: string) => {
     const current = parseFilterParam(searchParams, key);
@@ -76,6 +81,17 @@ export function BoardView() {
   useEffect(() => {
     loadTasks();
   }, [loadTasks]);
+
+  // 담당자 배정 UI(카드 아바타, 상세 패널, 드롭다운, 필터)는 현재 프로젝트의 실제 멤버만 보여준다.
+  useEffect(() => {
+    if (currentProjectId == null) {
+      setProjectMembers([]);
+      return;
+    }
+    getProjectMembers(currentProjectId)
+      .then(setProjectMembers)
+      .catch(() => setProjectMembers([]));
+  }, [currentProjectId]);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -125,12 +141,20 @@ export function BoardView() {
 
   const handleSelectTask = (id: string) => {
     setSelId((prev) => (prev === id ? null : id));
+    setWorkResultOpen(false);
   };
 
   const handleQuickAction = (label: string, isPrimary: boolean) => {
     if (!selTask) return;
+    const moveTo = quickMoveTargetStatus(label, selTask.status);
+    if (moveTo) {
+      const columnCount = tasks.filter((t) => t.status === moveTo && t.id !== selTask.id).length;
+      moveTask(selTask.id, moveTo, columnCount);
+      showToast(`${label} 완료`);
+      return;
+    }
     if (isPrimary) {
-      const nextStatus = selTask.status === "done" ? "inprogress" : NEXT_STATUS[selTask.status];
+      const nextStatus = NEXT_STATUS[selTask.status];
       if (nextStatus) {
         const columnCount = tasks.filter((t) => t.status === nextStatus && t.id !== selTask.id).length;
         moveTask(selTask.id, nextStatus, columnCount);
@@ -186,6 +210,7 @@ export function BoardView() {
 
         <BoardToolbar tasks={tasks} compact={workspaceMode} onAddTask={openModal} />
         <BoardFilterBar
+          projectMembers={projectMembers}
           assigneeFilter={assigneeFilter}
           priorityFilter={priorityFilter}
           categoryFilter={categoryFilter}
@@ -216,9 +241,10 @@ export function BoardView() {
           {loadState === "ready" && (
             workspaceMode && selTask ? (
               <PanelGroup direction="horizontal">
-                <Panel defaultSize={68} minSize={40} className="min-w-0">
+                <Panel defaultSize={workResultOpen ? 50 : 68} minSize={30} className="min-w-0">
                   <KanbanBoard
                     tasks={filteredTasks}
+                    projectMembers={projectMembers}
                     compact
                     selectedId={selId}
                     onSelectTask={handleSelectTask}
@@ -230,20 +256,37 @@ export function BoardView() {
                 <PanelResizeHandle className="group relative w-2.5 shrink-0 flex items-center justify-center outline-none cursor-col-resize">
                   <div className="w-1 h-10 rounded-full bg-border transition-colors group-hover:bg-blue-300 group-active:bg-blue-400" />
                 </PanelResizeHandle>
-                <Panel defaultSize={32} minSize={24} maxSize={50} className="min-w-0">
+                <Panel defaultSize={workResultOpen ? 25 : 32} minSize={24} maxSize={50} className="min-w-0">
                   <TaskDetailPanel
                     task={selTask}
+                    projectMembers={projectMembers}
                     onClose={() => setSelId(null)}
                     onQuickAction={handleQuickAction}
                     onShowToast={showToast}
                     onDeleteTask={handleDeleteTask}
                     onEditTask={() => setEditingTask(selTask)}
+                    onOpenWorkResult={() => setWorkResultOpen(true)}
                   />
                 </Panel>
+                {workResultOpen && (
+                  <>
+                    <PanelResizeHandle className="group relative w-2.5 shrink-0 flex items-center justify-center outline-none cursor-col-resize">
+                      <div className="w-1 h-10 rounded-full bg-border transition-colors group-hover:bg-blue-300 group-active:bg-blue-400" />
+                    </PanelResizeHandle>
+                    <Panel key={selTask.id} defaultSize={25} minSize={20} maxSize={45} className="min-w-0">
+                      <TaskResultPanel
+                        task={selTask}
+                        onClose={() => setWorkResultOpen(false)}
+                        onShowToast={showToast}
+                      />
+                    </Panel>
+                  </>
+                )}
               </PanelGroup>
             ) : (
               <KanbanBoard
                 tasks={filteredTasks}
+                projectMembers={projectMembers}
                 compact={false}
                 selectedId={selId}
                 onSelectTask={handleSelectTask}
@@ -255,8 +298,8 @@ export function BoardView() {
           )}
         </div>
 
-        <AddTaskModal open={showModal} initialStatus={modalStatus} onClose={() => setShowModal(false)} onCreated={handleTaskCreated} />
-        <EditTaskModal task={editingTask} onClose={() => setEditingTask(null)} onUpdated={handleTaskUpdated} />
+        <AddTaskModal open={showModal} initialStatus={modalStatus} projectMembers={projectMembers} onClose={() => setShowModal(false)} onCreated={handleTaskCreated} />
+        <EditTaskModal task={editingTask} projectMembers={projectMembers} onClose={() => setEditingTask(null)} onUpdated={handleTaskUpdated} />
       </div>
     </DndProvider>
   );

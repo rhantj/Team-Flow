@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import {
+  ArrowLeft,
   ArrowRight,
   ClipboardCheck,
   Crown,
@@ -14,18 +15,10 @@ import {
 import { AuthBrandPanel } from "../components/AuthBrandPanel";
 import { useAuth } from "../../global/hooks/useAuth";
 import type { ProjectRoleKo, ProjectRoleSummary } from "../../global/api/authTypes";
-import { createProject } from "../../global/api/projectsApi";
+import { joinProjectByCode } from "../../global/api/projectsApi";
 import { REVIEWER_ACTIVITIES, REVIEWER_TEAMS } from "../../global/lib/mock/reviewer";
 
-const DEMO_PROJECTS: ProjectRoleSummary[] = [
-  { projectId: -101, projectTitle: "스마트 주차 관리 시스템", role: "팀장" },
-  { projectId: -102, projectTitle: "AI 식단 추천 앱", role: "팀원" },
-];
-
-const PROJECT_META: Record<number, { type: string; deadline: string; progress: number }> = {
-  [-101]: { type: "캡스톤디자인", deadline: "D-18", progress: 71 },
-  [-102]: { type: "팀프로젝트", deadline: "D-24", progress: 48 },
-};
+const PROJECT_META: Record<number, { type: string; deadline: string; progress: number }> = {};
 
 const ROLE_META: Record<ProjectRoleKo, { label: string; color: string; bg: string; icon: typeof Crown }> = {
   "팀장": { label: "팀장", color: "#3B5BDB", bg: "rgba(59,91,219,0.1)", icon: Crown },
@@ -44,12 +37,10 @@ const JUDGE_STATUS_META: Record<EvalStatus, { label: string; color: string; bg: 
 
 export function ProjectEntryScreen() {
   const navigate = useNavigate();
-  const { user, projectRoles, currentProject, selectProject, addLocalProjectRole, refreshMe } = useAuth();
+  const { user, projectRoles, currentProject, selectProject, addLocalProjectRole, refreshMe, logout } = useAuth();
   const [inviteCode, setInviteCode] = useState("");
-  const [projectName, setProjectName] = useState("새 캡스톤 프로젝트");
   const [message, setMessage] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
+  const [joining, setJoining] = useState(false);
   const [judgeProjects, setJudgeProjects] = useState<JudgeProject[]>([...REVIEWER_TEAMS]);
   const [judgeProjectCode, setJudgeProjectCode] = useState("");
   const [judgeMessage, setJudgeMessage] = useState<string | null>(null);
@@ -57,7 +48,12 @@ export function ProjectEntryScreen() {
   const isJudgeHome =
     currentProject?.role === "심사자" ||
     (projectRoles.length > 0 && projectRoles.every((project) => project.role === "심사자"));
-  const projects = projectRoles.length > 0 ? projectRoles : DEMO_PROJECTS;
+  const projects = projectRoles;
+
+  const handleBackToLogin = () => {
+    logout();
+    navigate("/login", { replace: true });
+  };
 
   const enterProject = (project: ProjectRoleSummary) => {
     if (project.projectId < 0 && !projectRoles.some((role) => role.projectId === project.projectId)) {
@@ -69,42 +65,26 @@ export function ProjectEntryScreen() {
     navigate("/dashboard");
   };
 
-  const handleCreateProject = async () => {
-    if (creating) return;
-    const name = projectName.trim() || "새 캡스톤 프로젝트";
-    setCreating(true);
-    setCreateError(null);
+  const handleJoinByCode = async () => {
+    const rawCode = inviteCode.trim();
+    if (!rawCode) {
+      setMessage("초대 URL 또는 코드를 입력해주세요.");
+      return;
+    }
+    // 초대 URL로 붙여넣었을 수 있으니 마지막 경로 조각만 코드로 사용한다.
+    const code = rawCode.split("/").filter(Boolean).pop() ?? rawCode;
+    setJoining(true);
+    setMessage(null);
     try {
-      const project = await createProject({ title: name, type: "캡스톤디자인" });
+      const project = await joinProjectByCode(code);
       await refreshMe();
       selectProject(project.id);
       navigate("/dashboard");
     } catch (error) {
-      const projectId = addLocalProjectRole(name, "팀장");
-      selectProject(projectId);
-      setCreateError(
-        error instanceof Error
-          ? `서버 생성은 실패했지만 시연용 프로젝트로 진입합니다. (${error.message})`
-          : "서버 생성은 실패했지만 시연용 프로젝트로 진입합니다.",
-      );
-      navigate("/dashboard");
+      setMessage(error instanceof Error ? error.message : "참여에 실패했습니다.");
     } finally {
-      setCreating(false);
+      setJoining(false);
     }
-  };
-
-  const handleJoinByCode = () => {
-    const code = inviteCode.trim();
-    if (!code) {
-      setMessage("초대 URL 또는 코드를 입력해주세요.");
-      return;
-    }
-    const name = code.includes("parking") || code.includes("gX4mKp")
-      ? "스마트 주차 관리 시스템"
-      : "초대받은 팀 프로젝트";
-    const projectId = addLocalProjectRole(name, "팀원");
-    selectProject(projectId);
-    navigate("/dashboard");
   };
 
   const enterJudgeProject = (project: JudgeProject) => {
@@ -148,6 +128,7 @@ export function ProjectEntryScreen() {
 
         <div className="flex-1 bg-background px-4 py-6 sm:px-6 lg:px-8 lg:py-8 overflow-y-auto">
           <div className="max-w-6xl mx-auto space-y-6">
+            <BackToLoginButton onClick={handleBackToLogin} />
             <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
               <div>
                 <div className="inline-flex items-center gap-2 text-xs font-bold text-violet-700 bg-violet-50 border border-violet-100 px-2.5 py-1 rounded-lg mb-3">
@@ -282,6 +263,7 @@ export function ProjectEntryScreen() {
 
       <div className="flex-1 bg-background px-4 py-6 sm:px-6 lg:px-8 lg:py-8 overflow-y-auto">
         <div className="max-w-4xl mx-auto">
+          <BackToLoginButton onClick={handleBackToLogin} />
           <div className="mb-7">
             <div className="text-xs font-semibold text-blue-600 mb-2">프로젝트 진입</div>
             <h1 className="text-2xl font-bold text-foreground mb-1">
@@ -298,6 +280,15 @@ export function ProjectEntryScreen() {
                 <h2 className="text-sm font-bold text-foreground">내 프로젝트 목록</h2>
                 <span className="text-xs text-muted-foreground">권한이 함께 표시됩니다.</span>
               </div>
+
+              {projects.length === 0 && (
+                <div className="rounded-xl border border-dashed border-border bg-muted/30 px-4 py-10 text-center">
+                  <p className="text-sm font-semibold text-foreground">아직 참여 중인 프로젝트가 없습니다</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    오른쪽에서 새 프로젝트를 만들거나 초대 코드로 참여해보세요.
+                  </p>
+                </div>
+              )}
 
               {projects.map((project) => {
                 const role = ROLE_META[project.role];
@@ -353,21 +344,13 @@ export function ProjectEntryScreen() {
                     <p className="text-xs text-muted-foreground">생성 즉시 팀장 권한으로 시작합니다.</p>
                   </div>
                 </div>
-                <input
-                  value={projectName}
-                  onChange={(event) => setProjectName(event.target.value)}
-                  className="w-full rounded-xl border border-border bg-input-background px-3 py-2.5 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                  placeholder="프로젝트명을 입력하세요"
-                />
-                {createError && <div className="mt-2 text-xs text-amber-600 leading-relaxed">{createError}</div>}
                 <button
-                  onClick={() => void handleCreateProject()}
-                  disabled={creating}
-                  className="mt-3 w-full py-2.5 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-60"
+                  onClick={() => navigate("/onboarding")}
+                  className="w-full py-2.5 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2 hover:opacity-90 transition-opacity"
                   style={{ background: "linear-gradient(135deg, #3B5BDB 0%, #4F6EF7 100%)" }}
                 >
                   <Crown className="w-4 h-4" />
-                  {creating ? "생성 중..." : "팀장으로 프로젝트 시작"}
+                  프로젝트 정보 입력하고 시작하기
                 </button>
               </div>
 
@@ -389,12 +372,13 @@ export function ProjectEntryScreen() {
                 />
                 {message && <div className="mt-2 text-xs text-red-500">{message}</div>}
                 <button
-                  onClick={handleJoinByCode}
-                  className="mt-3 w-full py-2.5 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2 hover:opacity-90 transition-opacity"
+                  onClick={() => void handleJoinByCode()}
+                  disabled={joining}
+                  className="mt-3 w-full py-2.5 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-60"
                   style={{ background: "#10B981" }}
                 >
                   <UserRound className="w-4 h-4" />
-                  팀원으로 참여
+                  {joining ? "참여 중..." : "팀원으로 참여"}
                 </button>
               </div>
             </section>
@@ -402,5 +386,18 @@ export function ProjectEntryScreen() {
         </div>
       </div>
     </div>
+  );
+}
+
+function BackToLoginButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors mb-4"
+    >
+      <ArrowLeft className="w-3.5 h-3.5" />
+      로그인 화면으로 돌아가기
+    </button>
   );
 }

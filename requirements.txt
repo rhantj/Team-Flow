@@ -1,10 +1,16 @@
+# FastAPI 공용 런타임 의존성의 단일 기준 파일.
+# Dockerfile과 App/scripts/run_ai_fastapi.sh 모두 이 루트 파일을 설치한다.
 fastapi==0.139.0
 uvicorn[standard]==0.51.0
 python-multipart>=0.0.20
 pydantic==2.13.4
 pydantic-settings==2.14.2
+asyncpg==0.30.0
+pytest==8.3.4
+pytest-asyncio==0.25.2
+httpx==0.28.1
 
-# ML / DL (docs/WorkFlow_AI_기술_스택_버전.md 6.5, PyTorch는 용량 문제로 제외)
+# ML / DL (docs/WorkFlow_AI_기술_스택_버전.md 6.5)
 numpy==2.2.6
 scikit-learn==1.6.1
 xgboost==3.2.0
@@ -13,15 +19,40 @@ mlflow-skinny==3.14.0
 transformers==4.48.0
 tokenizers>=0.21,<0.22
 faster-whisper==1.2.1
-matplotlib==3.10.9
+joblib==1.5.3
+matplotlib==3.10.0
 
+# RAG 챗봇 임베딩 로컬 추론 (embedding_service.py, 쿼리 노이즈 강건성 파인튜닝 모델을
+# HF Inference API가 서빙하지 않아 컨테이너 내부에서 직접 로드/추론). torch는 CPU 전용 휠로
+# Dockerfile에서 별도 인덱스로 먼저 설치한다(GPU 빌드가 딸려오면 이미지가 수 GB 커짐) - 여기 명시하면
+# 기본 PyPI 인덱스에서 재설치되어 그 목적이 무효화되므로 sentence-transformers만 적는다.
+sentence-transformers==3.4.1
 
-# LLM (6.6, LangChain은 미사용으로 보류)
+# LLM (6.6, RAG 챗봇은 LangChain으로 전환됨. 회의록 분석/기여도 보고서는 아직 직접 호출)
 openai==1.59.7
 ollama==0.6.2
+langchain-core==1.4.9
+langchain-huggingface==1.2.2
+langsmith==0.10.2
+aiohttp==3.14.2
+requests==2.34.2
 
 # File Processing (6.7, FFmpeg는 pip 패키지가 아닌 OS 바이너리라 제외)
 pdfplumber==0.11.4
 python-docx==1.1.2
 python-pptx==1.0.2
 reportlab==5.0.0
+
+# FS-5 workload_score (Supabase PostgreSQL 접근)
+pandas==2.2.3
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+python-dotenv==1.0.1
+
+# FS-3 ml_delay_risk (MongoDB ml_dashboard 접근)
+pymongo==4.17.0
+catboost==1.2.10
+imbalanced-learn==0.14.2
+seaborn==0.13.2
+huggingface_hub==0.36.2
+hf_transfer==0.1.9

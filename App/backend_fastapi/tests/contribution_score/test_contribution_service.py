@@ -18,6 +18,9 @@ def _member(assignee_id="1", completion_rate=0.5, overload_score=0.0, anomaly_ty
         overload_score=overload_score,
         is_anomaly=anomaly_type != "정상",
         anomaly_type=anomaly_type,
+        task_count_active_rel=1.2,
+        difficulty_avg_rel=1.1,
+        overdue_count=1,
     )
 
 
@@ -68,6 +71,10 @@ def test_compute_contribution_scores_missing_attendance_defaults_to_zero():
     # 균등 가중치가 아니라 Task 4에서 반영한 엔트로피 실험 가중치를 사용한 기대값.
     expected = svc.WEIGHT_WORKLOAD * 100.0 + svc.WEIGHT_TASK * 80.0 + svc.WEIGHT_MEETING * 0.0
     assert result.contribution_score == pytest.approx(expected, abs=0.1)
+    assert result.anomaly_type == "정상"
+    assert result.task_count_active_rel == pytest.approx(1.2)
+    assert result.difficulty_avg_rel == pytest.approx(1.1)
+    assert result.overdue_count == 1
 
 
 def test_compute_contribution_scores_uses_experiment_derived_weights():

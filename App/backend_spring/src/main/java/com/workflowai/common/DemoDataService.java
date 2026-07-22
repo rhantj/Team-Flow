@@ -11,6 +11,8 @@ import java.util.List;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.beans.factory.annotation.Value;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -21,6 +23,7 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class DemoDataService implements ApplicationRunner {
+    private static final Logger log = LoggerFactory.getLogger(DemoDataService.class);
     private static final String DEMO_PROJECT_TITLE = "데모 프로젝트";
     private static final String DEMO_PROJECT_ID_PARAM = "demo-project";
     private static final String DEMO_USER_PROVIDER = "demo";
@@ -29,10 +32,13 @@ public class DemoDataService implements ApplicationRunner {
     }
 
     private static final List<DemoMember> DEMO_MEMBERS = List.of(
-        new DemoMember("1", "김민준", ProjectRole.LEADER),
-        new DemoMember("2", "이서연", ProjectRole.MEMBER),
-        new DemoMember("3", "박지수", ProjectRole.MEMBER),
-        new DemoMember("4", "최동혁", ProjectRole.REVIEWER)
+        new DemoMember("1", "허영주", ProjectRole.LEADER),
+        new DemoMember("2", "박상준", ProjectRole.MEMBER),
+        new DemoMember("3", "유소은", ProjectRole.MEMBER),
+        new DemoMember("4", "이은주", ProjectRole.MEMBER),
+        new DemoMember("5", "박지수", ProjectRole.MEMBER),
+        new DemoMember("6", "고무서", ProjectRole.REVIEWER),
+        new DemoMember("7", "홍길동", ProjectRole.MEMBER)
     );
 
     private final ProjectRepository projectRepository;
@@ -66,10 +72,14 @@ public class DemoDataService implements ApplicationRunner {
                 .orElseGet(() -> userRepository.save(
                     new User("demo-user-" + member.mockId() + "@workflow.ai", member.name(), DEMO_USER_PROVIDER, member.mockId())
                 ));
-
-            if (!projectMemberRepository.existsByProjectIdAndUserId(demoProject.getId(), user.getId())) {
-                projectMemberRepository.save(new ProjectMember(demoProject.getId(), user.getId(), member.role()));
+            if (!user.getName().equals(member.name())) {
+                log.info("기존 데모 사용자 이름은 보존합니다. providerId={}, existing={}, roster={}", member.mockId(), user.getName(), member.name());
             }
+
+            projectMemberRepository.findByProjectIdAndUserId(demoProject.getId(), user.getId())
+                .orElseGet(() -> projectMemberRepository.save(
+                    new ProjectMember(demoProject.getId(), user.getId(), member.role())
+                ));
         }
     }
 

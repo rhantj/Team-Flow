@@ -24,6 +24,11 @@ NUM_CLASSES = 3
 CATEGORICAL_COLUMNS = ["issuetype_name", "priority_name", "project_key", "status_at_cutoff"]
 FREQUENCY_ENCODED_COLUMNS = ["reporter", "assignee_at_cutoff"]
 
+# Supabase 학습 피처가 has_parent에서 has_milestone으로 바뀌기 전에 생성된 아티팩트도
+# 동일한 의미의 값을 받도록 하는 단방향 호환 매핑. 이 처리가 없으면 이전 아티팩트는
+# 누락된 has_parent를 아래에서 None으로 채워 조용히 다른 분포로 추론하게 된다.
+LEGACY_FEATURE_ALIASES = {"has_parent": "has_milestone"}
+
 
 @dataclass
 class ModelArtifact:
@@ -105,6 +110,14 @@ def predict_class_probabilities(feature_row: dict[str, Any]) -> list[float]:
     for col in FREQUENCY_ENCODED_COLUMNS:
         if col in row_df.columns:
             row_df[col] = row_df[col].map(artifact.frequency_maps.get(col, {})).fillna(0).astype(int)
+
+    for legacy_name, current_name in LEGACY_FEATURE_ALIASES.items():
+        if (
+            legacy_name in artifact.feature_names
+            and legacy_name not in row_df.columns
+            and current_name in row_df.columns
+        ):
+            row_df[legacy_name] = row_df[current_name]
 
     for col in artifact.feature_names:
         if col not in row_df.columns:

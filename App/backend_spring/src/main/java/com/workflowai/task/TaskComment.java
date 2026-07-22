@@ -25,16 +25,20 @@ public class TaskComment {
     @Column(nullable = false, columnDefinition = "text")
     private String content;
 
+    @Column(nullable = false, length = 20)
+    private String type;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
     protected TaskComment() {
     }
 
-    public TaskComment(Long taskId, Long authorId, String content) {
+    public TaskComment(Long taskId, Long authorId, String content, String type) {
         this.taskId = taskId;
         this.authorId = authorId;
         this.content = content;
+        this.type = type;
         this.createdAt = LocalDateTime.now();
     }
 
@@ -52,6 +56,10 @@ public class TaskComment {
 
     public String getContent() {
         return content;
+    }
+
+    public String getType() {
+        return type;
     }
 
     public LocalDateTime getCreatedAt() {

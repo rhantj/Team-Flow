@@ -8,20 +8,25 @@ import json
 import logging
 import os
 import re
-from datetime import date, timedelta
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from io import BytesIO
+from datetime import date
 from typing import List, Optional
 
 import httpx
 import ollama
-from fastapi import FastAPI, File, Form, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from llm_rag_assistant.app.routers.chat_router import router as rag_router
+from llm_rag_assistant.app.services.embedding_service import preload_embedding_model
 from ml_workload_score.app.routers.workload_router import router as workload_router
 from ai_contribution_report.app.routers.contribution_router import router as contribution_report_router
 from ml_delay_risk.routers.delay_router import router as delay_risk_router
 from contribution_score.app.routers.contribution_router import router as contribution_score_router
+from llm_checklist.app.routers.checklist_router import router as checklist_router
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +39,17 @@ DEFAULT_HF_MEETING_ANALYSIS_TIMEOUT_SECONDS = 35.0
 DEFAULT_HF_MEETING_ANALYSIS_MAX_TOKENS = 900
 HF_CHAT_COMPLETIONS_URL = "https://router.huggingface.co/v1/chat/completions"
 
-app = FastAPI(title="WorkFlow AI FastAPI", version="0.1.0")
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # 첫 RAG 요청이 임베딩 모델 다운로드/로딩 지연(콜드 스타트)을 떠안지 않도록 기동 시 미리 로드한다.
+    try:
+        await preload_embedding_model()
+    except Exception:
+        logger.exception("RAG 임베딩 모델 사전 로드 실패 - 첫 요청 시 재시도됩니다.")
+    yield
+
+
+app = FastAPI(title="WorkFlow AI FastAPI", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -49,6 +64,7 @@ app.include_router(workload_router)
 app.include_router(contribution_report_router)
 app.include_router(delay_risk_router)
 app.include_router(contribution_score_router)
+app.include_router(checklist_router)
 
 
 @app.get("/")
@@ -112,22 +128,19 @@ def health():
 
 @app.post("/api/v1/meetings/analyze-json", response_model=MeetingAnalysisResult)
 def analyze_json(request: AnalyzeRequest):
-    provider = os.getenv("MEETING_ANALYSIS_PROVIDER", "ollama").lower()
-    if provider in {"huggingface", "hf"}:
+    provider = os.getenv("MEETING_ANALYSIS_PROVIDER", "auto").lower()
+    if provider in {"auto", "huggingface", "hf"} and _huggingface_configured():
         try:
             return analyze_meeting_with_huggingface(request)
         except Exception:
             logger.exception("Hugging Face 회의록 분석 실패, Ollama/규칙 기반 분석으로 대체합니다.")
+    elif provider in {"huggingface", "hf"}:
+        logger.warning("MEETING_ANALYSIS_PROVIDER=%s 이지만 HF_TOKEN이 없어 Ollama/규칙 기반 분석으로 대체합니다.", provider)
+
+    if provider in {"auto", "huggingface", "hf", "ollama"}:
         try:
             return analyze_meeting_with_ollama(request)
         except Exception:
-            logger.exception("Ollama 회의록 분석 실패, 규칙 기반 분석으로 대체합니다.")
-    elif provider == "ollama":
-        try:
-            return analyze_meeting_with_ollama(request)
-        except Exception:
-            # Ollama 미실행/모델 없음/timeout/JSON 파싱 실패/Pydantic 검증 실패 등
-            # 원인이 다양하지만 전부 동일하게 규칙 기반 분석으로 대체해야 하므로 광범위하게 잡는다.
             logger.exception("Ollama 회의록 분석 실패, 규칙 기반 분석으로 대체합니다.")
     return analyze_meeting(request)
 
@@ -146,7 +159,7 @@ async def analyze_upload(
     if file:
         file_name = file.filename
         raw = await file.read()
-        text = raw.decode("utf-8", errors="ignore")
+        text = extract_uploaded_text(raw, file_name)
     return analyze_json(
         AnalyzeRequest(
             title=title,
@@ -218,6 +231,10 @@ _VALID_CATEGORIES = {
 }
 
 
+class DocumentTextExtractionError(ValueError):
+    pass
+
+
 def analyze_meeting_with_ollama(request: AnalyzeRequest) -> MeetingAnalysisResult:
     host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     model = os.getenv("MEETING_ANALYSIS_MODEL", DEFAULT_MEETING_ANALYSIS_MODEL)
@@ -280,6 +297,10 @@ def analyze_meeting_with_huggingface(request: AnalyzeRequest) -> MeetingAnalysis
     return result
 
 
+def _huggingface_configured() -> bool:
+    return bool(os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN"))
+
+
 def build_ollama_prompt(request: AnalyzeRequest) -> str:
     participants = ", ".join(resolve_participants(request))
     text = _limit_text_for_local_model(request.text or request.title)
@@ -314,6 +335,8 @@ JSON 스키마:
 담당자(assignee_candidate) 규칙 - 반드시 지킬 것:
 1. 회의록 내용에서 특정 인물이 명시적으로 담당한다고 말한 업무만 그 사람 이름을 assignee_candidate로 적는다.
    예: "제가 하겠습니다", "저는 OO를 맡겠습니다" -> 발언자 본인. "OO가 맡겠습니다", "OO가 구현합니다", "담당: OO" -> 명시된 OO.
+   "OO: 업무 내용" 처럼 이름 다음에 콜론(:)으로 업무를 나열한 목록 형식도 그 이름을 담당자로 인정한다.
+   예: "지수: 프론트엔드 크래시 재현 테스트를 진행한다." -> assignee_candidate는 "지수".
 2. 위와 같이 명시적으로 담당을 밝힌 경우가 아니면 assignee_candidate는 반드시 빈 문자열("")로 남긴다.
 3. 선택된 참석자 목록에 있다는 이유만으로 아무에게나 업무를 임의 배정하지 않는다.
 4. 회의록에 실제로 등장하지 않는 이름을 만들어내지 않는다.
@@ -321,15 +344,26 @@ JSON 스키마:
 
 title 규칙 - 반드시 지킬 것:
 1. title은 회의록 원문 발언을 그대로 복사하지 않는다.
-2. "저는", "제가", "~하겠습니다", "~진행하겠습니다", "~맡겠습니다" 같은 발언체 표현을 제거하고 명사형 업무명으로 정리한다.
+2. "저는", "제가", "~하겠습니다", "~진행하겠습니다", "~맡겠습니다" 같은 발언체 표현을 제거하고, "~하기", "~발급", "~작성", "~제출", "~검토" 처럼 짧은 동사형 명사(동명사) 어미로 끝나는 업무명으로 정리한다.
 3. 길이는 12~25자 내외로 짧게 작성한다.
-4. 예: "저는 회의록 AI 분석을 맡겠습니다" -> "회의록 AI 분석 구현", "임베딩 모델을 바꾸는 방향으로 진행하겠습니다" -> "임베딩 모델 변경"
+4. 예:
+   - "저는 회의록 AI 분석을 맡겠습니다" -> "회의록 AI 분석하기"
+   - "임베딩 모델을 바꾸는 방향으로 진행하겠습니다" -> "임베딩 모델 변경하기"
+   - "제가 참가 신청서 서류를 발급받아 오겠습니다" -> "참가 신청서 발급받기"
+   - "보고서 초안을 다음 주까지 작성해서 제출하겠습니다" -> "보고서 초안 작성 및 제출하기"
 
 evidence_text 규칙 - 반드시 지킬 것:
 1. 이 업무가 어떤 발언/문장에서 나왔는지 회의록 원문 그대로(화자 포함) 인용한다.
    예: "박지수: 저는 회의록 AI 분석을 맡겠습니다."
 2. 회의록 원문에 없는 내용을 지어내지 않는다.
 3. 근거가 될 만한 발언을 찾을 수 없으면 빈 문자열("")로 남긴다.
+
+마감일/결정사항 규칙 - 반드시 지킬 것:
+1. due_date는 회의록 원문에 명시적인 날짜와 마감/완료/제출/기한 표현이 함께 있을 때만 적는다.
+   예: "8/10까지 완료", "8월 10일 제출", "2026-08-10 마감"
+2. 회의 일자나 현재 날짜를 기준으로 마감일을 추정하지 않는다.
+3. 원문에 없는 날짜, 기간, 완료 예정일을 결정사항이나 업무에 추가하지 않는다.
+4. "개발팀", "팀 전체"처럼 개인 이름이 아닌 주체는 담당자로 적지 말고 assignee_candidate를 빈 문자열로 둔다.
 """
 
 
@@ -402,7 +436,7 @@ def _sanitize_assignee_candidate(
 
 
 def _has_assignee_task_evidence(name: str, evidence_text: str, source_text: str) -> bool:
-    speaker_tasks = [(speaker, sentence) for speaker, sentence in extract_speaker_task_candidates(source_text) if speaker == name]
+    speaker_tasks = [(speaker, sentence) for speaker, sentence in extract_explicit_task_candidates(source_text) if speaker == name]
     if not speaker_tasks:
         return True
 
@@ -438,8 +472,186 @@ def _tokenize_for_overlap(value: str) -> set[str]:
     return {token for token in tokens if token not in stopwords}
 
 
-_TITLE_LEADING_PATTERNS = [re.compile(r"^(저는|제가|우선|먼저)\s+")]
+_DATE_CONTEXT_KEYWORDS = {"까지", "전까지", "마감", "완료", "제출", "기한", "추후", "일정"}
+_DATEISH_PATTERN = re.compile(
+    r"20\d{2}\s*(?:[-./]|년\s*)\s*\d{1,2}\s*(?:[-./]|월\s*)\s*\d{1,2}\s*일?"
+    r"|(?<!\d)\d{1,2}\s*[./]\s*\d{1,2}(?!\d)"
+    r"|\d{1,2}\s*월\s*\d{1,2}\s*일"
+)
+
+
+def _meeting_year(meeting_date: str) -> int:
+    try:
+        return date.fromisoformat(meeting_date).year
+    except ValueError:
+        return date.today().year
+
+
+def _safe_iso_date(year: int, month: int, day: int) -> Optional[str]:
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return None
+
+
+def _normalize_date_token(token: str, meeting_date: str) -> Optional[str]:
+    compact = token.strip()
+    full = re.match(
+        r"^(20\d{2})\s*(?:[-./]|년\s*)\s*(\d{1,2})\s*(?:[-./]|월\s*)\s*(\d{1,2})\s*일?$",
+        compact,
+    )
+    if full:
+        return _safe_iso_date(int(full.group(1)), int(full.group(2)), int(full.group(3)))
+
+    slash = re.match(r"^(\d{1,2})\s*[./]\s*(\d{1,2})$", compact)
+    if slash:
+        return _safe_iso_date(_meeting_year(meeting_date), int(slash.group(1)), int(slash.group(2)))
+
+    korean = re.match(r"^(\d{1,2})\s*월\s*(\d{1,2})\s*일$", compact)
+    if korean:
+        return _safe_iso_date(_meeting_year(meeting_date), int(korean.group(1)), int(korean.group(2)))
+    return None
+
+
+def _extract_due_date_mentions(text: str, meeting_date: str) -> set[str]:
+    """원문에서 실제 마감/완료/제출 맥락에 있는 날짜만 ISO로 모은다.
+    회의 일자 헤더처럼 단순히 적힌 날짜를 업무 마감일로 오해하지 않기 위한 방어막이다."""
+    found: set[str] = set()
+    for match in _DATEISH_PATTERN.finditer(text):
+        normalized = _normalize_date_token(match.group(0), meeting_date)
+        if not normalized:
+            continue
+        context = text[max(0, match.start() - 24) : min(len(text), match.end() + 24)]
+        if any(keyword in context for keyword in _DATE_CONTEXT_KEYWORDS):
+            found.add(normalized)
+    return found
+
+
+def _extract_any_date_mentions(text: str, meeting_date: str) -> set[str]:
+    found: set[str] = set()
+    for match in _DATEISH_PATTERN.finditer(text):
+        normalized = _normalize_date_token(match.group(0), meeting_date)
+        if normalized:
+            found.add(normalized)
+    return found
+
+
+def sanitize_due_date(candidate: object, source_text: str, meeting_date: str) -> Optional[str]:
+    if not isinstance(candidate, str) or not candidate.strip():
+        return None
+    normalized = _normalize_date_token(candidate.strip(), meeting_date)
+    if not normalized:
+        return None
+    if normalized not in _extract_due_date_mentions(source_text, meeting_date):
+        logger.info("회의록 원문에 없는 마감일 후보를 제거합니다. due_date=%s", normalized)
+        return None
+    return normalized
+
+
+def _has_unsupported_date_claim(statement: str, source_text: str, meeting_date: str) -> bool:
+    statement_dates = _extract_any_date_mentions(statement, meeting_date)
+    if not statement_dates:
+        return False
+    source_dates = _extract_any_date_mentions(source_text, meeting_date)
+    if not statement_dates.issubset(source_dates):
+        return True
+    if any(keyword in statement for keyword in _DATE_CONTEXT_KEYWORDS):
+        return not statement_dates.issubset(_extract_due_date_mentions(source_text, meeting_date))
+    return False
+
+
+def sanitize_model_statements(statements: object, source_text: str, meeting_date: str) -> List[str]:
+    safe: List[str] = []
+    for item in statements or []:
+        statement = str(item).strip()
+        if not statement:
+            continue
+        if _has_unsupported_date_claim(statement, source_text, meeting_date):
+            logger.info("회의록 원문 근거가 부족한 날짜 포함 문장을 제거합니다. statement=%s", statement)
+            continue
+        safe.append(statement)
+    return safe
+
+
+def extract_uploaded_text(raw: bytes, file_name: Optional[str] = None) -> str:
+    """FastAPI 직접 업로드 경로에서도 문서 본문을 실제로 읽는다.
+    Spring 경유 분석은 보통 analyze-json을 쓰지만, /analyze를 직접 호출하는 Swagger 테스트도 같은 품질이어야 한다."""
+    name = (file_name or "").lower()
+    try:
+        if name.endswith(".pdf"):
+            return extract_pdf_text(raw)
+        if name.endswith(".docx"):
+            return extract_docx_text(raw)
+        return raw.decode("utf-8", errors="ignore").strip()
+    except DocumentTextExtractionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def extract_pdf_text(raw: bytes) -> str:
+    try:
+        import pdfplumber
+
+        with pdfplumber.open(BytesIO(raw)) as pdf:
+            pages = [page.extract_text() or "" for page in pdf.pages]
+        text = "\n".join(page.strip() for page in pages if page.strip()).strip()
+        if not text:
+            raise DocumentTextExtractionError("PDF에서 분석할 텍스트를 추출하지 못했습니다.")
+        return text
+    except DocumentTextExtractionError:
+        raise
+    except ImportError as exc:
+        logger.exception("PDF 텍스트 추출 의존성 누락")
+        raise DocumentTextExtractionError("PDF 분석에 필요한 서버 의존성이 설치되지 않았습니다.") from exc
+    except Exception as exc:
+        logger.exception("PDF 텍스트 추출 실패")
+        raise DocumentTextExtractionError("PDF 텍스트 추출에 실패했습니다.") from exc
+
+
+def extract_docx_text(raw: bytes) -> str:
+    try:
+        from docx import Document
+
+        document = Document(BytesIO(raw))
+        chunks: List[str] = []
+        chunks.extend(paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip())
+        for table in document.tables:
+            for row in table.rows:
+                row_text = " ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                if row_text:
+                    chunks.append(row_text)
+        text = "\n".join(chunks).strip()
+        if not text:
+            raise DocumentTextExtractionError("DOCX에서 분석할 텍스트를 추출하지 못했습니다.")
+        return text
+    except DocumentTextExtractionError:
+        raise
+    except ImportError as exc:
+        logger.exception("DOCX 텍스트 추출 의존성 누락")
+        raise DocumentTextExtractionError("DOCX 분석에 필요한 서버 의존성이 설치되지 않았습니다.") from exc
+    except Exception as exc:
+        logger.exception("DOCX 텍스트 추출 실패")
+        raise DocumentTextExtractionError("DOCX 텍스트 추출에 실패했습니다.") from exc
+
+
+_TITLE_LEADING_PATTERNS = [
+    re.compile(r"^(저는|제가|우선|먼저)\s+"),
+    re.compile(r"^[가-힣]{2,4}(?:은|는|이|가)\s+"),
+    re.compile(r"^다음 회의 전까지\s+"),
+]
 _TITLE_TRAILING_SUFFIXES = [
+    "해보겠다고 말했다",
+    "하겠다고 말했다",
+    "검토한다고 말했다",
+    "확인한다고 말했다",
+    "점검한다고 말했다",
+    "진행한다고 말했다",
+    "작성한다고 말했다",
+    "구현한다고 말했다",
+    "개선한다고 말했다",
+    "정리한다고 말했다",
+    "확인하기로 하였다",
+    "점검하기로 하였다",
+    "검토하기로 하였다",
     "진행하겠습니다",
     "구현하겠습니다",
     "정리하겠습니다",
@@ -451,6 +663,20 @@ _TITLE_TRAILING_SUFFIXES = [
     "하겠습니다",
     "하겠음",
     "겠습니다",
+    "확인하고",
+    "점검하고",
+    "검토하고",
+    "진행하고",
+    "작성하고",
+    "구현하고",
+    "개선하고",
+    "확인한다",
+    "점검한다",
+    "검토한다",
+    "진행한다",
+    "작성한다",
+    "구현한다",
+    "개선한다",
     "합니다",
     "습니다",
 ]
@@ -465,10 +691,16 @@ def clean_todo_title(raw_title: str) -> str:
     title = raw_title.strip().rstrip(".!?~ ")
     for pattern in _TITLE_LEADING_PATTERNS:
         title = pattern.sub("", title).strip()
+    title = re.sub(
+        r"(을|를)\s+(확인|점검|검토|정리|작성|구현|개선|연결|테스트|표시|반영|처리|준비|설계)(?:하고|한다|하였다|하겠다|하겠습니다|해보겠다고 말했다)?\s*$",
+        r" \2",
+        title,
+    )
     for suffix in _TITLE_TRAILING_SUFFIXES:
         if title.endswith(suffix):
             title = title[: -len(suffix)].strip()
             break
+    title = re.sub(r"(을|를)\s+(확인|점검|검토|정리|작성|구현|개선|연결|테스트|표시|반영|처리|준비|설계)\s*$", r" \2", title)
     for filler in _TITLE_TRAILING_FILLERS:
         if title.endswith(filler):
             title = title[: -len(filler)].strip()
@@ -495,6 +727,10 @@ def _infer_evidence_from_source(title: str, description: str, source_text: str) 
     if not target_tokens:
         return ""
     for speaker, sentence in extract_speaker_task_candidates(source_text):
+        if _has_meaningful_token_overlap(target_tokens, _tokenize_for_overlap(sentence)):
+            quote = f"{speaker}: {sentence}" if speaker else sentence
+            return shorten(quote, _EVIDENCE_MAX_LEN)
+    for speaker, sentence in extract_formal_task_candidates(source_text):
         if _has_meaningful_token_overlap(target_tokens, _tokenize_for_overlap(sentence)):
             quote = f"{speaker}: {sentence}" if speaker else sentence
             return shorten(quote, _EVIDENCE_MAX_LEN)
@@ -529,8 +765,6 @@ def parse_ollama_analysis_response(raw: str, request: AnalyzeRequest) -> Meeting
         category = str(item.get("category") or "ETC").upper()
         if category not in _VALID_CATEGORIES:
             category = "ETC"
-        due_date = item.get("due_date")
-        due_date = due_date if isinstance(due_date, str) and due_date.strip() else None
         assignee_candidate = _sanitize_assignee_candidate(
             str(item.get("assignee_candidate") or ""),
             source_text,
@@ -540,6 +774,7 @@ def parse_ollama_analysis_response(raw: str, request: AnalyzeRequest) -> Meeting
         cleaned_title = clean_todo_title(title) if title else ""
         raw_evidence = str(item.get("evidence_text") or item.get("source_excerpt") or "")
         evidence_text = _resolve_evidence_text(raw_evidence, cleaned_title or title, description, source_text)
+        due_date = sanitize_due_date(item.get("due_date"), source_text, request.meeting_date)
 
         todos.append(
             MeetingTodo(
@@ -555,8 +790,8 @@ def parse_ollama_analysis_response(raw: str, request: AnalyzeRequest) -> Meeting
             )
         )
 
-    decisions = [str(d).strip() for d in (payload.get("decisions") or []) if str(d).strip()]
-    risks = [str(r).strip() for r in (payload.get("risks") or []) if str(r).strip()]
+    decisions = sanitize_model_statements(payload.get("decisions"), source_text, request.meeting_date)
+    risks = sanitize_model_statements(payload.get("risks"), source_text, request.meeting_date)
     keywords = [str(k).strip() for k in (payload.get("keywords") or []) if str(k).strip()]
     todos = repair_ollama_todos(todos, request)
 
@@ -576,17 +811,17 @@ def parse_ollama_analysis_response(raw: str, request: AnalyzeRequest) -> Meeting
 
 def repair_ollama_todos(todos: List[MeetingTodo], request: AnalyzeRequest) -> List[MeetingTodo]:
     source_text = request.text or request.title
-    speaker_candidates = extract_speaker_task_candidates(source_text)
-    if not speaker_candidates:
+    explicit_candidates = extract_explicit_task_candidates(source_text)
+    if not explicit_candidates:
         return todos or build_todos(source_text, normalize_text(source_text), request.meeting_date, request.participants)
 
     has_placeholder = any(is_schema_placeholder(todo.title) or is_schema_placeholder(todo.description) for todo in todos)
     all_unassigned = bool(todos) and all(not todo.assignee_candidate for todo in todos)
-    missing_explicit_tasks = len(todos) < len(speaker_candidates)
+    missing_explicit_tasks = len(todos) < len(explicit_candidates)
     if not todos or has_placeholder or all_unassigned or missing_explicit_tasks:
         logger.info("Ollama To-Do 결과를 회의록 원문 기반 담당자 추출로 보정합니다.")
         return build_todos(source_text, normalize_text(source_text), request.meeting_date, request.participants)
-    return fill_missing_assignees_from_speaker_evidence(todos, speaker_candidates, request.participants)
+    return fill_missing_assignees_from_speaker_evidence(todos, explicit_candidates, request.participants)
 
 
 def fill_missing_assignees_from_speaker_evidence(
@@ -626,11 +861,11 @@ def is_schema_placeholder(value: str) -> bool:
 
 
 def build_todos(raw_text: str, normalized_text: str, meeting_date: str, participants: Optional[List[str]] = None) -> List[MeetingTodo]:
-    speaker_candidates = extract_speaker_task_candidates(raw_text)
-    used_speaker_format = bool(speaker_candidates)
+    explicit_candidates = extract_explicit_task_candidates(raw_text)
+    used_speaker_format = bool(explicit_candidates)
     is_generic_fallback = False
     if used_speaker_format:
-        candidates = speaker_candidates
+        candidates = explicit_candidates
     else:
         sentences = extract_sentences(
             normalized_text,
@@ -668,7 +903,7 @@ def build_todos(raw_text: str, normalized_text: str, meeting_date: str, particip
                 title=shorten(clean_todo_title(sentence), 44),
                 description=sentence,
                 assignee_candidate=display_assignee,
-                due_date=(base_date + timedelta(days=3 + index)).isoformat(),
+                due_date=sanitize_due_date(extract_due_date_candidate(sentence, base_date.year), raw_text, meeting_date),
                 priority="HIGH" if index < 2 else "MEDIUM",
                 category=infer_category(sentence),
                 evidence_text=evidence_text,
@@ -686,6 +921,15 @@ _ASSIGNEE_PATTERNS = [
 _SPEAKER_LINE_PATTERN = re.compile(r"^([가-힣]{2,4})\s*[:：]\s*(.+)$")
 _SPEAKER_SEGMENT_PATTERN = re.compile(r"([가-힣]{2,4})\s*[:：]\s*")
 _TASK_KEYWORDS = ["담당", "작성", "구현", "정리", "검토", "준비", "연결", "테스트", "제출", "설계", "맡", "잡", "만들", "보여주", "추출"]
+_FORMAL_TASK_KEYWORDS = [
+    "확인", "점검", "검토", "정리", "작성", "구현", "개선", "연결", "테스트",
+    "표시", "반영", "처리", "준비", "설계", "추출", "관리", "삭제", "등록",
+]
+_FORMAL_TASK_COMMITMENT_HINTS = [
+    "다음 회의 전까지", "전까지", "점검한다", "확인한다", "검토한다", "정리한다",
+    "작성한다", "구현한다", "개선한다", "확인해보겠다고", "점검해보겠다고",
+    "검토해보겠다고", "확인해보겠다고 말했다", "점검해보겠다고 말했다",
+]
 _SPEAKER_TASK_LIMIT = 12
 
 
@@ -697,6 +941,13 @@ def extract_assignee_candidate(sentence: str) -> str:
         if match:
             return match.group(1)
     return ""
+
+
+def extract_due_date_candidate(sentence: str, base_year: int) -> Optional[str]:
+    match = _DATEISH_PATTERN.search(sentence)
+    if not match:
+        return None
+    return _normalize_date_token(match.group(0), f"{base_year}-01-01")
 
 
 def extract_speaker_task_candidates(text: str) -> List[tuple[str, str]]:
@@ -713,6 +964,70 @@ def extract_speaker_task_candidates(text: str) -> List[tuple[str, str]]:
                 found.append((speaker, shorten(s, 120)))
             if len(found) >= _SPEAKER_TASK_LIMIT:
                 return found
+    return found
+
+
+def extract_formal_task_candidates(text: str) -> List[tuple[str, str]]:
+    """표준 회의록 문체("김민준은 ... 확인하고, 박지수는 ... 점검한다")에서
+    실제 후속 업무로 읽히는 이름+행동 절만 추출한다."""
+    section = extract_followup_section(text) or text
+    found = extract_named_action_clauses(section, trust_followup_section=bool(extract_followup_section(text)))
+    if found:
+        return found[:_SPEAKER_TASK_LIMIT]
+
+    # 후속 일정 섹션이 없더라도 "OO는 ... 점검해보겠다고 말했다"처럼 명확한 자기 업무 발언은 보조 추출한다.
+    if section != text:
+        return []
+    candidates: List[tuple[str, str]] = []
+    for sentence in split_sentences(text):
+        if not any(hint in sentence for hint in _FORMAL_TASK_COMMITMENT_HINTS):
+            continue
+        candidates.extend(extract_named_action_clauses(sentence))
+        if len(candidates) >= _SPEAKER_TASK_LIMIT:
+            break
+    return candidates[:_SPEAKER_TASK_LIMIT]
+
+
+def extract_explicit_task_candidates(text: str) -> List[tuple[str, str]]:
+    candidates = extract_speaker_task_candidates(text)
+    if candidates:
+        return candidates
+    return extract_formal_task_candidates(text)
+
+
+def extract_followup_section(text: str) -> str:
+    normalized = text.replace("\r", "\n")
+    match = re.search(r"추후\s*일정\s*[:：]?\s*(.+)", normalized, flags=re.S)
+    if not match:
+        return ""
+    section = match.group(1)
+    section = re.split(r"\n\s*(작성자|특이\s*사항|안건|논의\s*내용)\s*[:：]?", section, maxsplit=1)[0]
+    return section.strip()
+
+
+def extract_named_action_clauses(text: str, trust_followup_section: bool = False) -> List[tuple[str, str]]:
+    found: List[tuple[str, str]] = []
+    pattern = re.compile(r"([가-힣]{2,4})(?:은|는|이|가)\s+")
+    matches = list(pattern.finditer(text))
+    for index, match in enumerate(matches):
+        speaker = match.group(1)
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        clause = text[start:end].strip(" ,.\n\t")
+        clause = re.split(r"[.。!?！？]\s*", clause, maxsplit=1)[0].strip(" ,.\n\t")
+        if not clause:
+            continue
+        if not any(keyword in clause for keyword in _FORMAL_TASK_KEYWORDS):
+            continue
+        if not trust_followup_section and not (
+            any(hint in clause for hint in _FORMAL_TASK_COMMITMENT_HINTS)
+            or "전까지" in text[max(0, match.start() - 20):match.start()]
+            or "추후" in text[max(0, match.start() - 20):match.start()]
+        ):
+            continue
+        found.append((speaker, shorten(clause, 120)))
+        if len(found) >= _SPEAKER_TASK_LIMIT:
+            break
     return found
 
 

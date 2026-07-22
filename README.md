@@ -32,6 +32,26 @@
 - **팀원** — 본인 업무 관리, 회의록 업로드, 산출물 작성
 - **심사자** — 진행률·산출물·기여도 리포트 조회, AI 평가 근거 확인, 최종 점수 입력
 
+## 로컬 시연용 테스트 계정
+
+아이디/비밀번호 테스트 로그인은 운영 노출을 막기 위해 기본 비활성화되어 있습니다. 로컬 시연에서만 `.env`에 아래 값을 명시해 켭니다.
+
+```env
+WORKFLOW_DEMO_DEV_LOGIN_ENABLED=true
+VITE_ENABLE_DEMO_AUTH=true
+```
+
+테스트 계정 비밀번호 `1111`은 중간보고/시연 전용이며, 운영 배포 환경에서는 위 값을 켜지 않습니다.
+
+## DB 마이그레이션
+
+기본 앱 실행에서는 Flyway가 비활성화되어 기존 운영 DB에 자동 마이그레이션을 적용하지 않습니다. 배포 DB 스키마는 팀에서 검토한 뒤 아래 둘 중 하나로 반영합니다.
+
+- 권장: `App/backend_spring/src/main/resources/db/init/04_add_password_auth.sql`, `05_add_reviewer_approval_status.sql`, `06_add_project_onboarding_fields.sql`을 운영 DB에 수동 적용
+- Flyway 사용 시: 스키마 상태를 먼저 확인한 뒤 `SPRING_FLYWAY_ENABLED=true`를 명시. 기존에 테이블이 있는 DB에서 처음 Flyway를 켜는 경우 `baseline-on-migrate` 기본값은 `true`라서 schema history 부재로 기동이 막히지 않는다. 신규 빈 DB에서 엄격하게 검증하려면 `SPRING_FLYWAY_BASELINE_ON_MIGRATE=false`로 override
+
+`SPRING_FLYWAY_ENABLED` 기본값은 `false`이고, Flyway를 켰을 때의 `SPRING_FLYWAY_BASELINE_ON_MIGRATE` 기본값은 `true`입니다.
+
 ## 기술 스택
 
 | 구성 | 기술 |
@@ -48,27 +68,32 @@
 2. **업무 관리** → 카테고리 선택 → 상세 정보 입력 → 상태별 칸반 관리
 3. **심사자 평가** → 진행률·산출물·GitHub 조회 → 기여도 리포트 확인 → 점수 입력
 
-## 회의록 AI 분석 (로컬 Ollama)
+## 회의록 AI 분석 제공자
 
-회의록 AI 분석은 기본적으로 로컬 Ollama 모델을 사용합니다 (외부 유료 LLM 미사용).
+회의록 AI 분석 제공자 기본값은 `auto`입니다. `HF_TOKEN`이 있으면 Hugging Face Inference를 먼저 사용하고, 실패하거나 토큰이 없으면 로컬 Ollama, 그 다음 규칙 기반 분석으로 자동 대체합니다.
+
+> **주의(개인정보/기밀)**: `auto` 모드에서 `HF_TOKEN`이 설정된 환경(로컬 `.env`, 배포 서버 등)에 회의록을 업로드하면, 회의록 원문이 Hugging Face의 외부 Inference API로 전송됩니다. 팀원 이름, 업무 내용 등이 포함된 회의록을 외부로 보내고 싶지 않다면 해당 환경에서 `HF_TOKEN`을 설정하지 않거나 `MEETING_ANALYSIS_PROVIDER=ollama`(또는 `rule`)로 명시적으로 고정하세요.
+
+### 로컬 Ollama
 
 - Ollama 설치: https://ollama.com
 - 빠른 분석용 모델(기본값): `qwen2.5:1.5b` (로컬에 없으면 `ollama pull qwen2.5:1.5b`)
 - 품질 우선 모델: `ollama pull llama3.2:3b` 또는 `ollama pull qwen3:8b` (`MEETING_ANALYSIS_MODEL=모델명`으로 전환)
 - FastAPI 직접 실행 시: `OLLAMA_HOST=http://localhost:11434`
 - Docker Compose 사용 시: `OLLAMA_HOST=http://host.docker.internal:11434`
+- Ollama만 강제로 쓰려면: `MEETING_ANALYSIS_PROVIDER=ollama`
 - Ollama를 끄고 기존 규칙 기반 분석만 쓰려면: `MEETING_ANALYSIS_PROVIDER=rule`
 - 로컬 모델 응답이 느리면 `MEETING_ANALYSIS_TIMEOUT_SECONDS`, `MEETING_ANALYSIS_MAX_CHARS`, `MEETING_ANALYSIS_NUM_PREDICT` 값을 낮춰 fallback을 더 빨리 태울 수 있습니다.
 - 환경변수 변경 후에는 `backend-fastapi`를 재시작해야 반영됩니다.
 - 기존에 업로드된 회의록은 새 분석 로직이 소급 적용되지 않으므로 재분석/재업로드가 필요합니다.
 - Ollama 서버가 꺼져 있거나 모델이 없거나 응답 파싱에 실패하면 자동으로 기존 규칙 기반 분석으로 대체됩니다.
 
-### Hugging Face Inference로 전환
+### Hugging Face Inference
 
 다른 컴퓨터에서 Ollama 설치 없이 시연해야 하면 Hugging Face Inference Provider를 사용할 수 있습니다.
 
-- `.env`에 `MEETING_ANALYSIS_PROVIDER=huggingface` 설정
 - `.env`에 `HF_TOKEN=발급받은_토큰` 설정
+- Hugging Face만 강제로 쓰려면 `.env`에 `MEETING_ANALYSIS_PROVIDER=huggingface` 설정
 - 기본 모델: `HF_MEETING_ANALYSIS_MODEL=Qwen/Qwen3-4B-Instruct-2507`
 - Docker Compose 사용 시 `backend-fastapi`를 재빌드/재시작해야 반영됩니다.
 - Hugging Face 호출 실패 시에는 Ollama, 규칙 기반 분석 순서로 자동 대체됩니다.

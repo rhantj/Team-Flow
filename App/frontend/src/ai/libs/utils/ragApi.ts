@@ -19,10 +19,11 @@ interface RagQueryResult {
   sources: RagSource[];
 }
 
-export async function queryRag(projectId: number, question: string): Promise<RagQueryResult> {
+export async function queryRag(projectId: number, question: string, signal?: AbortSignal): Promise<RagQueryResult> {
   const data = await apiFetch<RawRagQueryResult>("/ai/rag/query", {
     method: "POST",
     body: JSON.stringify({ project_id: projectId, question }),
+    signal,
   });
   return {
     answer: data.answer,

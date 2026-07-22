@@ -4,6 +4,7 @@ import { tokenStore } from "../api/tokenStore";
 import type { MeResponse, ProjectRoleSummary, UserSummary } from "../api/authTypes";
 
 const SELECTED_PROJECT_KEY = "workflow-ai:selected-project-id";
+const HEARTBEAT_INTERVAL_MS = 20000;
 
 interface AuthState {
   isAuthenticated: boolean;
@@ -94,11 +95,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener(AUTH_LOGOUT_EVENT, handleForcedLogout);
   }, []);
 
+  // 로그인 중인 동안 주기적으로 접속 상태를 갱신한다(중간보고/시연용 접속자 표시 + 동시 로그인 제한용 heartbeat).
+  useEffect(() => {
+    if (!user) return;
+    const heartbeat = () => {
+      apiFetch("/auth/test-session/heartbeat", { method: "POST" }).catch(() => {});
+    };
+    heartbeat();
+    const intervalId = setInterval(heartbeat, HEARTBEAT_INTERVAL_MS);
+    return () => clearInterval(intervalId);
+  }, [user]);
+
   const loginWithGoogle = () => {
     window.location.href = `${API_BASE_URL}/auth/google`;
   };
 
   const logout = () => {
+    apiFetch("/auth/test-logout", { method: "POST" }).catch(() => {});
     apiFetch("/auth/logout", { method: "POST" }).catch(() => {});
     tokenStore.clear();
     setUser(null);

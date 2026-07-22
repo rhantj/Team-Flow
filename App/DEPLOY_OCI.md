@@ -128,10 +128,12 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ## 8. DB 마이그레이션 적용 (첫 기동 후 1회)
 
 compose는 `backend_spring/src/main/resources/db/init`만 자동 실행한다.
-`docs/db/migrations/001~004`는 **수동으로 적용해야 한다.**
+`docs/db/migrations/001~007`은 **수동으로 적용해야 한다.**
 
 init 스크립트는 `document_chunks.embedding`을 JSONB로 만들고, 마이그레이션 001이 이걸
-`VECTOR(768)`로 바꾼다. 001을 건너뛰면 임베딩 기능이 나중에 깨진다.
+`VECTOR(768)`로, 007이 다시 `VECTOR(1024)`로 바꾼다(RAG 챗봇 임베딩 모델이
+Ollama/nomic-embed-text(768차원)에서 Hugging Face/BAAI/bge-m3(1024차원)로 전환됨에 따른
+스키마 변경). 001과 007을 건너뛰면 임베딩 기능이 나중에 깨진다.
 
 ```bash
 cd work-flow
@@ -143,6 +145,27 @@ done
 
 > 두 디렉터리를 합칠 수 없는 이유: `docker-entrypoint-initdb.d`는 알파벳순으로 실행하는데
 > `001_`이 `01_`보다 앞서서 순서가 뒤집힌다.
+
+> ⚠️ **재실행 위험(001~007 전체 공통):** 이 저장소는 Flyway 등 마이그레이션 이력
+> 추적을 쓰지 않는다(`SPRING_FLYWAY_ENABLED` 기본 false) — 즉 어떤 마이그레이션을
+> 이미 적용했는지 DB가 스스로 기억하지 못한다. 위 for 루프는 **재배포할 때마다
+> 001~007을 처음부터 다시 실행**하므로, 나머지 마이그레이션은 대부분 `IF NOT EXISTS` 등으로
+> 안전하지만 **007만은 특히 위험하다**: 007은 `document_chunks.embedding`을 전부
+> `NULL`로 초기화하는 파괴적 변경이라, 이미 재임베딩까지 끝난 운영 DB에 실수로
+> 다시 실행하면 재임베딩을 마칠 때까지 RAG 검색이 완전히 빈 결과만 반환한다.
+> 007 자체에는 컬럼이 이미 `vector(1024)`면 건너뛰는 idempotency guard가 있지만,
+> **처음 007을 적용하는 배포에서만** 아래 재임베딩 절차를 실행하고, 이후 재배포에서는
+> for 루프를 다시 돌리더라도 재임베딩을 다시 실행할 필요가 없는지(=007이 이미 스킵됐는지)
+> 로그의 `NOTICE`를 확인할 것.
+
+**007 적용 후 반드시 재임베딩을 실행할 것(최초 1회만).** 007은 컬럼 타입만 바꾸고 기존
+임베딩 값은 NULL로 비운다(차원이 달라 기존 벡터를 그대로 옮길 수 없음) — 재임베딩 없이는
+`document_chunks` 검색이 전부 빈 결과를 반환한다.
+
+```bash
+cd work-flow/App/backend_fastapi
+python -m llm_rag_assistant.scripts.reembed_document_chunks
+```
 
 ## 9. 검증
 

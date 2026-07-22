@@ -1,8 +1,13 @@
 import type { ChatMsg } from "../types/chat";
 
-export const CHAT_INIT: ChatMsg[] = [
-  { role: "assistant", content: "안녕하세요 김민준님! WorkFlow AI 어시스턴트입니다.\n\n현재 **스마트 주차 관리 시스템** 프로젝트에 대해 무엇이든 물어보세요. 회의록, 업무, 일정, GitHub 기록을 바탕으로 답변드릴게요." }
-];
+export function buildChatInit(userName: string): ChatMsg[] {
+  return [
+    {
+      role: "assistant",
+      content: `안녕하세요 ${userName}님! WorkFlow AI 어시스턴트입니다.\n\n현재 프로젝트에 대해 무엇이든 물어보세요. 회의록, 업무, 일정, GitHub 기록을 바탕으로 답변드릴게요.`,
+    },
+  ];
+}
 
 export const QUICK_QUESTIONS = [
   "오늘 해야 할 일 알려줘", "마감 임박한 업무 뭐야?",

@@ -11,4 +11,6 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
     List<Project> findAllByMemberUserId(@Param("userId") Long userId);
 
     Optional<Project> findFirstByTitle(String title);
+
+    Optional<Project> findByInviteCode(String inviteCode);
 }

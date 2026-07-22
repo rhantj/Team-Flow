@@ -2,11 +2,13 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import {
   GraduationCap, Users, Trophy, Cpu, Zap, PenLine, Check, User,
-  AlertTriangle, Mail, Shield, ArrowLeft, ArrowRight, Sparkles, Plus, Trash2,
+  AlertTriangle, Mail, Shield, ArrowLeft, ArrowRight, Sparkles, Plus, Trash2, X,
 } from "lucide-react";
 import { StepIndicator } from "../components/StepIndicator";
 import { useAuth } from "../../global/hooks/useAuth";
 import { createInvitation, createProject } from "../../global/api/projectsApi";
+
+const DELIVERABLE_OPTIONS = ["발표자료", "보고서", "README", "시연 영상", "서비스 배포", "기타"];
 
 const PROJECT_TYPES = [
   { id: "capstone", label: "캡스톤디자인", sub: "전공 프로젝트", icon: GraduationCap, color: "#3B5BDB" },
@@ -19,7 +21,7 @@ const PROJECT_TYPES = [
 
 export function OnboardingScreen() {
   const navigate = useNavigate();
-  const { user, refreshMe } = useAuth();
+  const { user, refreshMe, selectProject } = useAuth();
   const userName = user?.name ?? "";
 
   const [step, setStep] = useState(0); // 0-3
@@ -27,10 +29,30 @@ export function OnboardingScreen() {
   const [customType, setCustomType] = useState("");
   const [projectTitle, setProjectTitle] = useState("");
   const [teamSize, setTeamSize] = useState(4);
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [midCheckDate, setMidCheckDate] = useState("");
+  const [deliverables, setDeliverables] = useState<string[]>([]);
+  const [techStackInput, setTechStackInput] = useState("");
+  const [techStack, setTechStack] = useState<string[]>([]);
+  const [goals, setGoals] = useState("");
   const [memberEmails, setMemberEmails] = useState<string[]>([""]);
   const [reviewerEmails, setReviewerEmails] = useState<string[]>([""]);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const toggleDeliverable = (item: string) => {
+    setDeliverables(prev => prev.includes(item) ? prev.filter(d => d !== item) : [...prev, item]);
+  };
+  const addTechStackTag = () => {
+    const value = techStackInput.trim();
+    if (value && !techStack.includes(value)) {
+      setTechStack(prev => [...prev, value]);
+    }
+    setTechStackInput("");
+  };
+  const removeTechStackTag = (tag: string) => setTechStack(prev => prev.filter(t => t !== tag));
+  const dateRangeValid = !startDate || !endDate || startDate <= endDate;
 
   const resolvedType = projectType === "other" ? customType : PROJECT_TYPES.find(t => t.id === projectType)?.label ?? "";
 
@@ -50,6 +72,13 @@ export function OnboardingScreen() {
       const project = await createProject({
         title: projectTitle.trim(),
         type: resolvedType || undefined,
+        deadline: endDate,
+        startDate: startDate || undefined,
+        midCheckDate: midCheckDate || undefined,
+        memberLimit: teamSize,
+        deliverables: deliverables.length > 0 ? deliverables : undefined,
+        techStack: techStack.length > 0 ? techStack : undefined,
+        goals: goals.trim() || undefined,
       });
 
       const invites = [
@@ -61,6 +90,7 @@ export function OnboardingScreen() {
       }
 
       await refreshMe();
+      selectProject(project.id);
       navigate("/dashboard");
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "프로젝트 생성에 실패했습니다.");
@@ -71,8 +101,11 @@ export function OnboardingScreen() {
 
   const onSkip = () => navigate("/dashboard");
 
-  const STEPS = ["프로젝트 목적", "팀원 설정", "팀장 안내", "팀원 초대"];
-  const canGoNext = step === 0 ? Boolean(projectType && projectTitle.trim()) : true;
+  const STEPS = ["프로젝트 목적", "일정/인원", "산출물/목표", "팀원 초대"];
+  const canGoNext =
+    step === 0 ? Boolean(projectType && projectTitle.trim()) :
+    step === 1 ? Boolean(endDate && dateRangeValid) :
+    true;
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-background px-4 py-8" style={{ fontFamily: "'Inter', 'Noto Sans KR', sans-serif" }}>
@@ -95,14 +128,14 @@ export function OnboardingScreen() {
           <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">{STEPS[step]}</div>
           <h2 className="text-lg font-bold text-foreground">
             {step === 0 && "어떤 목적으로 사용하시나요?"}
-            {step === 1 && "팀원은 몇 명인가요?"}
-            {step === 2 && "팀장 안내"}
+            {step === 1 && "일정과 인원을 알려주세요"}
+            {step === 2 && "목표 산출물과 진행 목표"}
             {step === 3 && "팀을 초대하세요"}
           </h2>
           <p className="text-sm text-muted-foreground mt-1">
             {step === 0 && "프로젝트 이름과 유형에 따라 AI 기능이 최적화됩니다."}
-            {step === 1 && "본인 포함 전체 팀원 수를 선택해주세요."}
-            {step === 2 && "팀장은 업무 배정과 팀 코멘트 관리 권한을 갖습니다."}
+            {step === 1 && "최종 마감일은 필수이며, 본인 포함 전체 팀원 수를 선택해주세요."}
+            {step === 2 && "목표 산출물, 기술 스택, 진행 목표는 나중에 프로젝트 설정에서 수정할 수 있습니다."}
             {step === 3 && "이메일로 초대하면 팀원과 심사자는 서로 다른 접근 권한을 가집니다."}
           </p>
         </div>
@@ -157,10 +190,31 @@ export function OnboardingScreen() {
             </div>
           )}
 
-          {/* ── step 1: team size (informational) ── */}
+          {/* ── step 1: schedule + team size ── */}
           {step === 1 && (
-            <div className="flex flex-col items-center gap-8 py-4">
-              <div className="flex items-center gap-6">
+            <div className="flex flex-col items-center gap-6 py-2">
+              <div className="w-full grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-foreground">시작일</label>
+                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
+                    className="w-full rounded-xl border border-border bg-input-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all" />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-foreground">최종 마감일 <span className="text-red-500">*</span></label>
+                  <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
+                    className="w-full rounded-xl border border-border bg-input-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all" />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-foreground">중간 점검일 (선택)</label>
+                  <input type="date" value={midCheckDate} onChange={e => setMidCheckDate(e.target.value)}
+                    className="w-full rounded-xl border border-border bg-input-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all" />
+                </div>
+              </div>
+              {!dateRangeValid && (
+                <p className="text-xs text-red-500 -mt-3">시작일은 종료일보다 이전이어야 합니다.</p>
+              )}
+
+              <div className="flex items-center gap-6 justify-center">
                 <button
                   onClick={() => setTeamSize(v => Math.max(2, v - 1))}
                   className="w-12 h-12 rounded-full border-2 border-border flex items-center justify-center text-xl font-bold text-foreground hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 transition-all disabled:opacity-30"
@@ -201,28 +255,76 @@ export function OnboardingScreen() {
             </div>
           )}
 
-          {/* ── step 2: leader (informational only — creator is always LEADER) ── */}
+          {/* ── step 2: deliverables + tech stack + goals (leader is always the creator) ── */}
           {step === 2 && (
-            <div className="space-y-4">
-              <div className="w-full flex items-center gap-4 p-4 rounded-xl border-2 border-blue-500 bg-blue-50">
-                <div className="w-11 h-11 rounded-full flex items-center justify-center text-white font-bold text-base" style={{ background: "#3B5BDB" }}>
+            <div className="space-y-5">
+              <div className="flex items-center gap-3 p-3 rounded-xl border border-blue-200 bg-blue-50">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs shrink-0" style={{ background: "#3B5BDB" }}>
                   {(userName || "?")[0]}
                 </div>
-                <div className="flex-1 text-left">
-                  <div className="text-sm font-semibold text-foreground">{userName} <span className="text-[11px] font-normal text-blue-500 ml-1">나</span></div>
-                  <div className="text-xs text-muted-foreground">{user?.email}</div>
-                </div>
-                <div className="w-5 h-5 rounded-full border-2 border-blue-500 bg-blue-500 flex items-center justify-center">
-                  <Check className="w-3 h-3 text-white" />
+                <p className="text-xs text-blue-700">
+                  <span className="font-semibold">{userName}</span>님이 팀장(LEADER)이 됩니다. 업무 배정, 팀 코멘트, 팀원 관리 권한을 가집니다.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-foreground mb-2 block">목표 산출물</label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {DELIVERABLE_OPTIONS.map(option => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => toggleDeliverable(option)}
+                      className={`px-3 py-2 rounded-lg border text-xs font-medium transition-all ${
+                        deliverables.includes(option)
+                          ? "border-blue-500 bg-blue-50 text-blue-600"
+                          : "border-border bg-muted text-muted-foreground hover:border-slate-300"
+                      }`}
+                    >
+                      {option}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200">
-                <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                <p className="text-xs text-amber-700">
-                  프로젝트를 생성하면 회원님이 팀장이 됩니다. 팀장은 업무 배정, 팀 코멘트 작성, 팀원 관리 권한을 갖습니다.
-                  리더십은 생성 이후 프로젝트 설정에서 다른 팀원에게 이전할 수 있습니다.
-                </p>
+              <div>
+                <label className="text-xs font-semibold text-foreground mb-1.5 block">기술 스택 / 주요 기능 키워드</label>
+                <div className="flex gap-2">
+                  <input
+                    value={techStackInput}
+                    onChange={e => setTechStackInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addTechStackTag(); } }}
+                    placeholder="예: Spring Boot (Enter로 추가)"
+                    className="flex-1 rounded-xl border border-border bg-input-background px-3 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all"
+                  />
+                  <button type="button" onClick={addTechStackTag}
+                    className="px-3 rounded-xl border border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-all">
+                    추가
+                  </button>
+                </div>
+                {techStack.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {techStack.map(tag => (
+                      <span key={tag} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium bg-violet-50 text-violet-700 border border-violet-200">
+                        {tag}
+                        <button type="button" onClick={() => removeTechStackTag(tag)} className="hover:text-violet-900">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-foreground mb-1.5 block">진행 목표 / 메모</label>
+                <textarea
+                  value={goals}
+                  onChange={e => setGoals(e.target.value)}
+                  placeholder="예: MVP까지 목표, 매주 수요일 정기회의"
+                  rows={3}
+                  className="w-full rounded-xl border border-border bg-input-background px-3 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all resize-none"
+                />
               </div>
             </div>
           )}

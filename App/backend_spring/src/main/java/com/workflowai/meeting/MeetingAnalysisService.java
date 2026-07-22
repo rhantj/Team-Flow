@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +26,11 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
@@ -35,6 +41,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class MeetingAnalysisService {
+    private static final Logger log = LoggerFactory.getLogger(MeetingAnalysisService.class);
+
     private final MeetingAnalysisRunner meetingAnalysisRunner;
     private final DemoDataService demoDataService;
     private final MeetingRepository meetingRepository;
@@ -337,6 +345,30 @@ public class MeetingAnalysisService {
             .toList();
     }
 
+    /** 특정 팀원의 회의별 참석/결석 여부와 날짜 — 기여도 화면의 회의 참여 드릴다운에 쓰인다. */
+    public List<MeetingAttendanceDetail> attendanceDetail(String projectId, Long userId) {
+        Long projectDbId = requireProjectMember(projectId);
+        List<Meeting> meetings = meetingRepository.findByProjectIdOrderByCreatedAtDesc(projectDbId);
+        if (meetings.isEmpty()) return List.of();
+
+        List<Long> meetingIds = meetings.stream().map(Meeting::getId).toList();
+        Set<Long> attendedMeetingIds = meetingAttendeeRepository.findByMeetingIdIn(meetingIds).stream()
+            .filter(attendee -> attendee.getUserId().equals(userId))
+            .filter(attendee -> attendee.getMeetingId() != null)
+            .map(MeetingAttendee::getMeetingId)
+            .collect(Collectors.toSet());
+
+        return meetings.stream()
+            .sorted(Comparator.comparing(Meeting::getMeetingDate, Comparator.nullsLast(Comparator.naturalOrder())))
+            .map(meeting -> new MeetingAttendanceDetail(
+                String.valueOf(meeting.getId()),
+                meeting.getTitle(),
+                meeting.getMeetingDate() == null ? null : meeting.getMeetingDate().toString(),
+                meeting.getId() != null && attendedMeetingIds.contains(meeting.getId())
+            ))
+            .toList();
+    }
+
     @Transactional
     public MeetingDeleteResponse delete(String projectId, String meetingId, boolean deleteLinkedTasks) {
         Meeting meeting = requireProjectMeeting(projectId, meetingId);
@@ -420,7 +452,7 @@ public class MeetingAnalysisService {
             createdBy,
             position
         ));
-        ragIngestService.ingestBestEffort(task.getProjectId(), "task", task.getId(), buildTaskIngestContent(task));
+        ragIngestService.ingestBestEffort(task.getProjectId(), "task", task.getId(), buildTaskIngestContent(task), task.getAssigneeId());
 
         MeetingActionItem item = existingItem.orElseGet(() -> new MeetingActionItem(
             meetingId, todo.title(), todo.description(), todo.category(),
@@ -665,13 +697,16 @@ public class MeetingAnalysisService {
         if (name.endsWith(".docx")) {
             return extractDocxText(file);
         }
+        if (name.endsWith(".pdf") || contentType.equals("application/pdf")) {
+            return extractPdfText(file);
+        }
         if (!textLike) {
             return "업로드 파일명: " + file.getOriginalFilename() + ". 바이너리 문서는 FastAPI 문서 파서 또는 STT 단계에서 텍스트 추출 예정.";
         }
         try {
             return new String(file.getBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {
-            return "";
+            throw new IllegalArgumentException("회의록 파일을 읽을 수 없습니다.");
         }
     }
 
@@ -685,11 +720,15 @@ public class MeetingAnalysisService {
             if (fileName.endsWith(".docx")) {
                 return extractDocxTextFromBytes(bytes);
             }
+            if (fileName.endsWith(".pdf")) {
+                return extractPdfTextFromBytes(bytes);
+            }
             if (!textLike) {
                 return null;
             }
             return new String(bytes, StandardCharsets.UTF_8);
-        } catch (IOException e) {
+        } catch (IOException | IllegalArgumentException e) {
+            log.warn("회의록 재분석용 파일 텍스트 추출 실패: meetingId={}, filePath={}", meeting.getId(), filePath, e);
             return "";
         }
     }
@@ -698,7 +737,31 @@ public class MeetingAnalysisService {
         try {
             return extractDocxTextFromBytes(file.getBytes());
         } catch (IOException e) {
-            return "";
+            throw new IllegalArgumentException("DOCX 회의록을 읽을 수 없습니다.");
+        }
+    }
+
+    private String extractPdfText(MultipartFile file) {
+        try {
+            return extractPdfTextFromBytes(file.getBytes());
+        } catch (IOException e) {
+            throw new IllegalArgumentException("PDF 회의록을 읽을 수 없습니다.");
+        }
+    }
+
+    private String extractPdfTextFromBytes(byte[] bytes) {
+        try (PDDocument document = Loader.loadPDF(bytes)) {
+            String text = new PDFTextStripper()
+                .getText(document)
+                .replaceAll("\\s+\\n", "\n")
+                .replaceAll("\\n\\s+", "\n")
+                .trim();
+            if (text.isBlank()) {
+                throw new IllegalArgumentException("PDF에서 분석할 텍스트를 추출하지 못했습니다.");
+            }
+            return text;
+        } catch (IOException ignored) {
+            throw new IllegalArgumentException("PDF 텍스트 추출에 실패했습니다.");
         }
     }
 
@@ -708,7 +771,7 @@ public class MeetingAnalysisService {
             while ((entry = zip.getNextEntry()) != null) {
                 if (!"word/document.xml".equals(entry.getName())) continue;
                 String xml = new String(zip.readAllBytes(), StandardCharsets.UTF_8);
-                return xml
+                String text = xml
                     .replaceAll("<w:p[^>]*>", "\n")
                     .replaceAll("<[^>]+>", " ")
                     .replace("&lt;", "<")
@@ -718,11 +781,15 @@ public class MeetingAnalysisService {
                     .replace("&apos;", "'")
                     .replaceAll("\\s+", " ")
                     .trim();
+                if (text.isBlank()) {
+                    throw new IllegalArgumentException("DOCX에서 분석할 텍스트를 추출하지 못했습니다.");
+                }
+                return text;
             }
         } catch (IOException ignored) {
-            return "";
+            throw new IllegalArgumentException("DOCX 텍스트 추출에 실패했습니다.");
         }
-        return "";
+        throw new IllegalArgumentException("DOCX 본문을 찾을 수 없습니다.");
     }
 
     private String defaultString(String value, String defaultValue) {

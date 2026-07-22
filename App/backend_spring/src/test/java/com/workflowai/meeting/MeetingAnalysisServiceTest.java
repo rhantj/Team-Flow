@@ -19,11 +19,17 @@ import com.workflowai.security.UserPrincipal;
 import com.workflowai.task.TaskRepository;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
+import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,6 +41,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class MeetingAnalysisServiceTest {
@@ -97,6 +104,29 @@ class MeetingAnalysisServiceTest {
         verify(meetingRepository, atLeastOnce()).save(meetingCaptor.capture());
         assertThat(meetingCaptor.getAllValues().get(0).getAnalysisStatus()).isEqualTo("processing");
         verify(meetingAnalysisRunner).runAnalysis(any(), any(AiAnalyzeRequest.class));
+    }
+
+    @Test
+    void analyzeExtractsPdfTextBeforeDispatchingAnalysisRequest() throws Exception {
+        mockMember(1L);
+        MeetingAnalysisService service = newService();
+        when(meetingRepository.save(any(Meeting.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        MockMultipartFile file = new MockMultipartFile(
+            "file",
+            "minutes.pdf",
+            "application/pdf",
+            createPdfBytes("Meeting minutes body: Park Jisu checks retry flow.")
+        );
+
+        service.analyze(
+            "demo-project", file, "PDF 회의록", "2026-07-20", "정기회의", "document", List.of("박지수"), null
+        );
+
+        ArgumentCaptor<AiAnalyzeRequest> requestCaptor = ArgumentCaptor.forClass(AiAnalyzeRequest.class);
+        verify(meetingAnalysisRunner).runAnalysis(any(), requestCaptor.capture());
+        assertThat(requestCaptor.getValue().text()).contains("Meeting minutes body");
+        assertThat(requestCaptor.getValue().text()).doesNotContain("텍스트 추출 예정");
     }
 
     @Test
@@ -385,5 +415,80 @@ class MeetingAnalysisServiceTest {
         assertThat(summary.get(0).meetingsAttended()).isEqualTo(2);
         assertThat(summary.get(0).totalMeetings()).isEqualTo(2);
         assertThat(summary.get(0).attendanceRate()).isEqualTo(100);
+    }
+
+    @Test
+    void attendanceDetailMarksAttendedAndAbsentMeetingsSortedByDate() {
+        mockMember(1L);
+        Meeting laterMeeting = new Meeting(1L, "12.11 스프린트 리뷰", "document", null, "completed", LocalDate.of(2026, 12, 11), "정기회의", "b.txt", null, 1L);
+        Meeting earlierMeeting = new Meeting(1L, "12.10 팀 정기 회의", "document", null, "completed", LocalDate.of(2026, 12, 10), "정기회의", "a.txt", null, 1L);
+        when(meetingRepository.findByProjectIdOrderByCreatedAtDesc(1L)).thenReturn(List.of(laterMeeting, earlierMeeting));
+        when(meetingAttendeeRepository.findByMeetingIdIn(any())).thenReturn(List.of(
+            new MeetingAttendee(null, 2L)
+        ));
+        MeetingAnalysisService service = newService();
+
+        List<MeetingAttendanceDetail> detail = service.attendanceDetail("demo-project", 2L);
+
+        assertThat(detail).hasSize(2);
+        assertThat(detail.get(0).title()).isEqualTo("12.10 팀 정기 회의");
+        assertThat(detail.get(0).attended()).isFalse();
+        assertThat(detail.get(1).title()).isEqualTo("12.11 스프린트 리뷰");
+        assertThat(detail.get(1).attended()).isFalse();
+    }
+
+    @Test
+    void attendanceDetailMarksAttendedMeetingAsAttended() {
+        mockMember(1L);
+        Long attendedMeetingId = 50L;
+
+        Meeting attendedMeeting = new Meeting(1L, "12.10 참석한 회의", "document", null, "completed", LocalDate.of(2026, 12, 10), "정기회의", "a.txt", null, 1L);
+        ReflectionTestUtils.setField(attendedMeeting, "id", attendedMeetingId);
+
+        Meeting absentMeeting = new Meeting(1L, "12.11 미참석 회의", "document", null, "completed", LocalDate.of(2026, 12, 11), "정기회의", "b.txt", null, 1L);
+
+        when(meetingRepository.findByProjectIdOrderByCreatedAtDesc(1L)).thenReturn(List.of(absentMeeting, attendedMeeting));
+
+        MeetingAttendee attendee = new MeetingAttendee(null, 2L);
+        ReflectionTestUtils.setField(attendee, "meetingId", attendedMeetingId);
+
+        when(meetingAttendeeRepository.findByMeetingIdIn(any())).thenReturn(List.of(attendee));
+
+        MeetingAnalysisService service = newService();
+
+        List<MeetingAttendanceDetail> detail = service.attendanceDetail("demo-project", 2L);
+
+        assertThat(detail).hasSize(2);
+        assertThat(detail.get(0).title()).isEqualTo("12.10 참석한 회의");
+        assertThat(detail.get(0).attended()).isTrue();
+        assertThat(detail.get(1).title()).isEqualTo("12.11 미참석 회의");
+        assertThat(detail.get(1).attended()).isFalse();
+    }
+
+    @Test
+    void attendanceDetailReturnsEmptyListWhenNoMeetings() {
+        mockMember(1L);
+        when(meetingRepository.findByProjectIdOrderByCreatedAtDesc(1L)).thenReturn(List.of());
+        MeetingAnalysisService service = newService();
+
+        List<MeetingAttendanceDetail> detail = service.attendanceDetail("demo-project", 2L);
+
+        assertThat(detail).isEmpty();
+    }
+
+    private byte[] createPdfBytes(String text) throws Exception {
+        try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            PDPage page = new PDPage();
+            document.addPage(page);
+            try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+                content.beginText();
+                content.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+                content.newLineAtOffset(50, 700);
+                content.showText(text);
+                content.endText();
+            }
+            document.save(output);
+            return output.toByteArray();
+        }
     }
 }

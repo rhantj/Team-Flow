@@ -129,6 +129,19 @@ public class MeetingAnalysisController {
     }
 
     @Operation(
+        summary = "팀원 회의 참석 상세",
+        description = "특정 팀원의 회의별 참석/결석 여부와 날짜를 조회합니다. 기여도 화면의 회의 참여 드릴다운에 사용됩니다."
+    )
+    @GetMapping("/attendance-detail")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
+    public ApiResponse<List<MeetingAttendanceDetail>> getAttendanceDetail(
+        @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
+        @Parameter(description = "조회할 팀원의 사용자 ID", example = "2") @RequestParam Long userId
+    ) {
+        return ApiResponse.ok(meetingAnalysisService.attendanceDetail(projectId, userId));
+    }
+
+    @Operation(
         summary = "회의록 삭제",
         description = "프로젝트에 업로드된 회의록을 삭제합니다. 본인이 업로드한 회의록만 삭제할 수 있습니다. "
             + "회의록 원본 파일, 참석자 정보, AI 분석 결과, To-Do 후보가 함께 정리됩니다. "

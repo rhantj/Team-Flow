@@ -54,6 +54,22 @@ class MeetingAnalysisControllerTest {
     }
 
     @Test
+    void attendanceDetailPassesProjectIdAndUserIdToService() throws Exception {
+        when(meetingAnalysisService.attendanceDetail("project-a", 2L)).thenReturn(List.of(
+            new MeetingAttendanceDetail("12", "12.10 팀 정기 회의", "2026-12-10", true)
+        ));
+        MeetingAnalysisController controller = new MeetingAnalysisController(meetingAnalysisService);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        mockMvc.perform(get("/api/v1/projects/project-a/meetings/attendance-detail").param("userId", "2"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data[0].meetingId").value("12"))
+            .andExpect(jsonPath("$.data[0].attended").value(true));
+
+        verify(meetingAnalysisService).attendanceDetail("project-a", 2L);
+    }
+
+    @Test
     void statusReturns404WhenMeetingMissing() throws Exception {
         when(meetingAnalysisService.findStatus("demo-project", "999")).thenReturn(null);
         MeetingAnalysisController controller = new MeetingAnalysisController(meetingAnalysisService);

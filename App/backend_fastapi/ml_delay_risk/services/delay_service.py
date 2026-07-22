@@ -1,6 +1,6 @@
 """Supabase(tasks/milestones/task_checklists) 업무에 대한 지연 위험도 추론 + ml_predictions 적재.
 
-delay_model.py는 Jira 이슈 데이터셋으로 학습됐고(feature_engineering.py 참고), 이 서비스가
+delay_model.py는 'Jira 기반 가상 데이터셋(mock_issue_dataset.py)'으로 학습됐고(feature_engineering.py 참고), 이 서비스가
 운영 중인 실제 스키마(팀 업무 트래커: milestones/tasks/task_checklists)에서 읽은 값을 그
 피처 계약(~35개 키)에 맞춰 "최선 근사(best-effort)"로 채워 넣는다.
 
@@ -100,15 +100,15 @@ def build_feature_row(
     activities: Optional[pd.DataFrame] = None,
     proxy_deadline_lookup: Optional[Callable[[str, str], float]] = None,
 ) -> dict[str, Any]:
-    """tasks/milestones/task_checklists 조인 결과 한 행을 delay_model 피처 딕셔너리로 변환.
+    """tasks/milestones/task_checklists 조인 후, 한 행을 delay_model 피처 딕셔너리로 변환.
 
     comments/activities는 이 업무(task_id) 하나에 대한 task_comments/activities 원본 행들이다
-    (없으면 None — 단위 테스트 등 호출부가 굳이 안 만들어도 되도록). cutoff(now) 이후 데이터는
+    (없으면 None — 단위 테스트 등 호출부가 굳이 안 만들어도 되도록). cutoff(현재 시각) 이후 데이터는
     Jira 학습 파이프라인과 동일하게 여기서 걸러내 데이터 누수를 막는다.
 
     proxy_deadline_lookup: 마감일이 없을 때 쓸 (category, priority) -> proxy_deadline_hours 조회
     함수. 기본값(None)이면 실시간 추론과 동일하게 학습된 모델 아티팩트의 proxy_deadline_map을 쓰는
-    delay_model.proxy_deadline_for를 쓴다. 학습용 가짜 데이터셋(mock_issue_dataset.py)처럼
+    delay_model.proxy_deadline_for를 쓴다. 학습용 가짜 데이터셋(mock_issue_dataset.py)처럼,
     아직 학습된 모델이 없는 시점에 이 함수를 호출해야 하는 경우에만 별도 조회 함수를 주입한다.
     """
     proxy_deadline_lookup = proxy_deadline_lookup or delay_model.proxy_deadline_for

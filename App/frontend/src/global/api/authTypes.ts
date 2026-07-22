@@ -22,4 +22,10 @@ export interface AuthTokenResponse {
   refreshToken: string;
   expiresIn: number;
   user: UserSummary;
+  testSessionId?: string | null;
+}
+
+export interface SignupResponse {
+  status: "ACTIVE" | "PENDING_REVIEWER_APPROVAL";
+  tokens: AuthTokenResponse | null;
 }

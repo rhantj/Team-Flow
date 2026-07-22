@@ -42,9 +42,10 @@ class FallbackMeetingAnalyzerTest {
             .map(MeetingTodo::assignee_candidate)
             .collect(Collectors.groupingBy(name -> name, Collectors.counting()));
 
-        // 발언자별로 자기 발언에서 언급한 담당 업무만 후보로 잡혀야 한다 — 한 사람에게 몰리면 안 된다.
-        assertThat(candidateCounts.keySet()).contains(
-            "고무서", "곽진아", "박지수", "허영주", "유소은", "박상준", "이은주"
+        // 선택된 참석자/프로젝트 멤버가 아닌 이름은 담당 후보로 채택하지 않고 미배정으로 남겨야 한다.
+        assertThat(candidateCounts.keySet()).contains("박지수", "");
+        assertThat(candidateCounts.keySet()).doesNotContain(
+            "고무서", "곽진아", "허영주", "유소은", "박상준", "이은주"
         );
         assertThat(candidateCounts.get("박지수")).isLessThan((long) result.todos().size());
     }
@@ -65,7 +66,8 @@ class FallbackMeetingAnalyzerTest {
         MeetingAnalysisResult result = analyzer.analyze(request);
 
         List<String> candidates = result.todos().stream().map(MeetingTodo::assignee_candidate).toList();
-        assertThat(candidates).contains("유소은", "김민준");
+        assertThat(candidates).contains("", "김민준");
+        assertThat(candidates).doesNotContain("유소은");
     }
 
     @Test
@@ -85,5 +87,43 @@ class FallbackMeetingAnalyzerTest {
 
         assertThat(result.todos()).isNotEmpty();
         assertThat(result.todos().get(0).assignee_candidate()).isEmpty();
+    }
+
+    @Test
+    void doesNotInventDueDateFromMeetingDate() {
+        AiAnalyzeRequest request = new AiAnalyzeRequest(
+            "demo-project",
+            "AI 분석 테스트 회의",
+            "2026-08-07",
+            "정기회의",
+            "document",
+            "notes.txt",
+            "김민준: 저는 AI 분석 테스트 환경 구축을 진행하겠습니다.",
+            List.of("김민준")
+        );
+
+        MeetingAnalysisResult result = analyzer.analyze(request);
+
+        assertThat(result.todos()).isNotEmpty();
+        assertThat(result.todos().get(0).due_date()).isNull();
+    }
+
+    @Test
+    void keepsDueDateOnlyWhenDeadlineIsExplicitInSource() {
+        AiAnalyzeRequest request = new AiAnalyzeRequest(
+            "demo-project",
+            "AI 분석 테스트 회의",
+            "2026-07-20",
+            "정기회의",
+            "document",
+            "notes.txt",
+            "김민준: 저는 8/10까지 AI 분석 테스트 환경 구축을 진행하겠습니다.",
+            List.of("김민준")
+        );
+
+        MeetingAnalysisResult result = analyzer.analyze(request);
+
+        assertThat(result.todos()).isNotEmpty();
+        assertThat(result.todos().get(0).due_date()).isEqualTo("2026-08-10");
     }
 }

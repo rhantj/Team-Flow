@@ -239,6 +239,85 @@ def test_parse_ollama_analysis_response_normalizes_invalid_priority_and_category
     assert result.todos[0].category == "ETC"
 
 
+def test_parse_model_response_removes_hallucinated_due_date_and_decision_deadline():
+    request = AnalyzeRequest(
+        title="AI 분석 테스트 회의",
+        meeting_date="2026-07-20",
+        text="AI 분석 테스트 환경 구축 방향을 논의하고, 테스트 결과를 다음 회의에서 공유하기로 했다.",
+        participants=["김민준", "이서연", "박지수", "최동혁"],
+    )
+    raw = json.dumps(
+        {
+            "summary": "AI 분석 테스트 환경 구축과 결과 공유를 논의했다.",
+            "decisions": ["AI 분석 테스트 환경을 개발팀이 구축하여 2026-08-10까지 완료할 것"],
+            "todos": [
+                {
+                    "title": "AI 분석 테스트 환경 구축",
+                    "description": "AI 기반 분석 테스트를 위한 개발 환경을 설정한다.",
+                    "assignee_candidate": "",
+                    "due_date": "2026-08-10",
+                    "priority": "HIGH",
+                    "category": "BACKEND",
+                }
+            ],
+            "risks": [],
+            "keywords": ["AI 분석"],
+        },
+        ensure_ascii=False,
+    )
+
+    result = parse_ollama_analysis_response(raw, request)
+
+    assert result.todos[0].due_date is None
+    assert all("2026-08-10" not in decision for decision in result.decisions)
+
+
+def test_parse_model_response_keeps_due_date_only_when_deadline_exists_in_source():
+    request = AnalyzeRequest(
+        title="AI 분석 테스트 회의",
+        meeting_date="2026-07-20",
+        text="김민준은 8/10까지 AI 분석 테스트 환경을 구축하기로 했다.",
+        participants=["김민준"],
+    )
+    raw = json.dumps(
+        {
+            "summary": "AI 분석 테스트 환경 구축 일정을 정했다.",
+            "decisions": ["김민준이 AI 분석 테스트 환경을 2026-08-10까지 구축한다."],
+            "todos": [
+                {
+                    "title": "AI 분석 테스트 환경 구축",
+                    "description": "AI 분석 테스트 환경을 구축한다.",
+                    "assignee_candidate": "김민준",
+                    "due_date": "2026-08-10",
+                    "priority": "HIGH",
+                    "category": "BACKEND",
+                }
+            ],
+            "risks": [],
+            "keywords": ["AI 분석"],
+        },
+        ensure_ascii=False,
+    )
+
+    result = parse_ollama_analysis_response(raw, request)
+
+    assert result.todos[0].due_date == "2026-08-10"
+    assert result.decisions == ["김민준이 AI 분석 테스트 환경을 2026-08-10까지 구축한다."]
+
+
+def test_rule_based_analysis_does_not_invent_due_date_from_meeting_date():
+    request = AnalyzeRequest(
+        title="AI 분석 테스트 회의",
+        meeting_date="2026-08-07",
+        text="김민준: 저는 AI 분석 테스트 환경 구축을 진행하겠습니다.",
+        participants=["김민준"],
+    )
+
+    result = analyze_meeting(request)
+
+    assert result.todos[0].due_date is None
+
+
 def test_parse_ollama_analysis_response_invalid_json_raises():
     request = AnalyzeRequest(title="정기회의", meeting_date="2026-07-15", text="내용", participants=[])
     with pytest.raises(json.JSONDecodeError):
@@ -295,6 +374,42 @@ def test_analyze_json_uses_rule_based_only_when_provider_is_rule(monkeypatch):
 
     assert response.status_code == 200
     mock_ollama.assert_not_called()
+
+
+def test_analyze_json_auto_skips_huggingface_when_token_is_missing(monkeypatch):
+    monkeypatch.delenv("MEETING_ANALYSIS_PROVIDER", raising=False)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGINGFACEHUB_API_TOKEN", raising=False)
+    fake_result = analyze_meeting(
+        AnalyzeRequest(title="정기회의", meeting_date="2026-07-15", text="내용", participants=["김민준"])
+    )
+    client = TestClient(app)
+    with (
+        patch("app.main.analyze_meeting_with_huggingface") as mock_hf,
+        patch("app.main.analyze_meeting_with_ollama", return_value=fake_result) as mock_ollama,
+    ):
+        response = client.post(
+            "/api/v1/meetings/analyze-json",
+            json={"title": "정기회의", "meeting_date": "2026-07-15", "text": "내용", "participants": ["김민준"]},
+        )
+
+    assert response.status_code == 200
+    mock_hf.assert_not_called()
+    mock_ollama.assert_called_once()
+
+
+def test_analyze_upload_invalid_pdf_returns_422_instead_of_empty_analysis(monkeypatch):
+    monkeypatch.setenv("MEETING_ANALYSIS_PROVIDER", "rule")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/meetings/analyze",
+        data={"title": "깨진 PDF 회의록"},
+        files={"file": ("broken.pdf", b"not a real pdf", "application/pdf")},
+    )
+
+    assert response.status_code == 422
+    assert "PDF" in response.json()["detail"]
 
 
 def test_analyze_json_uses_ollama_result_when_available(monkeypatch):
@@ -641,7 +756,7 @@ def test_ollama_response_does_not_pile_all_todos_on_one_person():
 def test_clean_todo_title_strips_speech_act_phrasing():
     assert clean_todo_title("저는 회의록 AI 분석을 맡겠습니다") == "회의록 AI 분석"
     cleaned = clean_todo_title("김민준이 발표자료를 작성하겠습니다")
-    assert cleaned == "김민준이 발표자료"
+    assert cleaned == "발표자료 작성"
     assert "하겠습니다" not in cleaned
 
 
@@ -775,3 +890,38 @@ def test_parse_ollama_analysis_response_defaults_evidence_to_empty_when_no_match
     result = parse_ollama_analysis_response(raw, request)
 
     assert result.todos[0].evidence_text == ""
+
+
+def test_rule_based_analysis_extracts_formal_followup_tasks_from_meeting_minutes():
+    text = """
+회의록
+회의제목 캡스톤디자인 WorkFlow AI 회의록 분석 기능 점검 회의
+참석자 김민준, 이서연, 박지수, 최동혁
+논의 내용
+김민준은 회의 시작과 함께 회의록 업로드 후 분석 결과가 프로젝트 단위로 관리되어야 한다고 설명하였다.
+박지수는 분석 상태 폴링과 실패 시 재시도 흐름을 다시 점검해보겠다고 말했다.
+이서연은 업무 후보가 실제 업무보드에 등록될 때 등록 중 상태가 보여야 한다고 하였다.
+최동혁은 심사자 화면에서 기여도 근거 문장이 함께 보이는지 확인해보겠다고 말했다.
+추후 일정
+다음 회의 전까지 김민준은 프로젝트별 회의록 접근 권한과 삭제 권한을 확인하고,
+박지수는 회의록 AI 분석 상태 표시와 담당자 검증 로직을 점검한다.
+이서연은 업무 후보 등록 후 업무보드 반영 흐름을 확인하고,
+최동혁은 심사자 기여도 분석 화면에서 근거 문장 표시 여부를 검토한다.
+작성자 박지수
+"""
+    request = AnalyzeRequest(
+        title="캡스톤디자인 WorkFlow AI 회의록 분석 기능 점검 회의",
+        meeting_date="2026-07-20",
+        text=text,
+        participants=["김민준", "이서연", "박지수", "최동혁"],
+    )
+
+    result = analyze_meeting(request)
+
+    assert [todo.assignee_candidate for todo in result.todos] == ["김민준", "박지수", "이서연", "최동혁"]
+    titles = [todo.title for todo in result.todos]
+    assert "프로젝트별 회의록 접근 권한과 삭제 권한 확인" in titles
+    assert any(title.startswith("회의록 AI 분석 상태 표시와 담당자 검증") for title in titles)
+    assert "업무 후보 등록 후 업무보드 반영 흐름 확인" in titles
+    assert any(title.startswith("심사자 기여도 분석 화면에서 근거 문장 표시") for title in titles)
+    assert all(todo.evidence_text for todo in result.todos)

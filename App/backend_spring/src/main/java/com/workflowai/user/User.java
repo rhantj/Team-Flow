@@ -27,6 +27,12 @@ public class User {
     @Column(name = "provider_id", nullable = false, length = 255)
     private String providerId;
 
+    @Column(name = "password_hash", length = 255)
+    private String passwordHash;
+
+    @Column(name = "reviewer_status", length = 20)
+    private String reviewerStatus;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -41,6 +47,12 @@ public class User {
         this.name = name;
         this.provider = provider;
         this.providerId = providerId;
+    }
+
+    /** 로컬(이메일/비밀번호) 회원가입 계정용. */
+    public User(String email, String name, String provider, String providerId, String passwordHash) {
+        this(email, name, provider, providerId);
+        this.passwordHash = passwordHash;
     }
 
     @jakarta.persistence.PrePersist
@@ -77,6 +89,18 @@ public class User {
 
     public String getProviderId() {
         return providerId;
+    }
+
+    public String getPasswordHash() {
+        return passwordHash;
+    }
+
+    public String getReviewerStatus() {
+        return reviewerStatus;
+    }
+
+    public void setReviewerStatus(String reviewerStatus) {
+        this.reviewerStatus = reviewerStatus;
     }
 
     public LocalDateTime getCreatedAt() {

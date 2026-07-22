@@ -1,17 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import {
-  Activity,
   AlertCircle,
   ArrowLeft,
   Award,
   BarChart3,
   CheckCircle2,
-  ClipboardCheck,
   Download,
   Eye,
   EyeOff,
-  FileText,
   MessageSquare,
   RefreshCw,
   Search,
@@ -21,11 +18,13 @@ import {
 } from "lucide-react";
 import {
   CONTRIB_REPORTS,
-  REVIEWER_ACTIVITIES,
   REVIEWER_TEAMS,
 } from "../../global/lib/mock/reviewer";
 import { fetchAttendanceSummary, type MeetingAttendanceSummaryDto } from "../../meetings/libs/utils/meetingAiApi";
 import { fetchContributionReport, fetchContributionScore, type MemberContributionDto, type ContributionMemberScoreDto } from "../libs/utils/contributorsApi";
+import { fetchTasks } from "../../board/libs/utils/taskApi";
+import type { Task } from "../../board/libs/types/task";
+import { MemberDrilldownPanel } from "../components/MemberDrilldownPanel";
 import { useAuth } from "../../global/hooks/useAuth";
 
 type Team = (typeof REVIEWER_TEAMS)[number];
@@ -39,7 +38,7 @@ const STATUS_META: Record<EvalStatus, { label: string; color: string; bg: string
 };
 
 const CATEGORY_LABELS: Record<CategoryKey, string> = {
-  workload: "워크로드",
+  workload: "업무 편중도",
   task: "업무 수행",
   meeting: "회의 참여",
 };
@@ -75,16 +74,36 @@ export function ContributorsView() {
     () => Object.fromEntries(attendanceSummaries.map((summary) => [String(summary.userId), summary])),
     [attendanceSummaries],
   );
+  // 업무 수행 드릴다운 패널용 프로젝트 전체 업무 목록. 실패하면 빈 배열로 폴백(패널은 빈 상태로 표시).
+  const [projectTasks, setProjectTasks] = useState<Task[]>([]);
+  useEffect(() => {
+    if (currentProjectId == null) {
+      setProjectTasks([]);
+      return;
+    }
+    fetchTasks(currentProjectId).then(setProjectTasks).catch(() => setProjectTasks([]));
+  }, [currentProjectId]);
+  const [drilldown, setDrilldown] = useState<{ mode: "tasks" | "meetings" | "workload"; memberId: string } | null>(null);
   // 실제 기여 점수로 목업 score/categories를 보강한다. 실패하면 목업 값을 그대로 쓴다.
   const [contributionScores, setContributionScores] = useState<ContributionMemberScoreDto[]>([]);
+  // anomaly_type(과부하/저활동 의심) 판정에 실제로 쓰인 팀 평균 완료율 — 편중도 근거
+  // 패널이 "팀 평균보다 높음/낮음" 문구의 실측 근거로 함께 보여준다.
+  const [teamMeanCompletion, setTeamMeanCompletion] = useState<number | null>(null);
   useEffect(() => {
     if (currentProjectId == null) {
       setContributionScores([]);
+      setTeamMeanCompletion(null);
       return;
     }
     fetchContributionScore(currentProjectId)
-      .then((result) => setContributionScores(result.members))
-      .catch(() => setContributionScores([]));
+      .then((result) => {
+        setContributionScores(result.members);
+        setTeamMeanCompletion(result.teamMeanCompletion);
+      })
+      .catch(() => {
+        setContributionScores([]);
+        setTeamMeanCompletion(null);
+      });
   }, [currentProjectId]);
   const contributionByMemberId = useMemo(
     () => Object.fromEntries(contributionScores.map((s) => [s.assigneeId, s])),
@@ -109,7 +128,7 @@ export function ContributorsView() {
           evidence: override?.evidence ?? report.evidence,
           score: scoreData ? Math.round(scoreData.contributionScore) : report.score,
           categories: scoreData
-            ? { workload: scoreData.workloadComponent, task: scoreData.taskComponent, meeting: scoreData.meetingComponent }
+            ? { task: scoreData.taskComponent, meeting: scoreData.meetingComponent, workload: scoreData.workloadComponent }
             : report.categories,
         };
       }),
@@ -156,7 +175,6 @@ export function ContributorsView() {
   const selectedMember = mergedReports.find((report) => report.memberId === selectedMemberId) ?? mergedReports[0];
   const averageScore = Math.round(mergedReports.reduce((sum, report) => sum + report.score, 0) / mergedReports.length);
   const publishedCount = Object.values(publicFlags).filter(Boolean).length;
-  const evidenceCount = mergedReports.reduce((sum, report) => sum + report.evidence.length, 0);
   const completedTasks = mergedReports.reduce((sum, report) => sum + report.todoDone, 0);
   const totalTasks = mergedReports.reduce((sum, report) => sum + report.todoTotal, 0);
   const statusMeta = STATUS_META[selectedTeam.evalStatus];
@@ -185,7 +203,7 @@ export function ContributorsView() {
               <div>
                 <h1 className="text-xl font-bold text-foreground leading-tight">기여도 분석</h1>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  업무, 회의록, GitHub, 산출물 데이터를 기반으로 개인별 기여도를 검토합니다.
+                  업무, 회의록, 산출물 데이터를 기반으로 개인별 기여도를 검토합니다.
                 </p>
               </div>
             </div>
@@ -224,7 +242,7 @@ export function ContributorsView() {
             { label: "팀 평균 점수", value: `${averageScore}점`, icon: Award, color: "#2563EB" },
             { label: "평가 대상", value: `${mergedReports.length}명`, icon: Users, color: "#7C3AED" },
             { label: "공개 완료", value: `${publishedCount}/${mergedReports.length}`, icon: Eye, color: "#059669" },
-            { label: "근거 항목", value: `${evidenceCount}개`, icon: ClipboardCheck, color: "#D97706" },
+            { label: "전체 업무 완료율", value: `${percent(completedTasks, totalTasks)}%`, icon: CheckCircle2, color: "#D97706" },
           ].map((item) => (
             <div key={item.label} className="bg-card border border-border rounded-lg p-4 shadow-sm">
               <div className="flex items-center justify-between">
@@ -254,9 +272,6 @@ export function ContributorsView() {
                       {statusMeta.label}
                     </span>
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    GitHub {selectedTeam.github ? "연결됨" : "미연결"} · 산출물 {selectedTeam.submitted}/{selectedTeam.deliverables}개 제출 · 전체 업무 완료율 {percent(completedTasks, totalTasks)}%
-                  </div>
                 </div>
                 <div className="relative w-full sm:w-64">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
@@ -272,13 +287,13 @@ export function ContributorsView() {
               <div className="overflow-x-auto">
                 <div className="min-w-[760px]">
                   <div className="grid grid-cols-[76px_1fr_98px_90px_90px_84px_86px] px-5 py-2.5 bg-muted/40 border-b border-border text-[11px] font-bold text-muted-foreground">
-                    <div>순위</div>
+                    <div className="text-center">순위</div>
                     <div>이름/역할</div>
-                    <div>기여 점수</div>
-                    <div>업무 수행</div>
-                    <div>회의 참여</div>
-                    <div>workload</div>
-                    <div>공개</div>
+                    <div className="text-center">기여 점수</div>
+                    <div className="text-center">업무 수행</div>
+                    <div className="text-center">회의 참여</div>
+                    <div className="text-center">업무 편중도</div>
+                    <div className="text-center">공개</div>
                   </div>
 
                   <div className="divide-y divide-border">
@@ -287,65 +302,96 @@ export function ContributorsView() {
                       const tone = scoreTone(report.score);
                       const taskRate = percent(report.todoDone, report.todoTotal);
                       return (
-                        <button
+                        <div
                           key={report.memberId}
-                          type="button"
+                          role="button"
+                          tabIndex={0}
                           onClick={() => setSelectedMemberId(report.memberId)}
-                          className={`grid grid-cols-[76px_1fr_98px_90px_90px_84px_86px] w-full items-center px-5 py-3 text-left transition-colors ${
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              setSelectedMemberId(report.memberId);
+                            }
+                          }}
+                          className={`grid grid-cols-[76px_1fr_98px_90px_90px_84px_86px] w-full items-center px-5 py-3 text-left transition-colors cursor-pointer ${
                             isSelected ? "bg-blue-50" : "hover:bg-muted/40"
                           }`}
                         >
-                      <div className="flex items-center gap-2">
-                        <span className="w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold text-foreground bg-muted">
-                          {index + 1}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div
-                          className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0"
-                          style={{ background: report.color }}
-                        >
-                          {report.name[0]}
+                          <div className="flex items-center justify-center gap-2">
+                            <span className="w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold text-foreground bg-muted">
+                              {index + 1}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div
+                              className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0"
+                              style={{ background: report.color }}
+                            >
+                              {report.name[0]}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-sm font-bold text-foreground truncate">{report.name}</div>
+                              <div className="text-[11px] text-muted-foreground">{report.role}</div>
+                            </div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-lg font-bold" style={{ color: tone.color }}>{report.score}</div>
+                            <div className="text-[10px] font-semibold" style={{ color: tone.color }}>{tone.label}</div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedMemberId(report.memberId);
+                              setDrilldown({ mode: "tasks", memberId: report.memberId });
+                            }}
+                            className="w-full bg-transparent border-0 p-0 text-xs text-foreground text-center hover:underline cursor-pointer"
+                          >
+                            <span className="font-bold">{report.todoDone}</span>
+                            <span className="text-muted-foreground">/{report.todoTotal}</span>
+                            <span className="block text-[10px] text-muted-foreground">{taskRate}%</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedMemberId(report.memberId);
+                              setDrilldown({ mode: "meetings", memberId: report.memberId });
+                            }}
+                            className="w-full bg-transparent border-0 p-0 text-xs text-foreground text-center hover:underline cursor-pointer"
+                          >
+                            {attendanceByMemberId[report.memberId] ? (
+                              <>
+                                <span className="font-bold">{attendanceByMemberId[report.memberId].meetingsAttended}</span>
+                                <span className="text-muted-foreground">/{attendanceByMemberId[report.memberId].totalMeetings}회</span>
+                                <span className="block text-[10px] text-muted-foreground">{attendanceByMemberId[report.memberId].attendanceRate}%</span>
+                              </>
+                            ) : (
+                              <span className="font-bold">{report.meetings}회</span>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedMemberId(report.memberId);
+                              setDrilldown({ mode: "workload", memberId: report.memberId });
+                            }}
+                            className="w-full bg-transparent border-0 p-0 text-xs text-foreground text-center hover:underline cursor-pointer"
+                          >
+                            <span className="font-bold">{report.categories.workload}</span>
+                          </button>
+                          <div className="text-center">
+                            <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full ${
+                              publicFlags[report.memberId]
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                : "bg-slate-100 text-slate-500 border border-slate-200"
+                            }`}>
+                              {publicFlags[report.memberId] ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                              {publicFlags[report.memberId] ? "공개" : "비공개"}
+                            </span>
+                          </div>
                         </div>
-                        <div className="min-w-0">
-                          <div className="text-sm font-bold text-foreground truncate">{report.name}</div>
-                          <div className="text-[11px] text-muted-foreground">{report.role}</div>
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-lg font-bold" style={{ color: tone.color }}>{report.score}</div>
-                        <div className="text-[10px] font-semibold" style={{ color: tone.color }}>{tone.label}</div>
-                      </div>
-                      <div className="text-xs text-foreground">
-                        <span className="font-bold">{report.todoDone}</span>
-                        <span className="text-muted-foreground">/{report.todoTotal}</span>
-                        <div className="text-[10px] text-muted-foreground">{taskRate}%</div>
-                      </div>
-                      <div className="text-xs text-foreground">
-                        {attendanceByMemberId[report.memberId] ? (
-                          <>
-                            <span className="font-bold">{attendanceByMemberId[report.memberId].meetingsAttended}</span>
-                            <span className="text-muted-foreground">/{attendanceByMemberId[report.memberId].totalMeetings}회</span>
-                            <div className="text-[10px] text-muted-foreground">{attendanceByMemberId[report.memberId].attendanceRate}%</div>
-                          </>
-                        ) : (
-                          <span className="font-bold">{report.meetings}회</span>
-                        )}
-                      </div>
-                      <div className="text-xs text-foreground">
-                        <span className="font-bold">{report.categories.workload}</span>
-                      </div>
-                      <div>
-                        <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full ${
-                          publicFlags[report.memberId]
-                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                            : "bg-slate-100 text-slate-500 border border-slate-200"
-                        }`}>
-                          {publicFlags[report.memberId] ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                          {publicFlags[report.memberId] ? "공개" : "비공개"}
-                        </span>
-                      </div>
-                        </button>
                       );
                     })}
                   </div>
@@ -368,20 +414,45 @@ export function ContributorsView() {
                 </div>
               </section>
 
-              <section className="bg-card border border-border rounded-lg p-4 shadow-sm">
-                <div className="flex items-center gap-2 mb-3">
-                  <Activity className="w-4 h-4 text-blue-600" />
-                  <h3 className="text-sm font-bold text-foreground">최근 평가 활동</h3>
-                </div>
-                <div className="space-y-2.5">
-                  {REVIEWER_ACTIVITIES.slice(0, 4).map((activity, index) => (
-                    <div key={`${activity.team}-${activity.action}-${index}`} className="flex items-start gap-2.5">
-                      <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center shrink-0">
-                        <FileText className="w-3 h-3 text-muted-foreground" />
+              <section className="bg-card border border-border rounded-lg shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-border">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div
+                        className="w-11 h-11 rounded-full flex items-center justify-center text-white text-base font-bold shrink-0"
+                        style={{ background: selectedMember.color }}
+                      >
+                        {selectedMember.name[0]}
                       </div>
                       <div className="min-w-0">
-                        <div className="text-xs font-semibold text-foreground truncate">{activity.action}</div>
-                        <div className="text-[11px] text-muted-foreground">{activity.team} · {activity.date}</div>
+                        <div className="text-base font-bold text-foreground truncate">{selectedMember.name}</div>
+                        <div className="text-xs text-muted-foreground">{selectedMember.role}</div>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-3xl font-bold" style={{ color: selectedTone.color }}>{selectedMember.score}</div>
+                      <div
+                        className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                        style={{ color: selectedTone.color, background: selectedTone.bg }}
+                      >
+                        {selectedTone.label}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 space-y-3">
+                  {Object.entries(selectedMember.categories).map(([key, value]) => (
+                    <div key={key}>
+                      <div className="flex items-center justify-between text-xs mb-1">
+                        <span className="text-muted-foreground">{CATEGORY_LABELS[key as CategoryKey]}</span>
+                        <span className="font-bold text-foreground">{value}</span>
+                      </div>
+                      <div className="h-2 rounded-full bg-muted overflow-hidden">
+                        <div
+                          className="h-full rounded-full"
+                          style={{ width: `${value}%`, background: selectedMember.color }}
+                        />
                       </div>
                     </div>
                   ))}
@@ -391,75 +462,6 @@ export function ContributorsView() {
           </main>
 
           <aside className="space-y-4 min-w-0">
-            <section className="bg-card border border-border rounded-lg shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-border">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div
-                      className="w-11 h-11 rounded-full flex items-center justify-center text-white text-base font-bold shrink-0"
-                      style={{ background: selectedMember.color }}
-                    >
-                      {selectedMember.name[0]}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-base font-bold text-foreground truncate">{selectedMember.name}</div>
-                      <div className="text-xs text-muted-foreground">{selectedMember.role}</div>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="text-3xl font-bold" style={{ color: selectedTone.color }}>{selectedMember.score}</div>
-                    <div
-                      className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                      style={{ color: selectedTone.color, background: selectedTone.bg }}
-                    >
-                      {selectedTone.label}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-4 space-y-3">
-                {Object.entries(selectedMember.categories).map(([key, value]) => (
-                  <div key={key}>
-                    <div className="flex items-center justify-between text-xs mb-1">
-                      <span className="text-muted-foreground">{CATEGORY_LABELS[key as CategoryKey]}</span>
-                      <span className="font-bold text-foreground">{value}</span>
-                    </div>
-                    <div className="h-2 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className="h-full rounded-full"
-                        style={{ width: `${value}%`, background: selectedMember.color }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="bg-card border border-border rounded-lg p-4 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <ClipboardCheck className="w-4 h-4 text-emerald-600" />
-                  <h3 className="text-sm font-bold text-foreground">분석 근거</h3>
-                </div>
-                <span className="text-[10px] text-muted-foreground">{selectedMember.evidence.length}개</span>
-              </div>
-              <div className="space-y-2">
-                {selectedMember.evidence.map((evidence, index) => (
-                  <button
-                    key={evidence}
-                    type="button"
-                    className="w-full flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-left hover:border-blue-300 hover:bg-blue-50 transition-colors"
-                  >
-                    <span className="w-5 h-5 rounded-md bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground shrink-0">
-                      {index + 1}
-                    </span>
-                    <span className="text-xs font-medium text-foreground">{evidence}</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-
             <section className="bg-card border border-border rounded-lg p-4 shadow-sm">
               <div className="flex items-center gap-2 mb-3">
                 <MessageSquare className="w-4 h-4 text-blue-600" />
@@ -495,6 +497,18 @@ export function ContributorsView() {
           </aside>
         </section>
       </div>
+      {drilldown && currentProjectId != null && (
+        <MemberDrilldownPanel
+          mode={drilldown.mode}
+          memberName={mergedReports.find((report) => report.memberId === drilldown.memberId)?.name ?? ""}
+          memberTasks={projectTasks.filter((task) => task.assignee === drilldown.memberId)}
+          projectId={currentProjectId}
+          userId={Number(drilldown.memberId)}
+          onClose={() => setDrilldown(null)}
+          workloadEvidence={contributionByMemberId[drilldown.memberId]}
+          teamMeanCompletion={teamMeanCompletion}
+        />
+      )}
     </div>
   );
 }
