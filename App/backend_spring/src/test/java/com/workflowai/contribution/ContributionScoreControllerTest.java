@@ -31,7 +31,8 @@ class ContributionScoreControllerTest {
             "1.0",
             1L,
             List.of(new ContributionMemberScoreDto("3", 100.0, 80.0, 80.0, 86.7, "정상", 1.0, 1.0, 0)),
-            null
+            null,
+            0.65
         );
         when(fastApiContributionScoreClient.fetch(1L)).thenReturn(fastApiResponse);
 
@@ -50,7 +51,10 @@ class ContributionScoreControllerTest {
             .andExpect(jsonPath("$.data.members[0].anomaly_type").value("정상"))
             .andExpect(jsonPath("$.data.members[0].task_count_active_rel").value(1.0))
             .andExpect(jsonPath("$.data.members[0].difficulty_avg_rel").value(1.0))
-            .andExpect(jsonPath("$.data.members[0].overdue_count").value(0));
+            .andExpect(jsonPath("$.data.members[0].overdue_count").value(0))
+            // FastAPI가 내려준 team_mean_completion이 그대로 노출돼야 함 —
+            // 편중도 근거 패널이 "팀 평균보다 높음/낮음" 문구의 실측 근거로 사용한다.
+            .andExpect(jsonPath("$.data.team_mean_completion").value(0.65));
     }
 
     @Test

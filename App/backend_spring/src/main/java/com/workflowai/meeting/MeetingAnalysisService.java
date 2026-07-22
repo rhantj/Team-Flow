@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -341,6 +342,30 @@ public class MeetingAnalysisService {
                     rate
                 );
             })
+            .toList();
+    }
+
+    /** 특정 팀원의 회의별 참석/결석 여부와 날짜 — 기여도 화면의 회의 참여 드릴다운에 쓰인다. */
+    public List<MeetingAttendanceDetail> attendanceDetail(String projectId, Long userId) {
+        Long projectDbId = requireProjectMember(projectId);
+        List<Meeting> meetings = meetingRepository.findByProjectIdOrderByCreatedAtDesc(projectDbId);
+        if (meetings.isEmpty()) return List.of();
+
+        List<Long> meetingIds = meetings.stream().map(Meeting::getId).toList();
+        Set<Long> attendedMeetingIds = meetingAttendeeRepository.findByMeetingIdIn(meetingIds).stream()
+            .filter(attendee -> attendee.getUserId().equals(userId))
+            .filter(attendee -> attendee.getMeetingId() != null)
+            .map(MeetingAttendee::getMeetingId)
+            .collect(Collectors.toSet());
+
+        return meetings.stream()
+            .sorted(Comparator.comparing(Meeting::getMeetingDate, Comparator.nullsLast(Comparator.naturalOrder())))
+            .map(meeting -> new MeetingAttendanceDetail(
+                String.valueOf(meeting.getId()),
+                meeting.getTitle(),
+                meeting.getMeetingDate() == null ? null : meeting.getMeetingDate().toString(),
+                meeting.getId() != null && attendedMeetingIds.contains(meeting.getId())
+            ))
             .toList();
     }
 

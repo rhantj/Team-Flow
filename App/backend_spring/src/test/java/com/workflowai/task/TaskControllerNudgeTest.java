@@ -144,6 +144,28 @@ class TaskControllerNudgeTest {
     }
 
     @Test
+    void rejectsMissingNudgeKind() throws Exception {
+        mockMvc.perform(post("/api/v1/projects/demo-project/tasks/42/nudge")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_NUDGE_KIND"));
+
+        verify(notificationService, never()).notify(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void rejectsBlankNudgeKind() throws Exception {
+        mockMvc.perform(post("/api/v1/projects/demo-project/tasks/42/nudge")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"kind\":\"  \"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_NUDGE_KIND"));
+
+        verify(notificationService, never()).notify(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
     void returnsNotFoundWhenTaskMissing() throws Exception {
         authenticateAs(2L);
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);

@@ -45,6 +45,7 @@ interface RawContributionScoreData {
   project_id: number;
   members: RawContributionMemberScore[];
   note: string | null;
+  team_mean_completion: number | null;
 }
 
 export interface ContributionMemberScoreDto {
@@ -62,6 +63,9 @@ export interface ContributionMemberScoreDto {
 export interface ContributionScoreResult {
   members: ContributionMemberScoreDto[];
   note: string | null;
+  // anomaly_type(과부하/저활동 의심) 판정에 실제로 쓰인 팀 평균 완료율(0~1).
+  // 팀원이 없어 계산 자체가 없었으면 null.
+  teamMeanCompletion: number | null;
 }
 
 export async function fetchContributionScore(projectId: number): Promise<ContributionScoreResult> {
@@ -83,5 +87,6 @@ export async function fetchContributionScore(projectId: number): Promise<Contrib
       overdueCount: m.overdue_count,
     })),
     note: data.note,
+    teamMeanCompletion: data.team_mean_completion,
   };
 }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -22,6 +23,7 @@ def _fake_workload_data() -> WorkloadScoreData:
                 task_count_active_rel=1.0, difficulty_avg_rel=1.0, overdue_count=0,
             )
         ],
+        team_mean_completion=0.65,
     )
 
 
@@ -43,6 +45,9 @@ def test_score_contribution_returns_success_when_service_succeeds() -> None:
     assert member["task_component"] == 80.0
     assert member["meeting_component"] == 80.0
     assert member["workload_component"] == 100.0
+    # workload_data.team_mean_completion이 그대로 응답까지 전달돼야 함 —
+    # 편중도 근거 패널이 "팀 평균보다 높음/낮음" 문구의 실측 근거로 사용한다.
+    assert body["data"]["team_mean_completion"] == pytest.approx(0.65)
 
 
 def test_score_contribution_returns_500_with_error_envelope_when_workload_fails() -> None:
@@ -70,3 +75,4 @@ def test_score_contribution_empty_members_returns_note() -> None:
     body = response.json()
     assert body["data"]["members"] == []
     assert body["data"]["note"] is not None
+    assert body["data"]["team_mean_completion"] is None

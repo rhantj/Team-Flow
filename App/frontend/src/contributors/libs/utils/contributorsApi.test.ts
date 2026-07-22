@@ -51,6 +51,7 @@ describe("fetchContributionScore", () => {
         },
       ],
       note: null,
+      team_mean_completion: 0.65,
     });
 
     const result = await fetchContributionScore(1);
@@ -74,6 +75,7 @@ describe("fetchContributionScore", () => {
         },
       ],
       note: null,
+      teamMeanCompletion: 0.65,
     });
   });
 
@@ -83,6 +85,7 @@ describe("fetchContributionScore", () => {
       project_id: 1,
       members: [],
       note: "배정된 업무가 없어 기여도 점수를 계산할 수 없습니다.",
+      team_mean_completion: null,
     });
 
     const result = await fetchContributionScore(1);
@@ -90,6 +93,7 @@ describe("fetchContributionScore", () => {
     expect(result).toEqual({
       members: [],
       note: "배정된 업무가 없어 기여도 점수를 계산할 수 없습니다.",
+      teamMeanCompletion: null,
     });
   });
 });

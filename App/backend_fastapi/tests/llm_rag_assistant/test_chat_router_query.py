@@ -11,6 +11,7 @@ from app.main import app
 from core.db import get_pool
 from llm_rag_assistant.app.schema.chat_schema import RagQueryResponse, RagSource
 from llm_rag_assistant.app.security import verify_internal_api_key
+from llm_rag_assistant.app.services.generation_service import RagConfigurationError
 
 
 def _override_pool():
@@ -87,3 +88,37 @@ def test_query_endpoint_returns_503_when_huggingface_returns_http_error() -> Non
     app.dependency_overrides.clear()
     assert response.status_code == 503
     assert response.json()["detail"] == {"error": "llm_unavailable"}
+
+
+def test_query_endpoint_returns_503_when_hf_token_missing() -> None:
+    """generate_answer가 HF_TOKEN 미설정으로 던지는 RagConfigurationError도
+    500이 아니라 503(llm_unavailable)로 응답해야 한다 — 설정 오류든 연결 실패든
+    클라이언트 입장에서는 동일하게 '지금은 답변 불가' 상태다."""
+    _override_pool()
+    with patch(
+        "llm_rag_assistant.app.routers.chat_router.answer_question",
+        new=AsyncMock(side_effect=RagConfigurationError("HF_TOKEN is not configured.")),
+    ):
+        client = TestClient(app)
+        response = client.post("/ai/rag/query", json={"project_id": 1, "question": "질문"})
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 503
+    assert response.json()["detail"] == {"error": "llm_unavailable"}
+
+
+def test_query_endpoint_does_not_mask_unrelated_runtime_errors() -> None:
+    """RagConfigurationError가 아닌 일반 RuntimeError(실제 코드 결함)는 503으로
+    감추지 않고 500으로 그대로 드러나야 한다 — 설정 오류 전용 예외로 범위를
+    좁힌 회귀 테스트. raise_server_exceptions=False로 FastAPI의 기본 500 응답을
+    그대로 받는다(기본값이면 TestClient가 예외를 그대로 재발생시켜 테스트가 실패함)."""
+    _override_pool()
+    with patch(
+        "llm_rag_assistant.app.routers.chat_router.answer_question",
+        new=AsyncMock(side_effect=RuntimeError("예상치 못한 내부 오류")),
+    ):
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post("/ai/rag/query", json={"project_id": 1, "question": "질문"})
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 500

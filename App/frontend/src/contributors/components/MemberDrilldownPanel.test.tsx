@@ -253,7 +253,7 @@ describe("MemberDrilldownPanel workload mode", () => {
     render(
       <MemberDrilldownPanel
         mode="workload" memberName="김민준" memberTasks={[]} projectId={1} userId={1}
-        onClose={() => {}} workloadEvidence={makeEvidence()}
+        onClose={() => {}} workloadEvidence={makeEvidence()} teamMeanCompletion={0.6}
       />
     );
 
@@ -267,6 +267,7 @@ describe("MemberDrilldownPanel workload mode", () => {
       <MemberDrilldownPanel
         mode="workload" memberName="김민준" memberTasks={[]} projectId={1} userId={1}
         onClose={() => {}} workloadEvidence={makeEvidence({ anomalyType: "과부하 의심", taskCountActiveRel: 1.8 })}
+        teamMeanCompletion={0.6}
       />
     );
 
@@ -283,6 +284,30 @@ describe("MemberDrilldownPanel workload mode", () => {
 
     expect(screen.getByText("편중도 근거를 불러오지 못했습니다.")).toBeInTheDocument();
   });
+
+  it("teamMeanCompletion이 없으면 완료율 비교 없이 실측값만 표시한다(팀 평균 오도 방지)", () => {
+    render(
+      <MemberDrilldownPanel
+        mode="workload" memberName="김민준" memberTasks={[]} projectId={1} userId={1}
+        onClose={() => {}} workloadEvidence={makeEvidence()}
+      />
+    );
+
+    expect(screen.getByText(/팀 평균값을 불러오지 못해 비교는 표시하지 않습니다/)).toBeInTheDocument();
+  });
+
+  it("구버전 FastAPI 혼합 배포로 신규 필드가 null이면 크래시 대신 안내 문구를 표시한다", () => {
+    render(
+      <MemberDrilldownPanel
+        mode="workload" memberName="김민준" memberTasks={[]} projectId={1} userId={1}
+        onClose={() => {}}
+        workloadEvidence={makeEvidence({ taskCountActiveRel: null as unknown as number })}
+        teamMeanCompletion={0.6}
+      />
+    );
+
+    expect(screen.getByText("편중도 근거 데이터가 불완전합니다. 새로고침 후 다시 시도해주세요.")).toBeInTheDocument();
+  });
 });
 
 describe("buildWorkloadEvidenceSentences", () => {
@@ -293,13 +318,14 @@ describe("buildWorkloadEvidenceSentences", () => {
       difficultyAvgRel: 1.4,
       overdueCount: 2,
       completionRate: 0.4,
+      teamMeanCompletionRate: 0.6,
     });
 
     expect(sentences).toEqual([
       "진행 중인 업무가 팀 평균 대비 1.8배 많습니다.",
       "담당 업무의 평균 난이도가 팀 평균보다 1.4배 높습니다.",
       "마감이 지난 업무가 2건 있습니다.",
-      "업무 완료율은 40%로 팀 평균보다 낮습니다.",
+      "업무 완료율은 40%로 팀 평균(60%)보다 낮습니다.",
     ]);
   });
 
@@ -310,9 +336,10 @@ describe("buildWorkloadEvidenceSentences", () => {
       difficultyAvgRel: 1.0,
       overdueCount: 0,
       completionRate: 0.3,
+      teamMeanCompletionRate: 0.5,
     });
 
-    expect(sentences).toEqual(["업무 완료율은 30%로 팀 평균보다 낮습니다."]);
+    expect(sentences).toEqual(["업무 완료율은 30%로 팀 평균(50%)보다 낮습니다."]);
   });
 
   it("저활동 의심: 업무량 감소와 완료율 문장을 생성한다", () => {
@@ -322,11 +349,12 @@ describe("buildWorkloadEvidenceSentences", () => {
       difficultyAvgRel: 0.9,
       overdueCount: 0,
       completionRate: 0.95,
+      teamMeanCompletionRate: 0.7,
     });
 
     expect(sentences).toEqual([
       "진행 중인 업무가 팀 평균 대비 0.3배 적습니다.",
-      "업무 완료율은 95%로 팀 평균보다 높습니다.",
+      "업무 완료율은 95%로 팀 평균(70%)보다 높습니다.",
     ]);
   });
 
@@ -337,8 +365,24 @@ describe("buildWorkloadEvidenceSentences", () => {
       difficultyAvgRel: 1.0,
       overdueCount: 0,
       completionRate: 0.8,
+      teamMeanCompletionRate: 0.8,
     });
 
     expect(sentences).toEqual(["팀 평균과 비교했을 때 업무량·난이도·완료율 모두 특별한 편중이 없습니다."]);
+  });
+
+  it("teamMeanCompletionRate가 null이면 팀 평균과 비교하지 않고 실측 완료율만 표시한다(팀 평균 오도 방지 회귀 테스트)", () => {
+    const sentences = buildWorkloadEvidenceSentences({
+      anomalyType: "과부하 의심",
+      taskCountActiveRel: 1.0,
+      difficultyAvgRel: 1.0,
+      overdueCount: 0,
+      completionRate: 0.3,
+      teamMeanCompletionRate: null,
+    });
+
+    expect(sentences).toEqual([
+      "업무 완료율은 30%입니다. (팀 평균값을 불러오지 못해 비교는 표시하지 않습니다.)",
+    ]);
   });
 });

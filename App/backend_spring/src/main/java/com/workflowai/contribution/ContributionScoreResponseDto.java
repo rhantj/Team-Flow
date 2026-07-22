@@ -6,5 +6,6 @@ public record ContributionScoreResponseDto(
     String schema_version,
     Long project_id,
     List<ContributionMemberScoreDto> members,
-    String note
+    String note,
+    Double team_mean_completion
 ) {}

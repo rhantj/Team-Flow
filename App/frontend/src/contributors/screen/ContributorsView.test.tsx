@@ -55,6 +55,7 @@ describe("ContributorsView drilldown panels", () => {
         },
       ],
       note: null,
+      teamMeanCompletion: 0.6,
     });
     vi.mocked(fetchAttendanceSummary).mockResolvedValue([]);
     vi.mocked(fetchTasks).mockResolvedValue([

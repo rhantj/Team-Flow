@@ -21,6 +21,9 @@ export interface WorkloadEvidenceInput {
   difficultyAvgRel: number;
   overdueCount: number;
   completionRate: number;
+  // anomaly_type 판정에 실제로 쓰인 팀 평균 완료율(0~1). 없으면(팀 평균을
+  // 아직 못 불러온 경우) "팀 평균보다 높음/낮음" 같은 단정적 비교 문구를 만들지 않는다.
+  teamMeanCompletionRate: number | null;
 }
 
 // LLM 미개입 결정론적 문장 생성기 — 근거가 이미 계산된 수치이므로 자연어 생성에
@@ -29,6 +32,14 @@ export function buildWorkloadEvidenceSentences(input: WorkloadEvidenceInput): st
   const sentences: string[] = [];
   const activeMultiple = input.taskCountActiveRel.toFixed(1);
   const difficultyMultiple = input.difficultyAvgRel.toFixed(1);
+  const completionPct = Math.round(input.completionRate * 100);
+  // 팀 평균값이 있을 때만 "팀 평균 N%보다 낮음/높음"처럼 실측 비교를 보여준다.
+  // 팀 평균을 모르면서 방향만 단정하면 심사 근거를 오도할 수 있다(리뷰 지적사항).
+  const teamMeanPct = input.teamMeanCompletionRate != null ? Math.round(input.teamMeanCompletionRate * 100) : null;
+  const completionVsTeam = (comparison: "낮습니다" | "높습니다") =>
+    teamMeanPct != null
+      ? `업무 완료율은 ${completionPct}%로 팀 평균(${teamMeanPct}%)보다 ${comparison}.`
+      : `업무 완료율은 ${completionPct}%입니다. (팀 평균값을 불러오지 못해 비교는 표시하지 않습니다.)`;
 
   if (input.anomalyType === "과부하 의심") {
     if (input.taskCountActiveRel > 1.0) {
@@ -40,10 +51,10 @@ export function buildWorkloadEvidenceSentences(input: WorkloadEvidenceInput): st
     if (input.overdueCount > 0) {
       sentences.push(`마감이 지난 업무가 ${input.overdueCount}건 있습니다.`);
     }
-    sentences.push(`업무 완료율은 ${Math.round(input.completionRate * 100)}%로 팀 평균보다 낮습니다.`);
+    sentences.push(completionVsTeam("낮습니다"));
   } else if (input.anomalyType === "저활동 의심") {
     sentences.push(`진행 중인 업무가 팀 평균 대비 ${activeMultiple}배 적습니다.`);
-    sentences.push(`업무 완료율은 ${Math.round(input.completionRate * 100)}%로 팀 평균보다 높습니다.`);
+    sentences.push(completionVsTeam("높습니다"));
   } else {
     sentences.push("팀 평균과 비교했을 때 업무량·난이도·완료율 모두 특별한 편중이 없습니다.");
   }
@@ -214,13 +225,30 @@ const DEFAULT_ANOMALY_BADGE = { label: "정상", color: "#64748B", bg: "#F1F5F9"
 
 interface WorkloadEvidenceDetailsProps {
   workloadEvidence: ContributionMemberScoreDto | undefined;
+  // anomaly_type 판정에 쓰인 실제 팀 평균 완료율(0~1). ContributorsView가
+  // fetchContributionScore()의 team_mean_completion을 그대로 내려준다.
+  teamMeanCompletion: number | null;
 }
 
 // 신규 fetch 없음 — ContributorsView가 페이지 진입 시 이미 로드해 둔 contributionByMemberId를
 // 그대로 prop으로 받아 렌더링한다(업무/회의 모드와 달리 로딩 상태가 없다).
-function WorkloadEvidenceDetails({ workloadEvidence }: WorkloadEvidenceDetailsProps) {
+function WorkloadEvidenceDetails({ workloadEvidence, teamMeanCompletion }: WorkloadEvidenceDetailsProps) {
   if (!workloadEvidence) {
     return <p className="p-4 text-xs text-muted-foreground">편중도 근거를 불러오지 못했습니다.</p>;
+  }
+
+  // taskCountActiveRel/difficultyAvgRel/overdueCount는 TS 타입상 number지만, Spring
+  // ContributionMemberScoreDto의 실제 필드는 boxed Double/Integer라 구버전 FastAPI가
+  // 이 신규 필드를 응답에 안 담아 보내면(혼합 배포 롤백 등) 런타임에 null이 올 수 있다.
+  // toFixed() 등에서 크래시하지 않도록 수치 필드가 전부 유효한 숫자인지 먼저 확인한다.
+  const numericFields = [
+    workloadEvidence.taskCountActiveRel,
+    workloadEvidence.difficultyAvgRel,
+    workloadEvidence.overdueCount,
+    workloadEvidence.taskComponent,
+  ];
+  if (numericFields.some((v) => v == null || Number.isNaN(v))) {
+    return <p className="p-4 text-xs text-muted-foreground">편중도 근거 데이터가 불완전합니다. 새로고침 후 다시 시도해주세요.</p>;
   }
 
   const badge = ANOMALY_BADGE_STYLE[workloadEvidence.anomalyType] ?? DEFAULT_ANOMALY_BADGE;
@@ -230,6 +258,7 @@ function WorkloadEvidenceDetails({ workloadEvidence }: WorkloadEvidenceDetailsPr
     difficultyAvgRel: workloadEvidence.difficultyAvgRel,
     overdueCount: workloadEvidence.overdueCount,
     completionRate: workloadEvidence.taskComponent / 100,
+    teamMeanCompletionRate: teamMeanCompletion,
   });
 
   return (
@@ -257,9 +286,10 @@ interface MemberDrilldownPanelProps {
   userId: number;
   onClose: () => void;
   workloadEvidence?: ContributionMemberScoreDto;
+  teamMeanCompletion?: number | null;
 }
 
-export function MemberDrilldownPanel({ mode, memberName, memberTasks, projectId, userId, onClose, workloadEvidence }: MemberDrilldownPanelProps) {
+export function MemberDrilldownPanel({ mode, memberName, memberTasks, projectId, userId, onClose, workloadEvidence, teamMeanCompletion = null }: MemberDrilldownPanelProps) {
   const [attendance, setAttendance] = useState<MeetingAttendanceDetailDto[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -372,7 +402,7 @@ export function MemberDrilldownPanel({ mode, memberName, memberTasks, projectId,
             )}
           </div>
         ) : (
-          <WorkloadEvidenceDetails workloadEvidence={workloadEvidence} />
+          <WorkloadEvidenceDetails workloadEvidence={workloadEvidence} teamMeanCompletion={teamMeanCompletion} />
         )}
       </div>
     </>

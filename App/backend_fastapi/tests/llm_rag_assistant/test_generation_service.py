@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.config import get_settings
-from llm_rag_assistant.app.services.generation_service import generate_answer
+from llm_rag_assistant.app.services.generation_service import RagConfigurationError, generate_answer
 
 
 def _mock_chat_model(content: str) -> MagicMock:
@@ -71,7 +71,7 @@ async def test_generate_answer_raises_when_hf_token_missing(monkeypatch: pytest.
     get_settings.cache_clear()
 
     try:
-        with pytest.raises(RuntimeError, match="HF_TOKEN"):
+        with pytest.raises(RagConfigurationError, match="HF_TOKEN"):
             await generate_answer("질문", [])
     finally:
         get_settings.cache_clear()

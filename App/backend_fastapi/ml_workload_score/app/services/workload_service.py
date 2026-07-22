@@ -76,4 +76,5 @@ async def get_workload_score(project_id: int, use_synthetic_fallback: bool = Fal
         source=source,
         method=result.attrs.get("method_used", "unknown"),
         members=members,
+        team_mean_completion=result.attrs.get("team_mean_completion"),
     )
