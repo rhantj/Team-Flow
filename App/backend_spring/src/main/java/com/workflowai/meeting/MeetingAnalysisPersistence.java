@@ -12,9 +12,11 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Component
 public class MeetingAnalysisPersistence {
@@ -32,6 +34,7 @@ public class MeetingAnalysisPersistence {
     private final RagIngestService ragIngestService;
     private final ProjectMemberRepository projectMemberRepository;
     private final NotificationService notificationService;
+    private final TransactionTemplate requiresNewNotificationTransaction;
 
     public MeetingAnalysisPersistence(
         MeetingRepository meetingRepository,
@@ -42,7 +45,8 @@ public class MeetingAnalysisPersistence {
         DemoDataService demoDataService,
         RagIngestService ragIngestService,
         ProjectMemberRepository projectMemberRepository,
-        NotificationService notificationService
+        NotificationService notificationService,
+        PlatformTransactionManager transactionManager
     ) {
         this.meetingRepository = meetingRepository;
         this.meetingAnalysisRepository = meetingAnalysisRepository;
@@ -53,6 +57,8 @@ public class MeetingAnalysisPersistence {
         this.ragIngestService = ragIngestService;
         this.projectMemberRepository = projectMemberRepository;
         this.notificationService = notificationService;
+        this.requiresNewNotificationTransaction = new TransactionTemplate(transactionManager);
+        this.requiresNewNotificationTransaction.setPropagationBehavior(TransactionTemplate.PROPAGATION_REQUIRES_NEW);
     }
 
     @Transactional
@@ -166,9 +172,17 @@ public class MeetingAnalysisPersistence {
         sendNotificationSafely(userId, type, title, content, meetingId);
     }
 
+    /**
+     * afterCommit() 콜백은 원래 트랜잭션의 자원이 아직 스레드에서 완전히 언바인딩되기
+     * 전에 실행된다 (Spring은 cleanupAfterCompletion보다 afterCommit을 먼저 호출한다).
+     * 그 상태에서 NotificationService.notify()가 기본 전파(REQUIRED)로 저장을 하면
+     * 이미 커밋 처리 중인 트랜잭션에 잘못 합류해 실제로 커밋되지 않을 위험이 있다.
+     * REQUIRES_NEW로 감싸 항상 독립된 새 물리 트랜잭션에서 커밋되도록 강제한다.
+     */
     private void sendNotificationSafely(Long userId, String type, String title, String content, Long meetingId) {
         try {
-            notificationService.notify(userId, type, title, content, "meeting", meetingId);
+            requiresNewNotificationTransaction.executeWithoutResult(status ->
+                notificationService.notify(userId, type, title, content, "meeting", meetingId));
         } catch (Exception e) {
             log.warn("회의 분석 알림 발송 실패. meetingId={}, userId={}, type={}", meetingId, userId, type, e);
         }

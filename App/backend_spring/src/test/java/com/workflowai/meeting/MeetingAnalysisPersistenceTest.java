@@ -23,6 +23,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -38,11 +39,13 @@ class MeetingAnalysisPersistenceTest {
     @Mock private RagIngestService ragIngestService;
     @Mock private ProjectMemberRepository projectMemberRepository;
     @Mock private NotificationService notificationService;
+    @Mock private PlatformTransactionManager transactionManager;
 
     private MeetingAnalysisPersistence newPersistence() {
         return new MeetingAnalysisPersistence(
             meetingRepository, meetingAnalysisRepository, meetingActionItemRepository, meetingAttendeeRepository,
-            userRepository, demoDataService, ragIngestService, projectMemberRepository, notificationService
+            userRepository, demoDataService, ragIngestService, projectMemberRepository, notificationService,
+            transactionManager
         );
     }
 
