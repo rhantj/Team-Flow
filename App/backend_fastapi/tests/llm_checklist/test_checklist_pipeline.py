@@ -4,7 +4,6 @@ import pytest
 
 from llm_checklist.app.checklist_pipeline import (
     build_checklist_prompt,
-    generate_checklist_minimal_fallback,
     parse_checklist_response,
 )
 from llm_checklist.app.checklist_schema import ChecklistGenerateRequest
@@ -30,15 +29,6 @@ def test_parse_broken_json_raises():
 def test_parse_empty_items_raises():
     with pytest.raises(ValueError):
         parse_checklist_response('{"items": []}')
-
-
-def test_minimal_fallback_marks_rule_based_and_skips_existing():
-    req = ChecklistGenerateRequest(title="로그인 API", category="backend", existing_items=["요구사항 확인"])
-    res = generate_checklist_minimal_fallback(req)
-    titles = [i.title for i in res.items]
-    assert res.engine == "rule-based"
-    assert "요구사항 확인" not in titles
-    assert res.items
 
 
 def test_build_prompt_includes_task_fields_and_existing():

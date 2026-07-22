@@ -66,17 +66,6 @@ def parse_checklist_response(raw: str) -> List[ChecklistItemSuggestion]:
     return items[:MAX_ITEMS]
 
 
-def generate_checklist_minimal_fallback(request: ChecklistGenerateRequest) -> ChecklistGenerateResponse:
-    # FastAPI 내부 최후 폴백. 실제 규칙 기반 생성은 Spring RuleBasedChecklistGenerator가 담당하므로
-    # 여기서는 최소한의 일반 단계만 반환한다.
-    existing_lower = {e.strip().lower() for e in request.existing_items}
-    base = ["요구사항 확인", "작업 진행", "결과 검토"]
-    items = [ChecklistItemSuggestion(title=t, reason="기본 단계") for t in base if t.lower() not in existing_lower]
-    if not items:
-        items = [ChecklistItemSuggestion(title="작업 진행", reason="기본 단계")]
-    return ChecklistGenerateResponse(items=items[:MAX_ITEMS], engine="rule-based")
-
-
 import logging
 import os
 
@@ -111,9 +100,8 @@ def generate_checklist_with_ollama(request: ChecklistGenerateRequest) -> Checkli
 
 def generate_checklist(request: ChecklistGenerateRequest) -> ChecklistGenerateResponse:
     provider = os.getenv("CHECKLIST_PROVIDER", "ollama").lower()
-    if provider == "ollama":
-        try:
-            return generate_checklist_with_ollama(request)
-        except Exception:
-            logger.exception("Ollama 체크리스트 생성 실패, 최소 폴백으로 대체합니다.")
-    return generate_checklist_minimal_fallback(request)
+    if provider != "ollama":
+        raise RuntimeError(f"지원하지 않는 CHECKLIST_PROVIDER: {provider}")
+    # Ollama 실패 시 예외를 전파한다. 규칙 기반 폴백은 Spring의 RuleBasedChecklistGenerator가
+    # 카테고리별 풍부한 템플릿으로 담당하므로, FastAPI는 자체 폴백을 하지 않고 실패를 알린다.
+    return generate_checklist_with_ollama(request)

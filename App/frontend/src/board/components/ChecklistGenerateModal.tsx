@@ -19,6 +19,7 @@ export default function ChecklistGenerateModal({ taskId, projectId, open, onClos
   const [rows, setRows] = useState<Row[]>([]);
   const [engine, setEngine] = useState("");
   const [applying, setApplying] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     if (!open) return;
@@ -33,7 +34,7 @@ export default function ChecklistGenerateModal({ taskId, projectId, open, onClos
       })
       .catch(() => { if (!cancelled) setState("error"); });
     return () => { cancelled = true; };
-  }, [open, taskId, projectId]);
+  }, [open, taskId, projectId, retryKey]);
 
   if (!open) return null;
 
@@ -78,7 +79,7 @@ export default function ChecklistGenerateModal({ taskId, projectId, open, onClos
           {state === "error" && (
             <div className="py-6 text-center">
               <div className="text-xs text-red-600 mb-2">항목을 생성하지 못했습니다.</div>
-              <button onClick={() => setState("loading")} className="text-xs underline">다시 시도</button>
+              <button onClick={() => setRetryKey((k) => k + 1)} className="text-xs underline">다시 시도</button>
             </div>
           )}
 

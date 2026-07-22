@@ -10,17 +10,14 @@ from llm_checklist.app.routers.checklist_router import router
 
 app = FastAPI()
 app.include_router(router)
-client = TestClient(app)
+client = TestClient(app, raise_server_exceptions=False)
 
 
-def test_generate_falls_back_when_ollama_fails():
+def test_generate_returns_500_when_ollama_fails():
     with patch("llm_checklist.app.checklist_pipeline.generate_checklist_with_ollama",
                side_effect=RuntimeError("ollama down")):
         res = client.post("/ai/checklist/generate", json={"title": "로그인 API", "category": "backend"})
-    assert res.status_code == 200
-    body = res.json()
-    assert body["engine"] == "rule-based"
-    assert len(body["items"]) >= 1
+    assert res.status_code == 500
 
 
 def test_generate_uses_ollama_when_available():
