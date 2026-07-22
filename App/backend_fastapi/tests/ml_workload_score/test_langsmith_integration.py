@@ -114,6 +114,98 @@ def test_build_features_creates_langsmith_run_with_summarized_inputs_when_tracin
     }
 
 
+def test_embed_creates_langsmith_run_without_leaking_original_text():
+    """
+    _embed는 임의의 text_value(향후 업무 원문으로 호출될 수 있음)를 받는 함수인데
+    process_inputs가 없으면 @traceable이 그 원문을 가공 없이 그대로 SDK에 넘긴다
+    (리뷰 지적사항: '개인 데이터 없이 요약 통계만 전송'한다는 설명과 불일치할 뻔했음).
+    실제 Client.create_run 호출 인자에 원문 텍스트가 전혀 없고 글자 수만 있는지
+    확인한다 - reducer 함수 단위 테스트가 아니라 실제 SDK 호출 경로로 검증.
+    """
+    script = textwrap.dedent("""
+        import json, os
+        os.environ["LANGSMITH_TRACING"] = "true"
+        os.environ["LANGSMITH_API_KEY"] = "lsv2_test_fake_key_not_real"
+        from unittest.mock import AsyncMock, patch
+        import asyncio
+        from ml_workload_score.app.services import embedding_difficulty as mod
+
+        sensitive_text = "실제 업무 내용이 담긴 민감할 수 있는 원문 텍스트입니다."
+
+        async def main():
+            fake_client = AsyncMock()
+            fake_client.embeddings = AsyncMock(return_value={"embedding": [0.1, 0.2, 0.3]})
+            with patch(
+                "ml_workload_score.app.services.embedding_difficulty.ollama.AsyncClient",
+                return_value=fake_client,
+            ), patch("langsmith.client.Client.create_run") as mock_create_run, \\
+               patch("langsmith.client.Client.update_run"):
+                await mod._embed(sensitive_text)
+
+            assert mock_create_run.call_count == 1, mock_create_run.call_count
+            _, kwargs = mock_create_run.call_args
+            return {
+                "name": kwargs["name"],
+                "inputs": kwargs["inputs"],
+                "sensitive_text_leaked": sensitive_text in json.dumps(kwargs["inputs"]),
+            }
+
+        print(json.dumps(asyncio.run(main())))
+    """)
+    output = _run_in_subprocess(script)
+
+    assert output["name"] == "ollama_embed"
+    assert output["sensitive_text_leaked"] is False
+    assert output["inputs"] == {"text_length": len("실제 업무 내용이 담긴 민감할 수 있는 원문 텍스트입니다.")}
+
+
+def test_router_import_order_does_not_prevent_tracing_from_activating():
+    """
+    workload_router.py는 setup_langsmith()를 호출하기 전에
+    workload_service(및 @traceable이 적용된 하위 모듈들)를 먼저 import한다.
+    langsmith SDK의 get_env_var()가 @functools.lru_cache로 캐싱되는 것을 확인했는데
+    (리뷰 지적: import 시점에 환경변수를 평가/캐싱해버리면 나중에 setup_langsmith()가
+    .env 기반으로 세팅해도 이미 "비활성"으로 캐싱돼 늦어버릴 수 있음), traceable()
+    데코레이터 자체는 함수 *정의* 시점이 아니라 함수가 실제 *호출*될 때만
+    tracing_is_enabled()/get_env_var()를 평가한다 - 즉 데코레이터가 적용된 모듈을
+    먼저 import해도, 아직 그 함수들이 호출되지 않았다면 캐싱이 선점되지 않는다.
+    라우터의 실제 import 순서 그대로(workload_service import → setup_langsmith() →
+    엔드포인트 첫 호출)를 재현해, .env로만 제공된 API 키로도 실제 Client.create_run이
+    호출되는지 서브프로세스에서 직접 검증한다.
+    """
+    script = textwrap.dedent("""
+        import json, os, asyncio
+        os.environ.pop("LANGSMITH_TRACING", None)
+        os.environ.pop("LANGSMITH_API_KEY", None)
+        from unittest.mock import patch
+
+        # setup_langsmith()는 dotenv_values()로 .env를 직접 읽으므로, 실제 .env 파일을
+        # 건드리지 않고 그 반환값만 mock한다.
+        with patch(
+            "ml_workload_score.app.services.tracing.dotenv_values",
+            return_value={"LANGSMITH_API_KEY": "lsv2_test_fake_key_not_real"},
+        ), patch("langsmith.client.Client.create_run") as mock_create_run, \\
+           patch("langsmith.client.Client.update_run"):
+            # workload_router.py와 정확히 동일한 순서로 import된다:
+            # tracing.setup_langsmith 임포트 -> workload_service(및 @traceable 하위
+            # 모듈들) 임포트 -> setup_langsmith() 호출(라우터 모듈 최상단).
+            import ml_workload_score.app.routers.workload_router as router_module
+
+            result = asyncio.run(
+                router_module.get_workload_score(project_id=1, use_synthetic_fallback=True)
+            )
+
+        print(json.dumps({
+            "create_run_called": mock_create_run.called,
+            "create_run_count": mock_create_run.call_count,
+        }))
+    """)
+    output = _run_in_subprocess(script)
+
+    assert output["create_run_called"] is True
+    assert output["create_run_count"] > 0
+
+
 def test_setup_langsmith_is_invoked_when_router_module_is_loaded():
     """
     workload_router.py 모듈 로드 시 setup_langsmith()가 실제로 호출되는 전역
