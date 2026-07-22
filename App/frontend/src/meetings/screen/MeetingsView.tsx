@@ -70,8 +70,8 @@ const ANALYSIS_PHASE_COPY: Record<AnalysisPhase, { title: string; message: strin
   },
   analyzing: {
     title: "AI 분석 진행 중",
-    message: "서버의 PROCESSING 상태를 확인하면서 로컬 Ollama 분석 결과를 기다리고 있습니다.",
-    badge: "Ollama 분석 중",
+    message: "서버의 PROCESSING 상태를 확인하면서 AI 분석 결과를 기다리고 있습니다.",
+    badge: "AI 분석 중",
   },
   finalizing: {
     title: "결과 정리 중",
@@ -1066,11 +1066,6 @@ export function MeetingsView() {
     );
 
     const selectedGeneratedTodos = reviewTodos.filter(todo => selTodos.includes(todo.id));
-    if (selectedGeneratedTodos.some(todo => !getAssignee(todo))) {
-      setRegisterMessage("미배정 업무가 있습니다. 담당자를 먼저 선택한 뒤 등록해주세요.");
-      setTimeout(() => setRegisterMessage(null), 2500);
-      return;
-    }
     const newTodos = selectedGeneratedTodos.filter(todo => {
       const assignee = getAssignee(todo);
       const key = buildTodoRegistrationKey(meetingIdentifier, todo.title, assignee, getDueDate(todo));
@@ -1134,7 +1129,7 @@ export function MeetingsView() {
       }
       setRegisterMessage(
         unassignedCount > 0
-          ? `업무 보드에 등록되었습니다. (미배정 업무 ${unassignedCount}건은 담당자 지정 후 등록해주세요)`
+          ? `업무 보드에 등록되었습니다. (미배정 업무 ${unassignedCount}건 포함, 업무보드에서 담당자를 지정해주세요)`
           : "업무 보드에 등록되었습니다."
       );
       setTimeout(() => setRegisterMessage(null), 2500);
@@ -1162,24 +1157,21 @@ export function MeetingsView() {
       return { ...parsed, assigneeId };
     });
 
-    const assignableTodos = parsedTodos.filter(todo => todo.assigneeId);
-    const unassignedCount = parsedTodos.length - assignableTodos.length;
+    const unassignedCount = parsedTodos.filter(todo => !todo.assigneeId).length;
 
-    const newTodos = assignableTodos.filter(todo => {
+    const newTodos = parsedTodos.filter(todo => {
       const key = buildTodoRegistrationKey(meetingIdentifier, todo.title, todo.assigneeId, todo.dueDate);
       return !existingKeys.has(key);
     });
 
     if (newTodos.length === 0) {
-      if (assignableTodos.length > 0) {
+      if (parsedTodos.length > 0) {
         setConfirmReregister(() => () => {
           setConfirmReregister(null);
-          void performRegisterMeetingTodos(assignableTodos, existingKeys, unassignedCount);
+          void performRegisterMeetingTodos(parsedTodos, existingKeys, unassignedCount);
         });
         return;
       }
-      setRegisterMessage("미배정 업무는 담당자를 먼저 지정해야 등록할 수 있습니다.");
-      setTimeout(() => setRegisterMessage(null), 2500);
       return;
     }
 

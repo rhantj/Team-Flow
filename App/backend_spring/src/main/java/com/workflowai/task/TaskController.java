@@ -78,9 +78,8 @@ public class TaskController {
         this.ragIngestService = ragIngestService;
     }
 
-    // TODO: 로그인이 없어 활동 로그의 행위자를 항상 mock 사용자 "1"로 남긴다. 실제 인증이 붙으면 로그인 사용자로 교체.
     private Long currentActorId() {
-        return demoDataService.resolveUserId("1");
+        return CurrentUser.id();
     }
 
     private String userName(Long userId) {
@@ -104,6 +103,21 @@ public class TaskController {
         return ApiResponse.ok(tasks);
     }
 
+    /**
+     * assigneeId는 예전 데모 mock id("1"~"5")와 실제 사용자 DB id 문자열이 섞여 들어올 수 있다.
+     * mock id로 먼저 풀어보고, 매칭되는 데모 유저가 없으면 실제 유저 id로 간주해 그대로 파싱한다.
+     */
+    private Long resolveAssigneeId(String assigneeIdParam) {
+        if (assigneeIdParam == null || assigneeIdParam.isBlank()) return null;
+        Long resolved = demoDataService.resolveUserId(assigneeIdParam);
+        if (resolved != null) return resolved;
+        try {
+            return Long.parseLong(assigneeIdParam);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
     /** 해당 프로젝트+상태 컬럼의 맨 끝에 놓일 position(가장 큰 값 + 1, 비어있으면 0). */
     private double nextAppendPosition(Long projectDbId, String status) {
         return taskRepository.findTopByProjectIdAndStatusOrderByPositionDesc(projectDbId, status)
@@ -112,9 +126,7 @@ public class TaskController {
     }
 
     // DONE: @projectAccess.isMember(#projectId)로 프로젝트 멤버십 검사 적용 완료 (2026-07-18).
-    // TODO: createTask/updateTask는 assigneeId를, updatePosition 등은 activity 기록 시 currentActorId()가
-    // 항상 mock 사용자 "1"이라 실제 로그인 사용자가 반영되지 않는다. 이 부분은 남은 과제로
-    // document_고무서에 별도 기록.
+    // DONE: assigneeId 실제 유저 id 미해석, currentActorId() mock 고정 문제 수정 (2026-07-22).
 
     @Operation(
         summary = "업무 생성",
@@ -148,7 +160,7 @@ public class TaskController {
             request.title(),
             category,
             status,
-            demoDataService.resolveUserId(request.assigneeId()),
+            resolveAssigneeId(request.assigneeId()),
             dueDate,
             request.priority(),
             request.description(),
@@ -254,7 +266,7 @@ public class TaskController {
         String priorityBefore = task.getPriority();
         String descriptionBefore = task.getDescription();
 
-        Long newAssigneeId = request.assigneeId() == null ? null : demoDataService.resolveUserId(request.assigneeId());
+        Long newAssigneeId = resolveAssigneeId(request.assigneeId());
         task.applyUpdate(request.title(), request.category(), newAssigneeId, dueDate, request.priority(), request.description());
         taskRepository.save(task);
 

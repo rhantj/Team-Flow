@@ -33,7 +33,7 @@ export function EditTaskModal({ task, projectMembers, onClose, onUpdated }: Edit
     setCustomCat(knownCat ? "" : task.category);
     setTitle(task.title);
     setDescription(task.description ?? "");
-    setAssigneeId(task.assignee || String(projectMembers[0]?.userId ?? ""));
+    setAssigneeId(task.assignee ?? "");
     setDueDate(task.dueDate);
     setPriority(task.priority);
     setError(null);
@@ -117,6 +117,7 @@ export function EditTaskModal({ task, projectMembers, onClose, onUpdated }: Edit
               <div>
                 <label className="text-xs font-semibold text-foreground block mb-1.5">담당자</label>
                 <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className="w-full rounded-xl border border-border bg-input-background px-4 py-2.5 text-sm outline-none focus:border-blue-400">
+                  <option value="">⚠ 미배정</option>
                   {projectMembers.map((m) => <option key={m.userId} value={String(m.userId)}>{m.name} ({m.role})</option>)}
                 </select>
               </div>

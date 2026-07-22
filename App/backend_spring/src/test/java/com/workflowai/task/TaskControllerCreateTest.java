@@ -15,13 +15,18 @@ import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.NotificationService;
 import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.rag.RagIngestService;
+import com.workflowai.security.UserPrincipal;
 import com.workflowai.user.UserRepository;
+import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -59,13 +64,21 @@ class TaskControllerCreateTest {
                 notificationService, projectMemberRepository, ragIngestService
             ))
             .build();
+        SecurityContextHolder.getContext().setAuthentication(
+            new UsernamePasswordAuthenticationToken(
+                new UserPrincipal(1L, "user1@workflow.ai", "테스트유저"), null, List.of()
+            )
+        );
+    }
+
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
     }
 
     @Test
     void notifiesAssigneeOnCreate() throws Exception {
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
-        // TaskController.currentActorId()는 mock 사용자 "1" -> DB id 1L로 해석된다.
-        when(demoDataService.resolveUserId("1")).thenReturn(1L);
         when(demoDataService.resolveUserId("2")).thenReturn(5L);
         when(taskRepository.findTopByProjectIdAndStatusOrderByPositionDesc(anyLong(), any()))
             .thenReturn(java.util.Optional.empty());

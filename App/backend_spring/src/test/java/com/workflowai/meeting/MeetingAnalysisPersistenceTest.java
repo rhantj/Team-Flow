@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.workflowai.common.DemoDataService;
+import com.workflowai.notification.NotificationService;
 import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.rag.RagIngestService;
 import com.workflowai.user.User;
@@ -33,11 +34,12 @@ class MeetingAnalysisPersistenceTest {
     @Mock private DemoDataService demoDataService;
     @Mock private RagIngestService ragIngestService;
     @Mock private ProjectMemberRepository projectMemberRepository;
+    @Mock private NotificationService notificationService;
 
     private MeetingAnalysisPersistence newPersistence() {
         return new MeetingAnalysisPersistence(
             meetingRepository, meetingAnalysisRepository, meetingActionItemRepository, meetingAttendeeRepository,
-            userRepository, demoDataService, ragIngestService, projectMemberRepository
+            userRepository, demoDataService, ragIngestService, projectMemberRepository, notificationService
         );
     }
 
