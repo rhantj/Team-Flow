@@ -27,6 +27,8 @@ dependencies {
   implementation 'org.flywaydb:flyway-database-postgresql'
   implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.17'
   implementation 'org.apache.pdfbox:pdfbox:3.0.4'
+  implementation 'org.springframework.retry:spring-retry'
+  implementation 'org.springframework.boot:spring-boot-starter-aop'
   runtimeOnly 'org.postgresql:postgresql'
 
   implementation 'io.jsonwebtoken:jjwt-api:0.13.0'
