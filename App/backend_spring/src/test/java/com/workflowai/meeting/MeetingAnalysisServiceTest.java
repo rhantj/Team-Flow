@@ -16,6 +16,7 @@ import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.project.ProjectRole;
 import com.workflowai.rag.RagIngestService;
 import com.workflowai.security.UserPrincipal;
+import com.workflowai.task.Task;
 import com.workflowai.task.TaskRepository;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
@@ -489,6 +490,30 @@ class MeetingAnalysisServiceTest {
         List<MeetingAttendanceDetail> detail = service.attendanceDetail("demo-project", 2L);
 
         assertThat(detail).isEmpty();
+    }
+
+    @Test
+    void registerTasksUsesCurrentUserAsCreatedByNotHardcodedDemoUser() {
+        UserPrincipal otherLeader = new UserPrincipal(25L, "leader@example.com", "박지수");
+        SecurityContextHolder.getContext().setAuthentication(
+            new UsernamePasswordAuthenticationToken(otherLeader, null, List.of())
+        );
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(projectMemberRepository.existsByProjectIdAndUserId(1L, 25L)).thenReturn(true);
+        Meeting meeting = new Meeting(1L, "정기회의", "document", null, "completed", LocalDate.now(), "정기회의", "a.txt", 10L, 10L);
+        when(meetingRepository.findByIdAndProjectId(5L, 1L)).thenReturn(Optional.of(meeting));
+        when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(taskRepository.findTopByProjectIdAndStatusOrderByPositionDesc(any(), any())).thenReturn(Optional.empty());
+        MeetingAnalysisService service = newService();
+
+        TaskRegisterRequest request = new TaskRegisterRequest(List.of(
+            new MeetingTodo("업무1", "설명", null, null, null, "MEDIUM", "ETC", true, "")
+        ));
+        service.registerTasks("demo-project", "5", request);
+
+        ArgumentCaptor<Task> captor = ArgumentCaptor.forClass(Task.class);
+        verify(taskRepository).save(captor.capture());
+        assertThat(captor.getValue().getCreatedBy()).isEqualTo(25L);
     }
 
     private byte[] createPdfBytes(String text) throws Exception {

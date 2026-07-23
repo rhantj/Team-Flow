@@ -401,11 +401,11 @@ public class MeetingAnalysisService {
         if (meeting == null) return null;
         Long meetingDbId = parseLongOrNull(meetingId);
         List<MeetingTodo> todos = request == null || request.todos() == null ? List.of() : request.todos();
-        Long currentLeaderId = demoDataService.resolveUserId("1");
+        Long registeredBy = CurrentUser.id();
 
         int registeredCount = 0;
         for (MeetingTodo todo : todos) {
-            if (registerSingleTask(meetingDbId, todo, currentLeaderId)) {
+            if (registerSingleTask(meetingDbId, todo, registeredBy)) {
                 registeredCount++;
             }
         }

@@ -189,7 +189,7 @@ public class MeetingAnalysisController {
         description = "팀장이 승인한 회의록 기반 To-Do 후보를 실제 업무(Task)로 등록합니다. 등록된 업무는 업무보드와 대시보드에서 사용할 수 있습니다."
     )
     @PostMapping("/{meetingId}/tasks/register")
-    @PreAuthorize("@projectAccess.isMember(#projectId)")
+    @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER')")
     public ResponseEntity<ApiResponse<TaskRegisterResponse>> registerTasks(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "회의록 ID", example = "demo-project-1") @PathVariable String meetingId,
