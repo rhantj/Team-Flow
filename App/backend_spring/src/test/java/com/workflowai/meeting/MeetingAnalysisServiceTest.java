@@ -112,6 +112,23 @@ class MeetingAnalysisServiceTest {
     }
 
     @Test
+    void analyzeSavesExtractedTextAsTranscriptOnMeeting() {
+        mockMember(1L);
+        MeetingAnalysisService service = newService();
+        when(meetingRepository.save(any(Meeting.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        MockMultipartFile file = new MockMultipartFile("file", "notes.txt", "text/plain", "회의 내용 원문".getBytes());
+        MeetingAnalysisResponse response = service.analyze(
+            "demo-project", file, "7차 정기회의", "2026-07-15", "정기회의", "document", List.of(), null
+        );
+
+        assertThat(response.transcript()).isEqualTo("회의 내용 원문");
+        ArgumentCaptor<Meeting> meetingCaptor = ArgumentCaptor.forClass(Meeting.class);
+        verify(meetingRepository, atLeastOnce()).save(meetingCaptor.capture());
+        assertThat(meetingCaptor.getValue().getTranscript()).isEqualTo("회의 내용 원문");
+    }
+
+    @Test
     void analyzeSetsUploadedByToCurrentUser() {
         mockMember(1L);
         MeetingAnalysisService service = newService();
@@ -438,6 +455,7 @@ class MeetingAnalysisServiceTest {
 
         assertThat(response.status()).isEqualTo("PROCESSING");
         assertThat(meeting.getAnalysisStatus()).isEqualTo("processing");
+        assertThat(meeting.getTranscript()).isEqualTo("재분석할 회의 내용");
         verify(meetingAnalysisRunner).runAnalysis(4L, new AiAnalyzeRequest(
             "demo-project", "정기회의", meeting.getMeetingDate().toString(), "정기회의", "document", "x.txt", "재분석할 회의 내용", List.of()
         ));

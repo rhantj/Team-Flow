@@ -131,6 +131,7 @@ public class MeetingAnalysisService {
         ));
 
         meeting.setFilePath(storeUploadedFile(meeting.getId(), file));
+        meeting.setTranscript(text);
         meetingRepository.save(meeting);
 
         List<String> resolvedParticipantNames;
@@ -290,6 +291,7 @@ public class MeetingAnalysisService {
         );
 
         meeting.setAnalysisStatus("processing");
+        meeting.setTranscript(text);
         meetingRepository.save(meeting);
 
         meetingAnalysisRunner.runAnalysis(id, request);

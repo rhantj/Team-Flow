@@ -141,6 +141,10 @@ public class Meeting {
         return transcript;
     }
 
+    public void setTranscript(String transcript) {
+        this.transcript = transcript;
+    }
+
     public LocalDate getMeetingDate() {
         return meetingDate;
     }
