@@ -112,23 +112,25 @@ def test_analyze_json_cache_key_sorts_participant_copy_without_mutating_request(
     monkeypatch.setenv("MEETING_ANALYSIS_PROVIDER", "rule")
     cache = FakeMeetingCache()
     monkeypatch.setattr("app.main.get_redis_client", lambda: cache)
-    calls = 0
+    analyzed_requests: list[AnalyzeRequest] = []
 
     def analyze_uncached(request: AnalyzeRequest) -> MeetingAnalysisResult:
-        nonlocal calls
-        calls += 1
+        analyzed_requests.append(request)
         return _cache_test_result(request)
 
     monkeypatch.setattr("app.main._analyze_json_uncached", analyze_uncached)
-    first = AnalyzeRequest(text="회의", participants=["김민준", "이서연"])
-    reordered = first.model_copy(update={"participants": ["이서연", "김민준"]})
+    first = AnalyzeRequest(text="회의", participants=["이서연", "김민준"])
+    reordered = first.model_copy(update={"participants": ["김민준", "이서연"]})
 
-    analyze_json(first)
-    analyze_json(reordered)
+    miss_result = analyze_json(first)
+    hit_result = analyze_json(reordered)
 
-    assert calls == 1
-    assert first.participants == ["김민준", "이서연"]
-    assert reordered.participants == ["이서연", "김민준"]
+    assert len(analyzed_requests) == 1
+    assert analyzed_requests[0].participants == ["김민준", "이서연"]
+    assert miss_result.meeting_meta.participants == ["김민준", "이서연"]
+    assert hit_result.meeting_meta.participants == ["김민준", "이서연"]
+    assert first.participants == ["이서연", "김민준"]
+    assert reordered.participants == ["김민준", "이서연"]
 
 
 @pytest.mark.parametrize(

@@ -136,7 +136,8 @@ def health():
 
 @app.post("/api/v1/meetings/analyze-json", response_model=MeetingAnalysisResult)
 def analyze_json(request: AnalyzeRequest):
-    cache_key = _meeting_analysis_cache_key(request)
+    canonical_request = _canonicalize_analysis_request(request)
+    cache_key = _meeting_analysis_cache_key(canonical_request)
     cache_client = None
     try:
         cache_client = get_redis_client()
@@ -159,7 +160,7 @@ def analyze_json(request: AnalyzeRequest):
                     except Exception:
                         logger.warning("회의록 분석 Redis 손상 캐시 삭제 실패")
 
-    result = _analyze_json_uncached(request)
+    result = _analyze_json_uncached(canonical_request)
     if cache_client is not None:
         try:
             cache_client.set(
@@ -172,12 +173,14 @@ def analyze_json(request: AnalyzeRequest):
     return result
 
 
+def _canonicalize_analysis_request(request: AnalyzeRequest) -> AnalyzeRequest:
+    return request.model_copy(update={"participants": sorted(request.participants)})
+
+
 def _meeting_analysis_cache_key(request: AnalyzeRequest) -> str:
-    canonical_request = request.model_dump(mode="json")
-    canonical_request["participants"] = sorted(canonical_request["participants"])
     cache_input = {
         "schema_version": MEETING_ANALYSIS_CACHE_SCHEMA_VERSION,
-        "request": canonical_request,
+        "request": request.model_dump(mode="json"),
         "provider": os.getenv("MEETING_ANALYSIS_PROVIDER", "auto").lower(),
         "huggingface_configured": _huggingface_configured(),
         "ollama": {
