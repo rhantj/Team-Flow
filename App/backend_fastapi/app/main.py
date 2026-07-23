@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import hashlib
 import json
 import logging
 import os
@@ -20,6 +21,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from core.cache import get_redis_client
 from llm_rag_assistant.app.routers.chat_router import router as rag_router
 from llm_rag_assistant.app.services.embedding_service import preload_embedding_model
 from ml_workload_score.app.routers.workload_router import router as workload_router
@@ -38,6 +40,8 @@ DEFAULT_HF_MEETING_ANALYSIS_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
 DEFAULT_HF_MEETING_ANALYSIS_TIMEOUT_SECONDS = 35.0
 DEFAULT_HF_MEETING_ANALYSIS_MAX_TOKENS = 900
 HF_CHAT_COMPLETIONS_URL = "https://router.huggingface.co/v1/chat/completions"
+MEETING_ANALYSIS_CACHE_SCHEMA_VERSION = 1
+MEETING_ANALYSIS_CACHE_TTL_SECONDS = 86400
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -128,6 +132,62 @@ def health():
 
 @app.post("/api/v1/meetings/analyze-json", response_model=MeetingAnalysisResult)
 def analyze_json(request: AnalyzeRequest):
+    cache_key = _meeting_analysis_cache_key(request)
+    cache_client = None
+    try:
+        cache_client = get_redis_client()
+    except Exception:
+        logger.warning("회의록 분석 Redis 캐시 클라이언트 생성 실패")
+
+    if cache_client is not None:
+        try:
+            cached_result = cache_client.get(cache_key)
+        except Exception:
+            logger.warning("회의록 분석 Redis 캐시 조회 실패")
+        else:
+            if cached_result is not None:
+                try:
+                    return MeetingAnalysisResult.model_validate_json(cached_result)
+                except Exception:
+                    logger.warning("회의록 분석 Redis 캐시 데이터 검증 실패")
+                    try:
+                        cache_client.delete(cache_key)
+                    except Exception:
+                        logger.warning("회의록 분석 Redis 손상 캐시 삭제 실패")
+
+    result = _analyze_json_uncached(request)
+    if cache_client is not None:
+        try:
+            cache_client.set(
+                cache_key,
+                result.model_dump_json(),
+                ex=MEETING_ANALYSIS_CACHE_TTL_SECONDS,
+            )
+        except Exception:
+            logger.warning("회의록 분석 Redis 캐시 저장 실패")
+    return result
+
+
+def _meeting_analysis_cache_key(request: AnalyzeRequest) -> str:
+    cache_input = {
+        "schema_version": MEETING_ANALYSIS_CACHE_SCHEMA_VERSION,
+        "request": request.model_dump(mode="json"),
+        "provider": os.getenv("MEETING_ANALYSIS_PROVIDER", "auto").lower(),
+        "ollama_model": os.getenv("MEETING_ANALYSIS_MODEL", DEFAULT_MEETING_ANALYSIS_MODEL),
+        "huggingface_model": os.getenv("HF_MEETING_ANALYSIS_MODEL", DEFAULT_HF_MEETING_ANALYSIS_MODEL),
+        "huggingface_configured": _huggingface_configured(),
+    }
+    canonical_input = json.dumps(
+        cache_input,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(canonical_input.encode("utf-8")).hexdigest()
+    return f"meeting-analysis:v{MEETING_ANALYSIS_CACHE_SCHEMA_VERSION}:{digest}"
+
+
+def _analyze_json_uncached(request: AnalyzeRequest) -> MeetingAnalysisResult:
     provider = os.getenv("MEETING_ANALYSIS_PROVIDER", "auto").lower()
     if provider in {"auto", "huggingface", "hf"} and _huggingface_configured():
         try:
