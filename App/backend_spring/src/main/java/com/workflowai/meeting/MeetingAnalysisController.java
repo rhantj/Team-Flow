@@ -42,7 +42,7 @@ public class MeetingAnalysisController {
             + "요청한 사용자가 해당 프로젝트 멤버가 아니면 403을 반환합니다."
     )
     @PostMapping(value = "/analyze", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("@projectAccess.isMember(#projectId)")
+    @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER') || @projectAccess.hasRole(#projectId, 'MEMBER')")
     public ResponseEntity<ApiResponse<MeetingAnalysisResponse>> analyze(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "회의록 원본 파일 (문서/음성)") @RequestPart(value = "file", required = false) MultipartFile file,
@@ -149,7 +149,7 @@ public class MeetingAnalysisController {
             + "meetingId가 이 프로젝트 소속이 아니면 404를, 프로젝트 멤버가 아니거나 본인이 업로드한 회의록이 아니면 403을 반환합니다."
     )
     @DeleteMapping("/{meetingId}")
-    @PreAuthorize("@projectAccess.isMember(#projectId)")
+    @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER') || @projectAccess.hasRole(#projectId, 'MEMBER')")
     public ResponseEntity<ApiResponse<MeetingDeleteResponse>> deleteMeeting(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "회의록 ID", example = "42") @PathVariable String meetingId,

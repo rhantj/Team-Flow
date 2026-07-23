@@ -3,6 +3,8 @@ package com.workflowai.meeting;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -46,6 +48,27 @@ class MeetingAnalysisControllerSecurityTest {
                 .with(user("member"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"todos\":[]}"))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+    }
+
+    @Test
+    void analyzeReturns403WhenReviewer() throws Exception {
+        // REVIEWER는 프로젝트 멤버(isMember=true)이지만 LEADER도 MEMBER도 아니므로 hasRole은 모두 false.
+        when(projectAccess.isMember(eq("demo-project"))).thenReturn(true);
+
+        mockMvc.perform(multipart("/api/v1/projects/demo-project/meetings/analyze")
+                .with(user("reviewer")))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+    }
+
+    @Test
+    void deleteMeetingReturns403WhenReviewer() throws Exception {
+        when(projectAccess.isMember(eq("demo-project"))).thenReturn(true);
+
+        mockMvc.perform(delete("/api/v1/projects/demo-project/meetings/5")
+                .with(user("reviewer")))
             .andExpect(status().isForbidden())
             .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
     }
