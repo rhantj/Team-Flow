@@ -80,7 +80,7 @@ export function ActivityPage() {
   }, [activities, memberFilter, search, typeFilter]);
 
   const todayCount = activities.filter(a => isToday(a.createdAt)).length;
-  const weekCount = activities.filter(a => withinDays(a.createdAt, 5)).length;
+  const weekCount = activities.filter(a => withinDays(a.createdAt, 7)).length;
   const taskCount = activities.filter(a => matchesTypeFilter(a.type, "업무")).length;
   const aiCount = activities.filter(a => normalizeActivityType(a.type) === "ai").length;
 
@@ -106,7 +106,7 @@ export function ActivityPage() {
 
       <div className="grid grid-cols-4 gap-3">
         <DetailStatCard label="오늘 활동" value={loading ? "..." : todayCount} sub="오늘 기준" color="#3B5BDB" icon={Zap} />
-        <DetailStatCard label="이번 주 전체" value={loading ? "..." : weekCount} sub="최근 5일 기준" color="#7048E8" icon={TrendingUp} />
+        <DetailStatCard label="이번 주 전체" value={loading ? "..." : weekCount} sub="최근 7일 기준" color="#7048E8" icon={TrendingUp} />
         <DetailStatCard label="업무 활동" value={loading ? "..." : taskCount} sub="생성/변경" color="#10B981" icon={RefreshCw} />
         <DetailStatCard label="AI 생성" value={loading ? "..." : aiCount} sub="자동 생성 항목" color="#7048E8" icon={Sparkles} />
       </div>

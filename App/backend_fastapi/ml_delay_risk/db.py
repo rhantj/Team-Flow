@@ -19,7 +19,7 @@ import os
 
 import pandas as pd
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
+from sqlalchemy import bindparam, create_engine, text
 from sqlalchemy.engine import Engine
 
 load_dotenv()
@@ -112,6 +112,10 @@ def load_task_comments_for_project(project_id: int, engine: Engine | None = None
 # 확인해서는 이 충돌을 막지 못하므로, Spring의 TaskController/ChecklistController가 실제로
 # 기록하는 업무 활동 타입도 반드시 함께 제한한다. 기존 type='업무 변경' 값은 실제 저장값과
 # 일치하지 않아 모든 업무 활동을 누락했으므로 사용하지 않는다.
+#
+# 이 목록이 SQL 유일한 출처(single source of truth)다 — 아래 쿼리는 IN 절에 값을 직접
+# 나열하지 않고 :task_activity_types 바인드 파라미터로만 참조하므로, Spring 쪽에
+# TASK_* 활동 타입이 추가/변경돼도 이 튜플 한 곳만 고치면 되고 SQL 텍스트와 어긋날 일이 없다.
 TASK_ACTIVITY_TYPES = (
     "TASK_CREATED",
     "STATUS_CHANGED",
@@ -127,28 +131,24 @@ _TASK_ACTIVITIES_QUERY = text(
     SELECT a.target_id AS task_id, a.created_at
     FROM public.activities a
     WHERE a.project_id = :project_id
-      AND a.type IN (
-          'TASK_CREATED',
-          'STATUS_CHANGED',
-          'ASSIGNEE_CHANGED',
-          'TASK_UPDATED',
-          'TASK_DELETED',
-          'CHECKLIST_CREATED',
-          'CHECKLIST_COMPLETED'
-      )
+      AND a.type IN :task_activity_types
       AND EXISTS (
           SELECT 1 FROM public.tasks t
           WHERE t.id = a.target_id AND t.project_id = a.project_id
       )
     """
-)
+).bindparams(bindparam("task_activity_types", expanding=True))
 
 
 def load_task_activities_for_project(project_id: int, engine: Engine | None = None) -> pd.DataFrame:
     """프로젝트 내 업무 변경 활동 로그(activities)를 읽어온다."""
     engine = engine or get_engine()
     with engine.connect() as conn:
-        df = pd.read_sql(_TASK_ACTIVITIES_QUERY, conn, params={"project_id": project_id})
+        df = pd.read_sql(
+            _TASK_ACTIVITIES_QUERY,
+            conn,
+            params={"project_id": project_id, "task_activity_types": TASK_ACTIVITY_TYPES},
+        )
     df["created_at"] = pd.to_datetime(df["created_at"])
     return df
 
