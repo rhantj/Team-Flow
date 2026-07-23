@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
@@ -19,19 +20,7 @@ public class MeetingAnalysisJobPublisher {
 
     private static final String ENQUEUE_FAILURE_MESSAGE = "Failed to enqueue meeting analysis job";
     private static final RedisScript<String> ENQUEUE_IF_CAPACITY_SCRIPT = RedisScript.of(
-        """
-        if not redis.acl_check_cmd('XLEN', KEYS[1]) then
-            return redis.error_reply('XLEN permission denied')
-        end
-        if not redis.acl_check_cmd('XADD', KEYS[1], '*', 'payload', ARGV[2]) then
-            return redis.error_reply('XADD permission denied')
-        end
-        local outstanding = redis.call('XLEN', KEYS[1])
-        if outstanding >= tonumber(ARGV[1]) then
-            return '%s'
-        end
-        return redis.call('XADD', KEYS[1], '*', 'payload', ARGV[2])
-        """.formatted(QUEUE_FULL_SENTINEL),
+        new ClassPathResource("redis/meeting-analysis-enqueue.lua"),
         String.class
     );
 

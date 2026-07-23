@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 
@@ -66,6 +68,10 @@ class MeetingAnalysisJobPublisherTest {
         assertThat(result).isEqualTo(recordId);
 
         String script = scriptCaptor.getValue().getScriptAsString();
+        ClassPathResource scriptResource = new ClassPathResource("redis/meeting-analysis-enqueue.lua");
+        assertThat(scriptResource.exists()).isTrue();
+        String resourceScript = new String(scriptResource.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertThat(script).isEqualTo(resourceScript);
         assertThat(script.indexOf("acl_check_cmd('XLEN'")).isGreaterThanOrEqualTo(0);
         assertThat(script.indexOf("acl_check_cmd('XADD'")).isGreaterThan(script.indexOf("acl_check_cmd('XLEN'"));
         assertThat(script.indexOf("redis.call('XLEN'")).isGreaterThan(script.indexOf("acl_check_cmd('XADD'"));
