@@ -79,7 +79,6 @@ class TaskControllerCreateTest {
     @Test
     void notifiesAssigneeOnCreate() throws Exception {
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
-        when(demoDataService.resolveUserId("2")).thenReturn(5L);
         when(taskRepository.findTopByProjectIdAndStatusOrderByPositionDesc(anyLong(), any()))
             .thenReturn(java.util.Optional.empty());
         when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -87,7 +86,7 @@ class TaskControllerCreateTest {
         mockMvc.perform(post("/api/v1/projects/demo-project/tasks")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"title":"새 업무","category":"backend","assigneeId":"2"}
+                    {"title":"새 업무","category":"backend","assigneeId":"5"}
                     """))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.success").value(true));
@@ -95,6 +94,21 @@ class TaskControllerCreateTest {
         verify(notificationService).notify(
             eq(5L), eq("TASK_ASSIGNED"), any(), any(), eq("task"), any()
         );
+    }
+
+    @Test
+    void rejectsInvalidAssigneeIdFormat() throws Exception {
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+
+        mockMvc.perform(post("/api/v1/projects/demo-project/tasks")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"title":"새 업무","category":"backend","assigneeId":"not-a-number"}
+                    """))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_ASSIGNEE_ID"));
+
+        verify(notificationService, never()).notify(any(), any(), any(), any(), any(), any());
     }
 
     @Test

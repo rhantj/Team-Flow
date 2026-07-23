@@ -186,12 +186,27 @@ def test_is_personal_intent_compact_pattern_does_not_false_positive(question: st
     [
         "내가할일줘",
         "제가맡은거 뭐야",
-        "todo 알려줘",
-        "task 목록 보여줘",
+        "내 todo 알려줘",
+        "제 task 목록 보여줘",
     ],
 )
 def test_is_personal_intent_detects_particle_attached_compact_forms(question: str) -> None:
     assert _is_personal_intent(question) is True
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "todo 알려줘",
+        "task 목록 보여줘",
+        "이 프로젝트에 task가 몇 개야?",
+        "todo 앱 추천해줘",
+    ],
+)
+def test_is_personal_intent_bare_todo_task_without_pronoun_does_not_false_positive(question: str) -> None:
+    """'todo'/'task'가 '내'/'제' 없이 단독으로 쓰이면 개인화 의도가 아니다 — 일반 질문까지
+    개인화로 오분류하지 않도록 항상 인칭대명사 문맥을 요구한다."""
+    assert _is_personal_intent(question) is False
 
 
 @pytest.mark.parametrize(

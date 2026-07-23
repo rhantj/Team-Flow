@@ -60,8 +60,18 @@ public class RagIngestService {
     @Recover
     public void recoverSyncAssignee(Exception e, Long projectId, String sourceType, Long sourceId, Long assigneeId) {
         log.warn("RAG assignee 동기화 재시도 모두 실패, 기록 저장: sourceType={}, sourceId={}", sourceType, sourceId, e);
-        ragAssigneeSyncFailureRepository.save(
-            new RagAssigneeSyncFailure(projectId, sourceType, sourceId, assigneeId, e.getMessage())
-        );
+        // 실패 기록 저장 자체도 best-effort다 (예: 마이그레이션 미적용으로 테이블이 없거나 DB
+        // 장애인 경우) - 여기서 예외가 나면 async 실행기까지 전파돼 다른 best-effort 메서드들과
+        // 달리 이 경로만 "절대 던지지 않는다" 원칙이 깨지므로 반드시 삼킨다.
+        try {
+            ragAssigneeSyncFailureRepository.save(
+                new RagAssigneeSyncFailure(projectId, sourceType, sourceId, assigneeId, e.getMessage())
+            );
+        } catch (Exception saveException) {
+            log.error(
+                "RAG assignee 동기화 실패 기록 저장도 실패 (무시): sourceType={}, sourceId={}",
+                sourceType, sourceId, saveException
+            );
+        }
     }
 }

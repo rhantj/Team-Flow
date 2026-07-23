@@ -2,6 +2,7 @@ package com.workflowai.meeting;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -22,6 +23,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 class MeetingAnalysisPersistenceTest {
@@ -35,11 +39,13 @@ class MeetingAnalysisPersistenceTest {
     @Mock private RagIngestService ragIngestService;
     @Mock private ProjectMemberRepository projectMemberRepository;
     @Mock private NotificationService notificationService;
+    @Mock private PlatformTransactionManager transactionManager;
 
     private MeetingAnalysisPersistence newPersistence() {
         return new MeetingAnalysisPersistence(
             meetingRepository, meetingAnalysisRepository, meetingActionItemRepository, meetingAttendeeRepository,
-            userRepository, demoDataService, ragIngestService, projectMemberRepository, notificationService
+            userRepository, demoDataService, ragIngestService, projectMemberRepository, notificationService,
+            transactionManager
         );
     }
 
@@ -102,6 +108,84 @@ class MeetingAnalysisPersistenceTest {
         assertThat(savedActionItem.getRecommendedAssigneeId()).isNull();
         assertThat(savedActionItem.getFinalAssigneeId()).isNull();
         verify(ragIngestService).ingestBestEffort(1L, "meeting", 5L, "요약\n결정사항: 결정1\n위험요소: 위험1");
+    }
+
+    @Test
+    void saveAnalysisSuccessStillCompletesWhenNotificationFails() {
+        // 알림 발송은 부가 기능이라 실패해도 분석 결과 저장(@Transactional) 자체는 롤백되면 안 된다.
+        MeetingAnalysisPersistence persistence = newPersistence();
+        Meeting meeting = new Meeting(1L, "정기회의", "document", null, "processing", LocalDate.now(), "정기회의", "a.txt", 10L, null);
+        when(meetingRepository.findById(5L)).thenReturn(Optional.of(meeting));
+        when(meetingAttendeeRepository.findByMeetingId(5L)).thenReturn(List.of());
+        when(meetingAnalysisRepository.save(any(MeetingAnalysis.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        doThrow(new RuntimeException("notification service down"))
+            .when(notificationService).notify(any(), any(), any(), any(), any(), any());
+
+        MeetingAnalysisResult result = new MeetingAnalysisResult(
+            "요약", List.of(), List.of(), List.of(), List.of(),
+            new MeetingMeta("정기회의", "2026-07-15", List.of())
+        );
+
+        persistence.saveAnalysisSuccess(5L, result, "FASTAPI");
+
+        ArgumentCaptor<Meeting> meetingCaptor = ArgumentCaptor.forClass(Meeting.class);
+        verify(meetingRepository).save(meetingCaptor.capture());
+        assertThat(meetingCaptor.getValue().getAnalysisStatus()).isEqualTo("completed");
+    }
+
+    @Test
+    void notificationIsDeferredUntilAfterCommitWhenTransactionSynchronizationIsActive() {
+        // @Transactional 호출 경로를 흉내내기 위해 트랜잭션 동기화를 직접 활성화한다.
+        MeetingAnalysisPersistence persistence = newPersistence();
+        Meeting meeting = new Meeting(1L, "정기회의", "document", null, "processing", LocalDate.now(), "정기회의", "a.txt", 10L, null);
+        when(meetingRepository.findById(5L)).thenReturn(Optional.of(meeting));
+        when(meetingAttendeeRepository.findByMeetingId(5L)).thenReturn(List.of());
+        when(meetingAnalysisRepository.save(any(MeetingAnalysis.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        MeetingAnalysisResult result = new MeetingAnalysisResult(
+            "요약", List.of(), List.of(), List.of(), List.of(),
+            new MeetingMeta("정기회의", "2026-07-15", List.of())
+        );
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            persistence.saveAnalysisSuccess(5L, result, "FASTAPI");
+
+            verify(notificationService, never()).notify(any(), any(), any(), any(), any(), any());
+
+            List<TransactionSynchronization> synchronizations = TransactionSynchronizationManager.getSynchronizations();
+            assertThat(synchronizations).hasSize(1);
+            synchronizations.forEach(TransactionSynchronization::afterCommit);
+
+            verify(notificationService).notify(10L, "MEETING_ANALYSIS_COMPLETED", "회의 분석이 완료되었습니다.",
+                "'정기회의' 회의록 분석이 완료되었습니다.", "meeting", 5L);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void notificationIsNeverSentWhenTransactionRollsBackWithoutCommit() {
+        // afterCommit 콜백이 한 번도 호출되지 않는 롤백 상황을 흉내낸다.
+        MeetingAnalysisPersistence persistence = newPersistence();
+        Meeting meeting = new Meeting(1L, "정기회의", "document", null, "processing", LocalDate.now(), "정기회의", "a.txt", 10L, null);
+        when(meetingRepository.findById(5L)).thenReturn(Optional.of(meeting));
+        when(meetingAttendeeRepository.findByMeetingId(5L)).thenReturn(List.of());
+        when(meetingAnalysisRepository.save(any(MeetingAnalysis.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        MeetingAnalysisResult result = new MeetingAnalysisResult(
+            "요약", List.of(), List.of(), List.of(), List.of(),
+            new MeetingMeta("정기회의", "2026-07-15", List.of())
+        );
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            persistence.saveAnalysisSuccess(5L, result, "FASTAPI");
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        verify(notificationService, never()).notify(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -314,5 +398,44 @@ class MeetingAnalysisPersistenceTest {
         verify(meetingRepository).save(meetingCaptor.capture());
         assertThat(meetingCaptor.getValue().getAnalysisStatus()).isEqualTo("failed");
         verify(meetingAnalysisRepository, never()).save(any());
+    }
+
+    @Test
+    void failureNotificationIsDeferredUntilAfterCommitWhenTransactionSynchronizationIsActive() {
+        MeetingAnalysisPersistence persistence = newPersistence();
+        Meeting meeting = new Meeting(1L, "정기회의", "document", null, "processing", LocalDate.now(), "정기회의", "a.txt", 10L, null);
+        when(meetingRepository.findById(7L)).thenReturn(Optional.of(meeting));
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            persistence.saveAnalysisFailure(7L, "FastAPI 연결 실패");
+
+            verify(notificationService, never()).notify(any(), any(), any(), any(), any(), any());
+
+            List<TransactionSynchronization> synchronizations = TransactionSynchronizationManager.getSynchronizations();
+            assertThat(synchronizations).hasSize(1);
+            synchronizations.forEach(TransactionSynchronization::afterCommit);
+
+            verify(notificationService).notify(10L, "MEETING_ANALYSIS_FAILED", "회의 분석에 실패했습니다.",
+                "'정기회의' 회의록 분석에 실패했습니다. 다시 시도해주세요.", "meeting", 7L);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void failureNotificationIsNeverSentWhenTransactionRollsBackWithoutCommit() {
+        MeetingAnalysisPersistence persistence = newPersistence();
+        Meeting meeting = new Meeting(1L, "정기회의", "document", null, "processing", LocalDate.now(), "정기회의", "a.txt", 10L, null);
+        when(meetingRepository.findById(7L)).thenReturn(Optional.of(meeting));
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            persistence.saveAnalysisFailure(7L, "FastAPI 연결 실패");
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        verify(notificationService, never()).notify(any(), any(), any(), any(), any(), any());
     }
 }

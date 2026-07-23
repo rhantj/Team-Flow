@@ -91,13 +91,12 @@ class TaskControllerUpdateTest {
     void updatesTaskFields() throws Exception {
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(anyLong())).thenReturn(Optional.of(existingTask()));
-        when(demoDataService.resolveUserId(eq("2"))).thenReturn(5L);
         when(taskRepository.save(any(Task.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         mockMvc.perform(patch("/api/v1/projects/demo-project/tasks/42")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"title":"새 제목","category":"backend","assigneeId":"2","dueDate":"2026-08-01","priority":"high","description":"새 설명"}
+                    {"title":"새 제목","category":"backend","assigneeId":"5","dueDate":"2026-08-01","priority":"high","description":"새 설명"}
                     """))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.success").value(true))
@@ -117,6 +116,20 @@ class TaskControllerUpdateTest {
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.success").value(false))
             .andExpect(jsonPath("$.error.code").value("TITLE_REQUIRED"));
+    }
+
+    @Test
+    void rejectsInvalidAssigneeIdFormat() throws Exception {
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(taskRepository.findById(anyLong())).thenReturn(Optional.of(existingTask()));
+
+        mockMvc.perform(patch("/api/v1/projects/demo-project/tasks/42")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"assigneeId\":\"not-a-number\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_ASSIGNEE_ID"));
+
+        verify(notificationService, never()).notify(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -147,12 +160,11 @@ class TaskControllerUpdateTest {
     void notifiesNewAssigneeWhenAssigneeChanges() throws Exception {
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(anyLong())).thenReturn(Optional.of(existingTask()));
-        when(demoDataService.resolveUserId(eq("2"))).thenReturn(5L);
         when(taskRepository.save(any(Task.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         mockMvc.perform(patch("/api/v1/projects/demo-project/tasks/42")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"assigneeId\":\"2\"}"))
+                .content("{\"assigneeId\":\"5\"}"))
             .andExpect(status().isOk());
 
         verify(notificationService).notify(eq(5L), eq("TASK_ASSIGNED"), any(), any(), eq("task"), any());
@@ -164,12 +176,11 @@ class TaskControllerUpdateTest {
         // 기존 인제스트된 청크의 assignee_id를 동기화하는 호출이 나가야 한다.
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(anyLong())).thenReturn(Optional.of(existingTask()));
-        when(demoDataService.resolveUserId(eq("2"))).thenReturn(5L);
         when(taskRepository.save(any(Task.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         mockMvc.perform(patch("/api/v1/projects/demo-project/tasks/42")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"assigneeId\":\"2\"}"))
+                .content("{\"assigneeId\":\"5\"}"))
             .andExpect(status().isOk());
 
         // existingTask()는 id를 명시적으로 설정하지 않는 픽스처라 getId()가 null이다
