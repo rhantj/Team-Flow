@@ -216,7 +216,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
 docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
   sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin ping'
 docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
-  sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin CONFIG GET appendonly appendfsync maxmemory-policy'
+  sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin CONFIG GET appendonly appendfsync maxmemory maxmemory-policy auto-aof-rewrite-percentage auto-aof-rewrite-min-size'
 docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
   sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin XINFO GROUPS meeting-analysis' \
   | grep -qx meeting-analysis-workers
@@ -306,6 +306,46 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml restart backend-
 재생성 후 Redis PING, `XLEN`, `XPENDING` 비교가 모두 통과해야 한다. named volume의 AOF가 유지되지 않으면
 추가 업로드를 중단하고 복구한다.
 
+### queue drain 후 AOF plaintext 제거
+
+AOF에는 삭제 전 회의 payload가 평문으로 남을 수 있다. 신규 업로드를 막고 queue를 정상 처리한 뒤,
+`XLEN`과 `XPENDING`이 모두 정확한 숫자 `0`일 때만 인증된 `BGREWRITEAOF`를 실행한다. 이 절차에서
+`XRANGE`, `XREAD`, `GET` 등으로 payload 조회 금지이며 개수와 persistence 상태만 확인한다.
+
+```bash
+queue_length=$(docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
+  sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin XLEN meeting-analysis')
+queue_pending=$(docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
+  sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin XPENDING meeting-analysis meeting-analysis-workers' \
+  | sed -n '1p')
+printf '%s\n' "$queue_length" | grep -Eq '^[0-9]+$'
+printf '%s\n' "$queue_pending" | grep -Eq '^[0-9]+$'
+test "$queue_length" = 0
+test "$queue_pending" = 0
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
+  sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin BGREWRITEAOF' \
+  | grep -Eq 'Background append only file rewriting started|Background append only file rewriting scheduled'
+rewrite_ok=0
+for attempt in $(seq 1 60); do
+  rewrite_status=$(docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
+    sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin INFO persistence' \
+    | grep -E '^(aof_rewrite_in_progress|aof_rewrite_scheduled|aof_last_bgrewrite_status):')
+  if printf '%s\n' "$rewrite_status" | grep -q '^aof_rewrite_in_progress:0' \
+    && printf '%s\n' "$rewrite_status" | grep -q '^aof_rewrite_scheduled:0' \
+    && printf '%s\n' "$rewrite_status" | grep -q '^aof_last_bgrewrite_status:ok'; then
+    rewrite_ok=1
+    break
+  fi
+  sleep 2
+done
+test "$rewrite_ok" = 1
+```
+
+`unavailable`, 빈 값, 비숫자 또는 0이 아닌 값이면 fail closed로 중단하고 manual drain/compensation을
+완료한 뒤 다시 실행한다. 또한 OCI 콘솔에서 Redis 데이터가 있는 boot/block volume과 backup의 저장
+암호화가 활성화됐는지, volume 접근 권한이 최소 인원으로 제한됐는지, backup 보존 기간과 삭제 정책이
+승인된 운영 정책과 일치하는지 확인한다.
+
 ### Redis enqueue 실패가 FAILED로 전환되는지 확인
 
 테스트 회의만 사용한다. Redis를 멈춘 상태에서 UI로 회의록을 한 건 업로드하고, 응답으로 받은 회의가
@@ -346,8 +386,51 @@ echo "payload marker absent from logs"
 ### rollback 전 queue 주의
 
 이전 코드는 Redis Stream을 drain할 수 없습니다. rollback 전에 반드시 `XLEN meeting-analysis`와
-`XPENDING meeting-analysis meeting-analysis-workers`의 개수만 기록한다. 0이 아니라면 신규 업로드를
-막고 현재 버전에서 drain하거나, DB 상태를 확인해 운영자가 복구 결정을 내린 뒤 rollback한다.
+`XPENDING meeting-analysis meeting-analysis-workers`의 개수만 기록한다. 두 값이 정확한 숫자 `0/0`인
+경우에만 자동 rollback한다. 하나라도 `unavailable`, 빈 값, 비숫자 또는 0이 아닌 값이면 fail closed로
+자동 rollback을 중단하고 신규 업로드를 막은 뒤 manual drain/compensation을 완료한다.
+
+자동 rollback workflow는 최종 지표 수집 직전에 실행 중인 Spring을
+`docker stop --time 60 workflow-backend-spring`으로 먼저 정지해 ingress와 Worker를 quiesce한다.
+컨테이너가 없거나 이미 정지된 경우는 그대로 진행하지만, 실행 중인 컨테이너 정지에 실패하면 rollback을
+중단한다. 최종 지표가 0/0이 아니거나 조회 불가이면 다음 절차로 현재 feature 버전을 drain한다.
+payload 조회와 수동 XACK/XDEL 금지이며 개수만 확인한다.
+
+```bash
+docker stop workflow-frontend
+docker start workflow-backend-spring
+drain_complete=0
+for attempt in $(seq 1 60); do
+  drain_length=$(docker exec workflow-redis \
+    sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin XLEN meeting-analysis' \
+    2>/dev/null || printf unavailable)
+  drain_pending=$(docker exec workflow-redis \
+    sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin XPENDING meeting-analysis meeting-analysis-workers' \
+    2>/dev/null | sed -n '1p' || printf unavailable)
+  if printf '%s\n' "$drain_length" | grep -Eq '^[0-9]+$' \
+    && printf '%s\n' "$drain_pending" | grep -Eq '^[0-9]+$' \
+    && [ "$drain_length" -eq 0 ] && [ "$drain_pending" -eq 0 ]; then
+    drain_complete=1
+    break
+  fi
+  sleep 5
+done
+docker stop --time 60 workflow-backend-spring
+test "$drain_complete" = 1
+final_length=$(docker exec workflow-redis \
+  sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin XLEN meeting-analysis')
+final_pending=$(docker exec workflow-redis \
+  sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin XPENDING meeting-analysis meeting-analysis-workers' \
+  | sed -n '1p')
+printf '%s\n' "$final_length" | grep -Eq '^[0-9]+$'
+printf '%s\n' "$final_pending" | grep -Eq '^[0-9]+$'
+test "$final_length" = 0
+test "$final_pending" = 0
+```
+
+최종 0/0 확인 후에만 선택한 버전으로 수동 rollback하거나 DB compensation을 완료한다. Redis PING,
+선택 버전의 local FastAPI/Spring health와 consumer group을 확인한 다음에만
+`docker start workflow-frontend`로 public ingress를 복구한다.
 
 ## 문제 해결
 

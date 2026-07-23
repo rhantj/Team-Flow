@@ -6,7 +6,19 @@ app_dir="${repo_root}/App"
 tmp_dir="$(mktemp -d)"
 project_name="workflow-redis-acl-test-$$"
 smoke_override="${tmp_dir}/smoke.override.yml"
+enqueue_script="${app_dir}/backend_spring/src/main/resources/redis/meeting-analysis-enqueue.lua"
+enqueue_script_container="/run/workflow-redis/meeting-analysis-enqueue.lua"
 smoke_started=0
+smoke_completed=0
+smoke_mode="${RUN_REDIS_SMOKE:-auto}"
+
+case "${smoke_mode}" in
+  0|1|auto) ;;
+  *)
+    printf '%s\n' "RUN_REDIS_SMOKE must be 0, 1, or auto" >&2
+    exit 1
+    ;;
+esac
 
 cleanup() {
   if [ "${smoke_started}" -eq 1 ]; then
@@ -35,29 +47,53 @@ HUGGINGFACEHUB_API_TOKEN=TestHuggingFaceToken_1234567890123
 REDIS_ADMIN_PASSWORD=AdminPassword_123456789012345678
 REDIS_SPRING_PASSWORD=SpringPassword_12345678901234567
 REDIS_FASTAPI_PASSWORD=FastApiPassword_1234567890123456
+REDIS_HOST_PORT=16379
+REDIS_MAXMEMORY=64mb
 EOF
 chmod 600 "${tmp_dir}/compose.env"
 cat >"${smoke_override}" <<EOF
 services:
   redis:
     container_name: ${project_name}-redis
+    volumes:
+      - ${enqueue_script}:${enqueue_script_container}:ro
 EOF
 chmod 600 "${smoke_override}"
 
 rendered_config="${tmp_dir}/compose.json"
+base_rendered_config="${tmp_dir}/base-compose.json"
+smoke_rendered_config="${tmp_dir}/smoke-compose.json"
+docker compose \
+  --env-file "${tmp_dir}/compose.env" \
+  -f "${app_dir}/docker-compose.yml" \
+  config --format json >"${base_rendered_config}"
+chmod 600 "${base_rendered_config}"
+
 docker compose \
   --env-file "${tmp_dir}/compose.env" \
   -f "${app_dir}/docker-compose.yml" \
   -f "${app_dir}/docker-compose.prod.yml" \
   config --format json >"${rendered_config}"
 chmod 600 "${rendered_config}"
+docker compose \
+  --env-file "${tmp_dir}/compose.env" \
+  -f "${app_dir}/docker-compose.yml" \
+  -f "${app_dir}/docker-compose.prod.yml" \
+  -f "${smoke_override}" \
+  config --format json >"${smoke_rendered_config}"
+chmod 600 "${smoke_rendered_config}"
 
-python3 - "${rendered_config}" <<'PY'
+python3 - "${rendered_config}" "${base_rendered_config}" "${smoke_rendered_config}" \
+  "${enqueue_script}" "${enqueue_script_container}" <<'PY'
 import json
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as stream:
     config = json.load(stream)
+with open(sys.argv[2], encoding="utf-8") as stream:
+    base_config = json.load(stream)
+with open(sys.argv[3], encoding="utf-8") as stream:
+    smoke_config = json.load(stream)
 
 services = config["services"]
 redis = services["redis"]
@@ -70,8 +106,28 @@ assert any(
     for volume in redis.get("volumes", [])
 ), "Redis must mount the redis-data named volume at /data"
 
+base_redis_ports = base_config["services"]["redis"].get("ports", [])
+assert len(base_redis_ports) == 1, "base Redis must publish exactly one loopback port"
+assert base_redis_ports[0].get("host_ip") == "127.0.0.1"
+assert str(base_redis_ports[0].get("published")) == "16379"
+assert int(base_redis_ports[0].get("target")) == 6379
+assert any(
+    volume.get("type") == "bind"
+    and volume.get("source") == sys.argv[4]
+    and volume.get("target") == sys.argv[5]
+    and volume.get("read_only") is True
+    for volume in smoke_config["services"]["redis"].get("volumes", [])
+), "runtime smoke must mount the production enqueue Lua resource read-only"
+
 command = " ".join(redis.get("command", []))
-for expected in ("--appendonly yes", "--appendfsync everysec", "--maxmemory-policy noeviction"):
+for expected in (
+    "--appendonly yes",
+    "--appendfsync everysec",
+    "--maxmemory-policy noeviction",
+    "--maxmemory 64mb",
+    "--auto-aof-rewrite-percentage 50",
+    "--auto-aof-rewrite-min-size 16mb",
+):
     assert expected in command, f"Redis command is missing {expected}"
 
 redis_env = redis["environment"]
@@ -98,10 +154,17 @@ for variable in REDIS_ADMIN_PASSWORD REDIS_SPRING_PASSWORD REDIS_FASTAPI_PASSWOR
   grep -Eq "${variable}: *\\$\\{${variable}:\\?" "${app_dir}/docker-compose.prod.yml"
   grep -q "^${variable}=$" "${app_dir}/.env.example"
 done
+grep -q '^REDIS_HOST_PORT=6379$' "${app_dir}/.env.example"
+grep -q '^REDIS_MAXMEMORY=512mb$' "${app_dir}/.env.example"
+grep -Fq "'127.0.0.1:\${REDIS_HOST_PORT:-6379}:6379'" "${app_dir}/docker-compose.yml"
+grep -Fq -- '--maxmemory' "${app_dir}/docker-compose.yml"
+grep -Fq -- '${REDIS_MAXMEMORY:-512mb}' "${app_dir}/docker-compose.yml"
+grep -Fq -- '--auto-aof-rewrite-percentage' "${app_dir}/docker-compose.yml"
+grep -Fq -- '--auto-aof-rewrite-min-size' "${app_dir}/docker-compose.yml"
 
 grep -q 'user default off' "${app_dir}/redis/users.acl.template"
 grep -Fq 'user admin on >__ADMIN_PASSWORD__ ~* &* +@all' "${app_dir}/redis/users.acl.template"
-grep -Fq 'user spring on >__SPRING_PASSWORD__ resetkeys ~meeting-analysis* -@all +ping +hello +client|setinfo +client|setname +select +xadd +xgroup +xreadgroup +xack +xdel +eval +evalsha' \
+grep -Fq 'user spring on >__SPRING_PASSWORD__ resetkeys ~meeting-analysis* -@all +ping +hello +client|setinfo +client|setname +select +xadd +xlen +xgroup +xreadgroup +xack +xdel +eval +evalsha' \
   "${app_dir}/redis/users.acl.template"
 grep -Fq 'user fastapi on >__FASTAPI_PASSWORD__ resetkeys ~meeting_analysis:* ~rag_answer:* -@all +ping +hello +client|setinfo +client|setname +select +get +set +del' \
   "${app_dir}/redis/users.acl.template"
@@ -111,6 +174,12 @@ if grep -Eq '(^|[[:space:]])\+client([[:space:]]|$)' "${app_dir}/redis/users.acl
 fi
 grep -q 'chmod 600' "${app_dir}/redis/redis-entrypoint.sh"
 grep -Eq '영문 대소문자.*숫자.*_.*-' "${app_dir}/.env.example"
+test -f "${enqueue_script}"
+grep -Fq "redis.acl_check_cmd('XLEN'" "${enqueue_script}"
+grep -Fq "redis.acl_check_cmd('XADD'" "${enqueue_script}"
+grep -Fq "return 'QUEUE_FULL'" "${enqueue_script}"
+grep -Fq 'ClassPathResource("redis/meeting-analysis-enqueue.lua")' \
+  "${app_dir}/backend_spring/src/main/java/com/workflowai/meeting/MeetingAnalysisJobPublisher.java"
 
 workflow="${repo_root}/.github/workflows/deploy-oci.yml"
 runbook="${app_dir}/DEPLOY_OCI.md"
@@ -137,6 +206,12 @@ assert_contains "${workflow}" 'https://${{ secrets.OCI_DOMAIN }}/api/v1/health' 
 assert_contains "${workflow}" 'XLEN meeting-analysis' "rollback queue length metric"
 assert_contains "${workflow}" 'XPENDING meeting-analysis meeting-analysis-workers' "rollback pending metric"
 assert_contains "${workflow}" '이전 코드는 Redis Stream을 drain할 수 없습니다' "rollback queue warning"
+assert_contains "${workflow}" '^[0-9]+$' "numeric rollback metric validation"
+assert_contains "${workflow}" '[ "$queue_length" -ne 0 ]' "nonzero queue length rollback gate"
+assert_contains "${workflow}" '[ "$queue_pending" -ne 0 ]' "nonzero pending rollback gate"
+assert_contains "${workflow}" 'Automatic rollback blocked' "fail-closed rollback message"
+assert_contains "${workflow}" 'manual drain/compensation required' "manual recovery requirement"
+assert_contains "${workflow}" 'docker stop --time 60 workflow-backend-spring' "rollback Spring quiesce"
 config_line=$(grep -nF 'config --quiet' "${workflow}" | head -n 1 | cut -d: -f1)
 up_line=$(grep -nF 'docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build' \
   "${workflow}" | head -n 1 | cut -d: -f1)
@@ -144,6 +219,9 @@ readiness_loop_line=$(grep -nF 'for attempt in $(seq 1 30)' "${workflow}" | head
 readiness_end_line=$(grep -nF 'if [ "$internal_ready" -ne 1 ]' "${workflow}" | head -n 1 | cut -d: -f1)
 rollback_length_line=$(grep -nF 'queue_length=$(docker exec workflow-redis' "${workflow}" | cut -d: -f1)
 rollback_pending_line=$(grep -nF 'queue_pending=$(docker exec workflow-redis' "${workflow}" | cut -d: -f1)
+rollback_stop_line=$(grep -nF 'docker stop --time 60 workflow-backend-spring' "${workflow}" | cut -d: -f1)
+rollback_numeric_gate_line=$(grep -nF '^[0-9]+$' "${workflow}" | head -n 1 | cut -d: -f1)
+rollback_zero_gate_line=$(grep -nF '[ "$queue_length" -ne 0 ]' "${workflow}" | head -n 1 | cut -d: -f1)
 rollback_reset_line=$(grep -nF 'git reset --hard deploy-previous' "${workflow}" | cut -d: -f1)
 test "${config_line}" -lt "${up_line}"
 for readiness_command in 'redis-cli --raw --user admin ping' \
@@ -153,8 +231,11 @@ for readiness_command in 'redis-cli --raw --user admin ping' \
   test "${command_line}" -gt "${readiness_loop_line}"
   test "${command_line}" -lt "${readiness_end_line}"
 done
+test "${rollback_stop_line}" -lt "${rollback_length_line}"
 test "${rollback_length_line}" -lt "${rollback_pending_line}"
-test "${rollback_pending_line}" -lt "${rollback_reset_line}"
+test "${rollback_pending_line}" -lt "${rollback_numeric_gate_line}"
+test "${rollback_numeric_gate_line}" -lt "${rollback_zero_gate_line}"
+test "${rollback_zero_gate_line}" -lt "${rollback_reset_line}"
 if grep -Eq '(^|[[:space:]])(source[[:space:]]+|\.[[:space:]]+\.\/\.env|set[[:space:]]+-a)' "${workflow}"; then
   printf '%s\n' "deploy workflow must not execute Compose dotenv as shell code" >&2
   exit 1
@@ -182,7 +263,12 @@ if grep -Eq '^(HF_TOKEN|HUGGINGFACEHUB_API_TOKEN|LANGSMITH_API_KEY|GOOGLE_CLIENT
   exit 1
 fi
 for scenario in "appendonly" "ACL" "pending 복구" "force-recreate redis" "FAILED" \
-  "meeting_analysis:" "rag_answer:" "payload" "로그"; do
+  "meeting_analysis:" "rag_answer:" "payload" "로그" "BGREWRITEAOF" \
+  "aof_last_bgrewrite_status" "암호화" "접근 권한" "보존 기간" \
+  "unavailable" "manual drain/compensation" "aof_rewrite_scheduled:0" \
+  "docker stop --time 60 workflow-backend-spring" "docker stop workflow-frontend" \
+  "docker start workflow-backend-spring" 'drain_complete=0' 'final_length=' \
+  'test "$final_length" = 0' "docker start workflow-frontend" "수동 XACK/XDEL 금지"; do
   assert_contains "${runbook}" "${scenario}" "OCI Redis verification scenario ${scenario}"
 done
 
@@ -191,6 +277,27 @@ assert_contains "${troubleshooting}" 'XLEN meeting-analysis' "queue length diagn
 assert_contains "${troubleshooting}" 'XPENDING meeting-analysis meeting-analysis-workers' "pending diagnosis"
 assert_contains "${troubleshooting}" 'XINFO GROUPS meeting-analysis' "consumer group diagnosis"
 assert_contains "${troubleshooting}" '이전 코드는 Redis Stream을 drain할 수 없습니다' "rollback recovery caution"
+for scenario in "BGREWRITEAOF" "aof_last_bgrewrite_status" "암호화" "접근 권한" \
+  "보존 기간" "unavailable" "manual drain/compensation" "payload 조회 금지" \
+  "aof_rewrite_scheduled:0" "docker stop --time 60 workflow-backend-spring" \
+  "docker stop workflow-frontend" "docker start workflow-backend-spring" \
+  'drain_complete=0' 'final_length=' 'test "$final_length" = 0' \
+  "docker start workflow-frontend" "수동 XACK/XDEL 금지"; do
+  assert_contains "${troubleshooting}" "${scenario}" "fail-closed Redis recovery ${scenario}"
+done
+for recovery_doc in "${runbook}" "${troubleshooting}"; do
+  ingress_stop_line=$(grep -nF 'docker stop workflow-frontend' "${recovery_doc}" | tail -n 1 | cut -d: -f1)
+  drain_start_line=$(grep -nF 'docker start workflow-backend-spring' "${recovery_doc}" | tail -n 1 | cut -d: -f1)
+  drain_monitor_line=$(grep -nF 'drain_complete=0' "${recovery_doc}" | tail -n 1 | cut -d: -f1)
+  final_stop_line=$(grep -nF 'docker stop --time 60 workflow-backend-spring' "${recovery_doc}" | tail -n 1 | cut -d: -f1)
+  final_metric_line=$(grep -nF 'final_length=' "${recovery_doc}" | tail -n 1 | cut -d: -f1)
+  frontend_start_line=$(grep -nF 'docker start workflow-frontend' "${recovery_doc}" | tail -n 1 | cut -d: -f1)
+  test "${ingress_stop_line}" -lt "${drain_start_line}"
+  test "${drain_start_line}" -lt "${drain_monitor_line}"
+  test "${drain_monitor_line}" -lt "${final_stop_line}"
+  test "${final_stop_line}" -lt "${final_metric_line}"
+  test "${final_metric_line}" -lt "${frontend_start_line}"
+done
 if grep -Eq '(^|[[:space:]])set[[:space:]]+-x([[:space:]]|$)' "${troubleshooting}"; then
   printf '%s\n' "troubleshooting commands must never enable shell tracing" >&2
   exit 1
@@ -202,7 +309,18 @@ fi
 assert_contains "${troubleshooting}" 'spring_ready=0' "bounded Spring recovery readiness"
 assert_contains "${troubleshooting}" 'test "$spring_ready" = 1' "Spring recovery failure gate"
 
-if [ "${RUN_REDIS_SMOKE:-auto}" != "0" ] \
+if [ "${smoke_mode}" = "1" ]; then
+  if ! docker info >/dev/null 2>&1; then
+    printf '%s\n' "Redis runtime smoke required, but Docker is unavailable" >&2
+    exit 1
+  fi
+  if ! docker image inspect redis:7-alpine >/dev/null 2>&1; then
+    printf '%s\n' "Redis runtime smoke required, but redis:7-alpine is unavailable" >&2
+    exit 1
+  fi
+fi
+
+if [ "${smoke_mode}" != "0" ] \
   && docker info >/dev/null 2>&1 \
   && docker image inspect redis:7-alpine >/dev/null 2>&1; then
   smoke_started=1
@@ -251,6 +369,9 @@ if [ "${RUN_REDIS_SMOKE:-auto}" != "0" ] \
       [ "$(admin config get appendonly | tail -n 1)" = "yes" ]
       [ "$(admin config get appendfsync | tail -n 1)" = "everysec" ]
       [ "$(admin config get maxmemory-policy | tail -n 1)" = "noeviction" ]
+      [ "$(admin config get maxmemory | tail -n 1)" = "67108864" ]
+      [ "$(admin config get auto-aof-rewrite-percentage | tail -n 1)" = "50" ]
+      [ "$(admin config get auto-aof-rewrite-min-size | tail -n 1)" = "16777216" ]
 
       default_denied="$(redis-cli --raw ping 2>&1 || true)"
       case "$default_denied" in
@@ -279,6 +400,25 @@ if [ "${RUN_REDIS_SMOKE:-auto}" != "0" ] \
         redis.call(\"XACK\", KEYS[1], ARGV[1], ARGV[2])
         return redis.call(\"XDEL\", KEYS[1], ARGV[2])
       "
+      publisher_script="$(cat /run/workflow-redis/meeting-analysis-enqueue.lua)"
+      publisher_stream=meeting-analysis:publisher-acl-smoke
+      publisher_eval="$(spring eval "$publisher_script" 1 "$publisher_stream" 2 fixture-eval)"
+      case "$publisher_eval" in
+        [0-9]*-[0-9]*) ;;
+        *) exit 1 ;;
+      esac
+      [ "$(spring xlen "$publisher_stream")" = "1" ]
+      publisher_sha="$(admin script load "$publisher_script")"
+      publisher_evalsha="$(spring evalsha "$publisher_sha" 1 "$publisher_stream" 2 fixture-evalsha)"
+      case "$publisher_evalsha" in
+        [0-9]*-[0-9]*) ;;
+        *) exit 1 ;;
+      esac
+      [ "$(spring xlen "$publisher_stream")" = "2" ]
+      [ "$(spring eval "$publisher_script" 1 "$publisher_stream" 2 fixture-full-eval)" = "QUEUE_FULL" ]
+      [ "$(spring xlen "$publisher_stream")" = "2" ]
+      [ "$(spring evalsha "$publisher_sha" 1 "$publisher_stream" 2 fixture-full-evalsha)" = "QUEUE_FULL" ]
+      [ "$(spring xlen "$publisher_stream")" = "2" ]
 
       first_id="$(spring xadd "$stream" "*" payload fixture-one)"
       spring xgroup create "$stream" "$group" 0 >/dev/null
@@ -316,6 +456,14 @@ if [ "${RUN_REDIS_SMOKE:-auto}" != "0" ] \
       esac
       [ "$(admin exists meeting-analysis:forbidden)" = "0" ]
     '
+  smoke_completed=1
 fi
 
-printf '%s\n' "Redis Compose security checks passed"
+printf '%s\n' "Redis Compose static security checks passed"
+if [ "${smoke_completed}" -eq 1 ]; then
+  printf '%s\n' "Redis runtime ACL/AOF smoke passed"
+elif [ "${smoke_mode}" = "auto" ]; then
+  printf '%s\n' "Redis runtime ACL/AOF smoke skipped (Docker or image unavailable)"
+else
+  printf '%s\n' "Redis runtime ACL/AOF smoke disabled"
+fi

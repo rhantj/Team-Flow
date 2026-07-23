@@ -88,6 +88,15 @@ jobs:
           ssh -i ~/.ssh/oci_deploy_key "${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }}" '
             set -e
             cd /home/ubuntu/work-flow/App
+            if docker ps -a --format "{{.Names}}" | grep -qx workflow-backend-spring; then
+              spring_running=$(docker inspect --format "{{.State.Running}}" workflow-backend-spring)
+              if [ "$spring_running" = "true" ]; then
+                docker stop --time 60 workflow-backend-spring
+              elif [ "$spring_running" != "false" ]; then
+                echo "Automatic rollback blocked: unable to quiesce Spring; manual intervention required."
+                exit 1
+              fi
+            fi
             queue_length=unavailable
             queue_pending=unavailable
             queue_length=$(docker exec workflow-redis \
@@ -100,6 +109,16 @@ jobs:
             [ -n "$queue_pending" ] || queue_pending=unavailable
             echo "Redis queue before rollback: length=${queue_length}, pending=${queue_pending}"
             echo "WARNING: 이전 코드는 Redis Stream을 drain할 수 없습니다. 처리 중 작업은 운영자가 확인해야 합니다."
+
+            if ! printf "%s\n" "$queue_length" | grep -Eq "^[0-9]+$" \
+              || ! printf "%s\n" "$queue_pending" | grep -Eq "^[0-9]+$"; then
+              echo "Automatic rollback blocked: queue metrics unavailable or non-numeric; manual drain/compensation required."
+              exit 1
+            fi
+            if [ "$queue_length" -ne 0 ] || [ "$queue_pending" -ne 0 ]; then
+              echo "Automatic rollback blocked: queue is not drained; manual drain/compensation required."
+              exit 1
+            fi
 
             cd ..
             echo "rolling back to $(git rev-parse deploy-previous)"
