@@ -26,6 +26,8 @@ import java.util.stream.Collectors;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -44,6 +46,7 @@ import org.springframework.web.multipart.MultipartFile;
 @RestController
 @RequestMapping("/api/v1/me")
 public class MeController {
+    private static final Logger log = LoggerFactory.getLogger(MeController.class);
     private static final Set<String> ALLOWED_AVATAR_TYPES = Set.of("image/png", "image/jpeg");
     private static final long MAX_AVATAR_BYTES = 10L * 1024 * 1024;
     private static final int MAX_AVATAR_DIMENSION = 2000;
@@ -333,8 +336,9 @@ public class MeController {
     }
 
     /**
-     * DB 반영이 확인된 뒤에만 호출한다. 정리 실패는 무시한다 — orphan 파일만 남을 뿐 서비스에는
-     * 영향 없다. relativePath는 항상 storeAvatar()가 만든 값이라 정상적으로는 안전하지만,
+     * DB 반영이 확인된 뒤에만 호출한다. 정리가 실패해도 요청은 실패시키지 않는다 — orphan
+     * 파일만 남을 뿐 서비스 동작에는 영향 없다. relativePath는 항상 storeAvatar()가 만든
+     * 값이라 정상적으로는 안전하지만,
      * DB 값이 손상/변조됐을 가능성까지 방어적으로 차단하기 위해 avatars 디렉터리를 벗어나는
      * 경로는 지우지 않는다 (MeetingAnalysisService의 zip-slip 가드와 동일한 패턴). 여기에 더해
      * 파일명이 userId 소유가 맞는지도 확인한다 — storeAvatar가 만드는 파일명은 항상
@@ -342,19 +346,26 @@ public class MeController {
      * 확인하는 이유는 profile_image_path가 (버그나 DB 직접 조작으로) 다른 유저의 경로를 가리키게
      * 되는 이상 상황이 생기더라도, 그 값을 그대로 믿고 지워서 남의 아바타 파일을 삭제하는 사고를
      * 막기 위해서다.
+     * 정리가 실패하거나 거부되면 요청 자체는 여전히 성공으로 응답한다(DB는 이미 정확한
+     * 상태이므로) — 대신 WARN 로그를 남긴다. 그냥 무시하면 디스크 권한/네트워크 볼륨 문제 등으로
+     * 정리가 계속 실패해도 아무도 모른 채 고아 파일이 조용히 쌓일 수 있으므로, 최소한 로그로는
+     * 관측 가능하게 한다.
      */
     private void deleteAvatarFile(Long userId, String relativePath) {
         try {
             Path avatarsDir = Path.of(uploadsDir, "avatars").toAbsolutePath().normalize();
             Path target = Path.of(uploadsDir, relativePath).toAbsolutePath().normalize();
             if (!target.startsWith(avatarsDir)) {
+                log.warn("아바타 정리 거부: userId={} 경로가 avatars 디렉터리를 벗어남 ({})", userId, relativePath);
                 return;
             }
             if (!target.getFileName().toString().startsWith(userId + "-")) {
+                log.warn("아바타 정리 거부: userId={} 소유가 아닌 파일명 ({})", userId, relativePath);
                 return;
             }
             Files.deleteIfExists(target);
-        } catch (IOException ignored) {
+        } catch (IOException e) {
+            log.warn("아바타 파일 정리 실패, 고아 파일로 남을 수 있음: userId={} path={}", userId, relativePath, e);
         }
     }
 }
