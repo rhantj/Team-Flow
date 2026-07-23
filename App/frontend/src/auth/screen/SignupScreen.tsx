@@ -1,5 +1,5 @@
 import { useState, type ChangeEvent } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import {
   AlertTriangle,
   ArrowRight,
@@ -24,18 +24,34 @@ import { tokenStore } from "../../global/api/tokenStore";
 
 const demoAuthEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_AUTH === "true";
 
+interface SignupDraft {
+  name: string;
+  email: string;
+  pw: string;
+  pwConfirm: string;
+  isProfessor: boolean;
+  professorNo: string;
+}
+
 export function SignupScreen() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { loginWithGoogle, refreshMe } = useAuth();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [pw, setPw] = useState("");
-  const [pwConfirm, setPwConfirm] = useState("");
+  // /signup/terms에서 돌아올 때 location.state로 이전에 입력하던 값(draft)과 약관 동의 여부를
+  // 넘겨받는다 — 약관 보기 때문에 화면이 언마운트됐다 다시 마운트돼도 입력하던 내용이
+  // 사라지지 않게 하기 위해서다.
+  const navState = location.state as { agreed?: boolean; draft?: SignupDraft } | null;
+  const [name, setName] = useState(navState?.draft?.name ?? "");
+  const [email, setEmail] = useState(navState?.draft?.email ?? "");
+  const [pw, setPw] = useState(navState?.draft?.pw ?? "");
+  const [pwConfirm, setPwConfirm] = useState(navState?.draft?.pwConfirm ?? "");
   const [showPw, setShowPw] = useState(false);
-  const [agreed, setAgreed] = useState(false);
+  // 일반적인 클릭으로는 체크할 수 없다 — /signup/terms에서 약관을 확인하고 돌아올 때만
+  // agreed: true 상태로 마운트되며, 그 외에는 이 컴포넌트 내부에서 값을 바꿀 방법이 없다.
+  const [agreed] = useState(navState?.agreed ?? false);
   const [loading, setLoading] = useState(false);
-  const [isProfessor, setIsProfessor] = useState(false);
-  const [professorNo, setProfessorNo] = useState("");
+  const [isProfessor, setIsProfessor] = useState(navState?.draft?.isProfessor ?? false);
+  const [professorNo, setProfessorNo] = useState(navState?.draft?.professorNo ?? "");
   const [certificateName, setCertificateName] = useState("");
   const [approvalSubmitted, setApprovalSubmitted] = useState(false);
   const [signupError, setSignupError] = useState<string | null>(null);
@@ -259,18 +275,33 @@ export function SignupScreen() {
                 )}
               </div>
 
-              <label className="flex items-start gap-2 mt-5 mb-6 cursor-pointer select-none">
+              <div className="flex items-start gap-2 mt-5 mb-6">
+                {/* 일반적인 클릭으로는 체크할 수 없다 — 약관 보기를 통해 상세 약관을 확인하고
+                    돌아와야만 켜진다(SignupScreen 상단 agreed 초기화 참고). */}
                 <div
-                  onClick={() => setAgreed(v => !v)}
-                  className={`w-4 h-4 rounded border flex items-center justify-center transition-all mt-0.5 cursor-pointer shrink-0 ${agreed ? "border-blue-500 bg-blue-500" : "border-border"}`}
+                  aria-disabled="true"
+                  title="약관 보기를 통해 확인 후 자동으로 체크됩니다"
+                  className={`w-4 h-4 rounded border flex items-center justify-center mt-0.5 shrink-0 ${
+                    agreed ? "border-blue-500 bg-blue-500" : "border-border bg-muted cursor-not-allowed"
+                  }`}
                 >
                   {agreed && <Check className="w-3 h-3 text-white" />}
                 </div>
                 <span className="text-xs text-muted-foreground leading-relaxed">
-                  <button className="font-semibold text-blue-600 hover:text-blue-700">이용약관</button> 및{" "}
-                  <button className="font-semibold text-blue-600 hover:text-blue-700">개인정보처리방침</button>에 동의합니다.
+                  <button
+                    type="button"
+                    onClick={() =>
+                      navigate("/signup/terms", {
+                        state: { draft: { name, email, pw, pwConfirm, isProfessor, professorNo } },
+                      })
+                    }
+                    className="font-semibold text-blue-600 hover:text-blue-700"
+                  >
+                    약관 보기
+                  </button>
+                  를 통해 이용약관 및 개인정보처리방침을 확인하고 동의해주세요.
                 </span>
-              </label>
+              </div>
 
               {signupError && (
                 <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-600">
