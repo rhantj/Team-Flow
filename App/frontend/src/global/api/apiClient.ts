@@ -21,6 +21,9 @@ export class ApiRequestError extends Error {
   }
 }
 
+/** 백엔드에 도달하지 못했거나 백엔드가 일시적으로 처리할 수 없는 상태 — 재시도가 의미 있다. */
+const GATEWAY_STATUSES = new Set([502, 503, 504]);
+
 let refreshPromise: Promise<boolean> | null = null;
 
 async function readJsonEnvelope<T>(response: Response): Promise<ApiEnvelope<T> | null> {
@@ -79,6 +82,16 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}, retry
 
   const body = await readJsonEnvelope<T>(response);
   if (!response.ok) {
+    // 배포로 백엔드 컨테이너가 교체되는 동안 nginx가 502를 반환한다(2026-07-23 운영 사례).
+    // 이때 응답은 nginx가 만드는 HTML이라 error.message가 없어 일반 폴백 문구가 나가는데,
+    // 재시도하면 되는 상황이 영구적인 실패로 오인된다. 일시적임을 명시한다.
+    if (GATEWAY_STATUSES.has(response.status)) {
+      throw new ApiRequestError(
+        body?.error?.message ?? "서버가 일시적으로 응답하지 않습니다. 잠시 후 다시 시도해주세요.",
+        response.status,
+        body?.error?.code ?? "SERVICE_UNAVAILABLE"
+      );
+    }
     const message = body?.error?.message ?? (response.status === 404 ? "요청한 항목을 찾을 수 없습니다." : "요청에 실패했습니다.");
     throw new ApiRequestError(message, response.status, body?.error?.code);
   }
