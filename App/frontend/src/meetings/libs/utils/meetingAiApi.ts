@@ -101,6 +101,7 @@ export interface MeetingSummaryDto {
   analysisStatus: string;
   savedAt: string | null;
   originalMeetingId: string | null;
+  tasksRegistered: boolean;
 }
 
 export async function fetchMeetings(projectId: string): Promise<MeetingSummaryDto[]> {

@@ -9,6 +9,7 @@ export interface Meeting {
   analyzedAt?: string;
   savedAt?: string | null;
   originalMeetingId?: string | null;
+  tasksRegistered?: boolean;
 }
 
 export type UploadFlow = null | "modal" | "analyzing" | "results" | "review" | "done";

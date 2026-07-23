@@ -112,8 +112,8 @@ describe("MeetingsView 홈 탭", () => {
     localStorage.clear();
     vi.clearAllMocks();
     fetchMeetings.mockResolvedValue([
-      { meetingId: "1", title: "저장된 정기회의", meetingDate: "2026-07-19", meetingType: "정기회의", analysisStatus: "completed", savedAt: "2026-07-19T10:00:00", originalMeetingId: null },
-      { meetingId: "2", title: "미저장 준비회의", meetingDate: "2026-07-20", meetingType: "정기회의", analysisStatus: "completed", savedAt: null, originalMeetingId: null },
+      { meetingId: "1", title: "저장된 정기회의", meetingDate: "2026-07-19", meetingType: "정기회의", analysisStatus: "completed", savedAt: "2026-07-19T10:00:00", originalMeetingId: null, tasksRegistered: false },
+      { meetingId: "2", title: "미저장 준비회의", meetingDate: "2026-07-20", meetingType: "정기회의", analysisStatus: "completed", savedAt: null, originalMeetingId: null, tasksRegistered: false },
     ]);
     fetchMeeting.mockResolvedValue({
       meetingId: "1",
@@ -143,5 +143,71 @@ describe("MeetingsView 홈 탭", () => {
 
     expect(screen.getByText("저장된 정기회의")).toBeInTheDocument();
     expect(screen.queryByText("미저장 준비회의")).not.toBeInTheDocument();
+  });
+
+  it("역할분배·업무등록이 안 된 저장 회의록에는 '등록완료' 배지가 보이지 않는다", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/meetings"]}>
+        <MeetingsView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(fetchMeetings).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "저장된 회의록" }));
+
+    expect(await screen.findByText("저장된 정기회의")).toBeInTheDocument();
+    expect(screen.queryByText("등록완료")).not.toBeInTheDocument();
+  });
+
+  it("역할분배·업무등록이 완료된 저장 회의록에는 '등록완료' 배지가 보이고, 원본이면 '수정됨' 배지는 보이지 않는다", async () => {
+    fetchMeetings.mockResolvedValue([
+      { meetingId: "3", title: "등록완료된 회의", meetingDate: "2026-07-21", meetingType: "정기회의", analysisStatus: "completed", savedAt: "2026-07-21T10:00:00", originalMeetingId: null, tasksRegistered: true },
+    ]);
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/meetings"]}>
+        <MeetingsView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(fetchMeetings).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "저장된 회의록" }));
+
+    expect(await screen.findByText("등록완료")).toBeInTheDocument();
+    expect(screen.queryByText("수정됨")).not.toBeInTheDocument();
+  });
+
+  it("수정본이면서 등록완료된 저장 회의록에는 '등록완료'와 '수정됨' 배지가 모두 보인다", async () => {
+    fetchMeetings.mockResolvedValue([
+      { meetingId: "4", title: "수정된 회의", meetingDate: "2026-07-22", meetingType: "정기회의", analysisStatus: "completed", savedAt: "2026-07-22T10:00:00", originalMeetingId: "3", tasksRegistered: true },
+    ]);
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/meetings"]}>
+        <MeetingsView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(fetchMeetings).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "저장된 회의록" }));
+
+    expect(await screen.findByText("등록완료")).toBeInTheDocument();
+    expect(await screen.findByText("수정됨")).toBeInTheDocument();
+  });
+
+  it("저장된 회의록 카드를 클릭하면 분석/업로드 탭으로 전환되어 상세 결과를 볼 수 있다", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/meetings"]}>
+        <MeetingsView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(fetchMeetings).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "저장된 회의록" }));
+    await user.click(await screen.findByText("저장된 정기회의"));
+
+    expect(screen.getByRole("button", { name: "분석/업로드" })).toHaveClass("border-blue-600");
   });
 });

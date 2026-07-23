@@ -605,6 +605,7 @@ export function MeetingsView() {
             status,
             savedAt: dto.savedAt,
             originalMeetingId: dto.originalMeetingId,
+            tasksRegistered: dto.tasksRegistered,
           };
           // 목록 API는 요약만 내려주므로, 이미 상세 분석 결과를 캐시해둔 회의록은 그 결과를 보존한다.
           // 그렇지 않으면 탭을 옮겼다가 돌아올 때마다 상세 조회를 다시 하게 되어 화면이 늦게 뜬다.
@@ -2327,20 +2328,23 @@ export function MeetingsView() {
           ) : (
             <div className="space-y-2 max-w-2xl">
               {savedMeetingsList.map(m => (
-                <div key={m.id} onClick={() => setSelected(m.id)}
+                <div key={m.id} onClick={() => { setSelected(m.id); setHomeTab("analyze"); }}
                   role="button"
                   tabIndex={0}
                   onKeyDown={event => {
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
                       setSelected(m.id);
+                      setHomeTab("analyze");
                     }
                   }}
                   className="w-full text-left p-3 rounded-lg border border-border bg-card hover:bg-muted transition-all cursor-pointer">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-[10px] font-mono text-muted-foreground">{m.date}</span>
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-600">등록완료</span>
+                      {m.tasksRegistered && (
+                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-600">등록완료</span>
+                      )}
                       {m.originalMeetingId && (
                         <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">수정됨</span>
                       )}

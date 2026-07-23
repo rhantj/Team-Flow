@@ -223,6 +223,41 @@ class MeetingAnalysisServiceTest {
     }
 
     @Test
+    void findByProjectMarksTasksRegisteredTrueWhenAnActionItemHasBeenTurnedIntoATask() {
+        mockMember(1L);
+        Meeting meeting = new Meeting(1L, "정기회의", "document", "/tmp/x.txt", "completed", LocalDate.now(), "정기회의", "x.txt", null, 5L);
+        ReflectionTestUtils.setField(meeting, "id", 10L);
+        when(meetingRepository.findByProjectIdOrderByCreatedAtDesc(1L)).thenReturn(List.of(meeting));
+
+        MeetingActionItem registeredItem = new MeetingActionItem(10L, "할일", "설명", "BACKEND", null, 2L, null, "HIGH", "근거");
+        registeredItem.setCreatedTaskId(99L);
+        when(meetingActionItemRepository.findByMeetingIdIn(List.of(10L))).thenReturn(List.of(registeredItem));
+        MeetingAnalysisService service = newService();
+
+        List<MeetingSummary> result = service.findByProject("demo-project");
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).tasksRegistered()).isTrue();
+    }
+
+    @Test
+    void findByProjectMarksTasksRegisteredFalseWhenNoActionItemHasBeenTurnedIntoATask() {
+        mockMember(1L);
+        Meeting meeting = new Meeting(1L, "정기회의", "document", "/tmp/x.txt", "completed", LocalDate.now(), "정기회의", "x.txt", null, 5L);
+        ReflectionTestUtils.setField(meeting, "id", 10L);
+        when(meetingRepository.findByProjectIdOrderByCreatedAtDesc(1L)).thenReturn(List.of(meeting));
+
+        MeetingActionItem unregisteredItem = new MeetingActionItem(10L, "할일", "설명", "BACKEND", null, 2L, null, "HIGH", "근거");
+        when(meetingActionItemRepository.findByMeetingIdIn(List.of(10L))).thenReturn(List.of(unregisteredItem));
+        MeetingAnalysisService service = newService();
+
+        List<MeetingSummary> result = service.findByProject("demo-project");
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).tasksRegistered()).isFalse();
+    }
+
+    @Test
     void deleteReturnsNullWhenMeetingBelongsToAnotherProject() {
         mockMember(1L);
         when(meetingRepository.findByIdAndProjectId(99L, 1L)).thenReturn(Optional.empty());

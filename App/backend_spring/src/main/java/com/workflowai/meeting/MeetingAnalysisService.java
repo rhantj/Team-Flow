@@ -305,7 +305,17 @@ public class MeetingAnalysisService {
 
     public List<MeetingSummary> findByProject(String projectId) {
         Long projectDbId = requireProjectMember(projectId);
-        return meetingRepository.findByProjectIdOrderByCreatedAtDesc(projectDbId).stream()
+        List<Meeting> meetings = meetingRepository.findByProjectIdOrderByCreatedAtDesc(projectDbId);
+
+        List<Long> meetingIds = meetings.stream().map(Meeting::getId).toList();
+        Set<Long> meetingIdsWithRegisteredTasks = meetingIds.isEmpty()
+            ? Set.of()
+            : meetingActionItemRepository.findByMeetingIdIn(meetingIds).stream()
+                .filter(item -> item.getCreatedTaskId() != null)
+                .map(MeetingActionItem::getMeetingId)
+                .collect(Collectors.toSet());
+
+        return meetings.stream()
             .map(m -> new MeetingSummary(
                 String.valueOf(m.getId()),
                 m.getTitle(),
@@ -313,7 +323,8 @@ public class MeetingAnalysisService {
                 m.getMeetingType(),
                 m.getAnalysisStatus(),
                 m.getSavedAt() == null ? null : m.getSavedAt().toString(),
-                m.getOriginalMeetingId() == null ? null : String.valueOf(m.getOriginalMeetingId())
+                m.getOriginalMeetingId() == null ? null : String.valueOf(m.getOriginalMeetingId()),
+                meetingIdsWithRegisteredTasks.contains(m.getId())
             ))
             .toList();
     }
