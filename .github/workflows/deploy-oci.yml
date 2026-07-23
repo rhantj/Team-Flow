@@ -175,8 +175,10 @@ jobs:
             spring_db_password=$(docker inspect workflow-backend-spring \
               --format "{{range .Config.Env}}{{println .}}{{end}}" \
               | sed -n "s/^SPRING_DATASOURCE_PASSWORD=//p" | tail -n 1)
+            # $name/$_는 Go 템플릿 변수다. 이스케이프하지 않으면 원격 셸이 먼저 빈 문자열로
+            # 치환해 "unexpected , in range" 템플릿 오류가 나고 spring_network가 비어버린다.
             spring_network=$(docker inspect workflow-backend-spring \
-              --format "{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}" \
+              --format "{{range \$name, \$_ := .NetworkSettings.Networks}}{{println \$name}}{{end}}" \
               | sed -n "1p")
             if docker ps -a --format "{{.Names}}" | grep -qx workflow-backend-spring; then
               spring_running=$(docker inspect --format "{{.State.Running}}" workflow-backend-spring)
@@ -202,8 +204,10 @@ jobs:
               psql "$spring_psql_url" -U "$spring_db_user" -tA -v ON_ERROR_STOP=1 \
               -c "SELECT source_type FROM rag_assignee_sync_failures" \
               2>/dev/null); then
-              rag_outbox_count=$(printf '%s\n' "$outbox_query_result" \
-                | grep -Ec '^(delete:|delete_project|sync:|ingest:)') || rag_outbox_count=0
+              # 작은따옴표 금지: 이 블록 전체가 ssh에 작은따옴표로 넘어가므로 안쪽 작은따옴표가
+              # 바깥 인용을 닫아버려 괄호가 노출되고 러너에서 bash 문법 오류로 죽는다.
+              rag_outbox_count=$(printf "%s\n" "$outbox_query_result" \
+                | grep -Ec "^(delete:|delete_project|sync:|ingest:)") || rag_outbox_count=0
             fi
             unset spring_db_password outbox_query_result
             [ -n "$queue_length" ] || queue_length=unavailable
