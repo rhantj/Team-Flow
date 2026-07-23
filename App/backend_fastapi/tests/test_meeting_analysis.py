@@ -22,12 +22,19 @@ from app.main import (
 
 
 class FakeMeetingCache:
-    def __init__(self, *, get_error: Exception | None = None, set_error: Exception | None = None):
+    def __init__(
+        self,
+        *,
+        get_error: Exception | None = None,
+        set_error: Exception | None = None,
+        delete_error: Exception | None = None,
+    ):
         self.values: dict[str, str] = {}
         self.set_calls: list[tuple[str, str, int | None]] = []
         self.deleted_keys: list[str] = []
         self.get_error = get_error
         self.set_error = set_error
+        self.delete_error = delete_error
 
     def get(self, key: str) -> str | None:
         if self.get_error:
@@ -41,6 +48,8 @@ class FakeMeetingCache:
         self.set_calls.append((key, value, ex))
 
     def delete(self, key: str) -> None:
+        if self.delete_error:
+            raise self.delete_error
         self.deleted_keys.append(key)
         self.values.pop(key, None)
 
@@ -96,6 +105,77 @@ def test_analyze_json_caches_by_every_result_determining_input(monkeypatch):
 
     assert len(calls) == 10
     assert len({key for key, _, _ in cache.set_calls}) == 10
+    assert all(key.startswith("meeting_analysis:") for key, _, _ in cache.set_calls)
+
+
+def test_analyze_json_cache_key_sorts_participant_copy_without_mutating_request(monkeypatch):
+    monkeypatch.setenv("MEETING_ANALYSIS_PROVIDER", "rule")
+    cache = FakeMeetingCache()
+    monkeypatch.setattr("app.main.get_redis_client", lambda: cache)
+    calls = 0
+
+    def analyze_uncached(request: AnalyzeRequest) -> MeetingAnalysisResult:
+        nonlocal calls
+        calls += 1
+        return _cache_test_result(request)
+
+    monkeypatch.setattr("app.main._analyze_json_uncached", analyze_uncached)
+    first = AnalyzeRequest(text="회의", participants=["김민준", "이서연"])
+    reordered = first.model_copy(update={"participants": ["이서연", "김민준"]})
+
+    analyze_json(first)
+    analyze_json(reordered)
+
+    assert calls == 1
+    assert first.participants == ["김민준", "이서연"]
+    assert reordered.participants == ["이서연", "김민준"]
+
+
+@pytest.mark.parametrize(
+    ("setting", "first_value", "second_value"),
+    [
+        ("OLLAMA_HOST", "http://ollama-a:11434", "http://ollama-b:11434"),
+        ("MEETING_ANALYSIS_MODEL", "model-a", "model-b"),
+        ("MEETING_ANALYSIS_TIMEOUT_SECONDS", "20", "21"),
+        ("MEETING_ANALYSIS_MAX_CHARS", "6000", "5000"),
+        ("MEETING_ANALYSIS_NUM_PREDICT", "650", "700"),
+        ("MEETING_ANALYSIS_KEEP_ALIVE", "5m", "10m"),
+        ("OLLAMA_ANALYSIS_TEMPERATURE", "0.1", "0.2"),
+        ("HF_MEETING_ANALYSIS_ENDPOINT", "https://hf-a.example/v1", "https://hf-b.example/v1"),
+        ("HF_MEETING_ANALYSIS_MODEL", "hf-model-a", "hf-model-b"),
+        ("HF_MEETING_ANALYSIS_TIMEOUT_SECONDS", "35", "36"),
+        ("HF_MEETING_ANALYSIS_MAX_TOKENS", "900", "901"),
+        ("HF_MEETING_ANALYSIS_TEMPERATURE", "0.1", "0.2"),
+        ("HF_TOKEN", "", "configured-test-token"),
+    ],
+)
+def test_analyze_json_cache_misses_when_analysis_setting_changes(
+    monkeypatch,
+    setting,
+    first_value,
+    second_value,
+):
+    monkeypatch.setenv("MEETING_ANALYSIS_PROVIDER", "rule")
+    cache = FakeMeetingCache()
+    monkeypatch.setattr("app.main.get_redis_client", lambda: cache)
+    calls = 0
+
+    def analyze_uncached(request: AnalyzeRequest) -> MeetingAnalysisResult:
+        nonlocal calls
+        calls += 1
+        return _cache_test_result(request)
+
+    monkeypatch.setattr("app.main._analyze_json_uncached", analyze_uncached)
+    request = AnalyzeRequest(text="설정별 캐시 키 검증", participants=["김민준"])
+
+    if setting == "HF_TOKEN":
+        monkeypatch.delenv("HUGGINGFACEHUB_API_TOKEN", raising=False)
+    monkeypatch.setenv(setting, first_value)
+    analyze_json(request)
+    monkeypatch.setenv(setting, second_value)
+    analyze_json(request)
+
+    assert calls == 2
 
 
 @pytest.mark.parametrize("operation", ["client", "get", "set"])
@@ -157,6 +237,24 @@ def test_analyze_json_deletes_corrupt_cache_entry_and_replaces_it(monkeypatch, c
     assert cache.deleted_keys == ["meeting-analysis:test"]
     assert cache.set_calls[0][2] == 86400
     assert "CACHE-VALUE-MUST-NOT-BE-LOGGED" not in caplog.text
+
+
+def test_analyze_json_continues_when_corrupt_cache_delete_fails(monkeypatch, caplog):
+    monkeypatch.setenv("MEETING_ANALYSIS_PROVIDER", "rule")
+    request = AnalyzeRequest(text="DELETE-FAILURE-MUST-NOT-BE-LOGGED", participants=["김민준"])
+    cache = FakeMeetingCache(delete_error=RuntimeError("delete down"))
+    cache.values["meeting_analysis:test"] = "{invalid"
+    monkeypatch.setattr("app.main.get_redis_client", lambda: cache)
+    expected = _cache_test_result(request)
+    monkeypatch.setattr("app.main._analyze_json_uncached", lambda _: expected)
+
+    with patch("app.main._meeting_analysis_cache_key", return_value="meeting_analysis:test"):
+        with caplog.at_level(logging.WARNING):
+            result = analyze_json(request)
+
+    assert result == expected
+    assert cache.set_calls == [("meeting_analysis:test", expected.model_dump_json(), 86400)]
+    assert "DELETE-FAILURE-MUST-NOT-BE-LOGGED" not in caplog.text
 
 
 def test_extracts_assignee_candidate_from_meeting_text_instead_of_rotating_attendees():

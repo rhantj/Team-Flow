@@ -32,13 +32,17 @@ from llm_checklist.app.routers.checklist_router import router as checklist_route
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 DEFAULT_MEETING_ANALYSIS_MODEL = "qwen2.5:1.5b"
 DEFAULT_MEETING_ANALYSIS_TIMEOUT_SECONDS = 20.0
 DEFAULT_MEETING_ANALYSIS_MAX_CHARS = 6000
 DEFAULT_MEETING_ANALYSIS_NUM_PREDICT = 650
+DEFAULT_MEETING_ANALYSIS_KEEP_ALIVE = "5m"
+DEFAULT_OLLAMA_ANALYSIS_TEMPERATURE = 0.1
 DEFAULT_HF_MEETING_ANALYSIS_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
 DEFAULT_HF_MEETING_ANALYSIS_TIMEOUT_SECONDS = 35.0
 DEFAULT_HF_MEETING_ANALYSIS_MAX_TOKENS = 900
+DEFAULT_HF_MEETING_ANALYSIS_TEMPERATURE = 0.1
 HF_CHAT_COMPLETIONS_URL = "https://router.huggingface.co/v1/chat/completions"
 MEETING_ANALYSIS_CACHE_SCHEMA_VERSION = 1
 MEETING_ANALYSIS_CACHE_TTL_SECONDS = 86400
@@ -169,13 +173,50 @@ def analyze_json(request: AnalyzeRequest):
 
 
 def _meeting_analysis_cache_key(request: AnalyzeRequest) -> str:
+    canonical_request = request.model_dump(mode="json")
+    canonical_request["participants"] = sorted(canonical_request["participants"])
     cache_input = {
         "schema_version": MEETING_ANALYSIS_CACHE_SCHEMA_VERSION,
-        "request": request.model_dump(mode="json"),
+        "request": canonical_request,
         "provider": os.getenv("MEETING_ANALYSIS_PROVIDER", "auto").lower(),
-        "ollama_model": os.getenv("MEETING_ANALYSIS_MODEL", DEFAULT_MEETING_ANALYSIS_MODEL),
-        "huggingface_model": os.getenv("HF_MEETING_ANALYSIS_MODEL", DEFAULT_HF_MEETING_ANALYSIS_MODEL),
         "huggingface_configured": _huggingface_configured(),
+        "ollama": {
+            "host": os.getenv("OLLAMA_HOST", DEFAULT_OLLAMA_HOST),
+            "model": os.getenv("MEETING_ANALYSIS_MODEL", DEFAULT_MEETING_ANALYSIS_MODEL),
+            "timeout_seconds": os.getenv(
+                "MEETING_ANALYSIS_TIMEOUT_SECONDS",
+                str(DEFAULT_MEETING_ANALYSIS_TIMEOUT_SECONDS),
+            ),
+            "max_chars": os.getenv("MEETING_ANALYSIS_MAX_CHARS", str(DEFAULT_MEETING_ANALYSIS_MAX_CHARS)),
+            "num_predict": os.getenv(
+                "MEETING_ANALYSIS_NUM_PREDICT",
+                str(DEFAULT_MEETING_ANALYSIS_NUM_PREDICT),
+            ),
+            "keep_alive": os.getenv(
+                "MEETING_ANALYSIS_KEEP_ALIVE",
+                DEFAULT_MEETING_ANALYSIS_KEEP_ALIVE,
+            ),
+            "temperature": os.getenv(
+                "OLLAMA_ANALYSIS_TEMPERATURE",
+                str(DEFAULT_OLLAMA_ANALYSIS_TEMPERATURE),
+            ),
+        },
+        "huggingface": {
+            "endpoint": os.getenv("HF_MEETING_ANALYSIS_ENDPOINT", HF_CHAT_COMPLETIONS_URL),
+            "model": os.getenv("HF_MEETING_ANALYSIS_MODEL", DEFAULT_HF_MEETING_ANALYSIS_MODEL),
+            "timeout_seconds": os.getenv(
+                "HF_MEETING_ANALYSIS_TIMEOUT_SECONDS",
+                str(DEFAULT_HF_MEETING_ANALYSIS_TIMEOUT_SECONDS),
+            ),
+            "max_tokens": os.getenv(
+                "HF_MEETING_ANALYSIS_MAX_TOKENS",
+                str(DEFAULT_HF_MEETING_ANALYSIS_MAX_TOKENS),
+            ),
+            "temperature": os.getenv(
+                "HF_MEETING_ANALYSIS_TEMPERATURE",
+                str(DEFAULT_HF_MEETING_ANALYSIS_TEMPERATURE),
+            ),
+        },
     }
     canonical_input = json.dumps(
         cache_input,
@@ -184,7 +225,7 @@ def _meeting_analysis_cache_key(request: AnalyzeRequest) -> str:
         separators=(",", ":"),
     )
     digest = hashlib.sha256(canonical_input.encode("utf-8")).hexdigest()
-    return f"meeting-analysis:v{MEETING_ANALYSIS_CACHE_SCHEMA_VERSION}:{digest}"
+    return f"meeting_analysis:v{MEETING_ANALYSIS_CACHE_SCHEMA_VERSION}:{digest}"
 
 
 def _analyze_json_uncached(request: AnalyzeRequest) -> MeetingAnalysisResult:
@@ -296,12 +337,12 @@ class DocumentTextExtractionError(ValueError):
 
 
 def analyze_meeting_with_ollama(request: AnalyzeRequest) -> MeetingAnalysisResult:
-    host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    host = os.getenv("OLLAMA_HOST", DEFAULT_OLLAMA_HOST)
     model = os.getenv("MEETING_ANALYSIS_MODEL", DEFAULT_MEETING_ANALYSIS_MODEL)
     timeout_seconds = _get_env_float("MEETING_ANALYSIS_TIMEOUT_SECONDS", DEFAULT_MEETING_ANALYSIS_TIMEOUT_SECONDS)
-    temperature = float(os.getenv("OLLAMA_ANALYSIS_TEMPERATURE", "0.1"))
+    temperature = float(os.getenv("OLLAMA_ANALYSIS_TEMPERATURE", str(DEFAULT_OLLAMA_ANALYSIS_TEMPERATURE)))
     num_predict = int(os.getenv("MEETING_ANALYSIS_NUM_PREDICT", str(DEFAULT_MEETING_ANALYSIS_NUM_PREDICT)))
-    keep_alive = os.getenv("MEETING_ANALYSIS_KEEP_ALIVE", "5m")
+    keep_alive = os.getenv("MEETING_ANALYSIS_KEEP_ALIVE", DEFAULT_MEETING_ANALYSIS_KEEP_ALIVE)
 
     client = ollama.Client(host=host, timeout=timeout_seconds)
     if not _ollama_model_available(client, model):
@@ -332,7 +373,9 @@ def analyze_meeting_with_huggingface(request: AnalyzeRequest) -> MeetingAnalysis
     model = os.getenv("HF_MEETING_ANALYSIS_MODEL", DEFAULT_HF_MEETING_ANALYSIS_MODEL)
     timeout_seconds = _get_env_float("HF_MEETING_ANALYSIS_TIMEOUT_SECONDS", DEFAULT_HF_MEETING_ANALYSIS_TIMEOUT_SECONDS)
     max_tokens = int(os.getenv("HF_MEETING_ANALYSIS_MAX_TOKENS", str(DEFAULT_HF_MEETING_ANALYSIS_MAX_TOKENS)))
-    temperature = float(os.getenv("HF_MEETING_ANALYSIS_TEMPERATURE", "0.1"))
+    temperature = float(
+        os.getenv("HF_MEETING_ANALYSIS_TEMPERATURE", str(DEFAULT_HF_MEETING_ANALYSIS_TEMPERATURE))
+    )
 
     payload = {
         "model": model,

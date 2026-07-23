@@ -45,6 +45,9 @@ def test_get_redis_client_is_singleton_and_forwards_acl_credentials(
         username="queue-user",
         password="test-password",
         decode_responses=True,
+        socket_connect_timeout=2.0,
+        socket_timeout=2.0,
+        retry_on_timeout=False,
     )
 
 
@@ -66,6 +69,9 @@ def test_get_async_redis_client_is_singleton_and_forwards_acl_credentials(
         username="queue-user",
         password="test-password",
         decode_responses=True,
+        socket_connect_timeout=2.0,
+        socket_timeout=2.0,
+        retry_on_timeout=False,
     )
 
 

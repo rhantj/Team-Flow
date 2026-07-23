@@ -7,6 +7,8 @@ from redis.asyncio import Redis as AsyncRedis
 
 from core.config import get_settings
 
+REDIS_SOCKET_TIMEOUT_SECONDS = 2.0
+
 
 @lru_cache
 def get_redis_client() -> Redis:
@@ -16,6 +18,9 @@ def get_redis_client() -> Redis:
         username=settings.redis_username,
         password=settings.redis_password,
         decode_responses=True,
+        socket_connect_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
+        socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
+        retry_on_timeout=False,
     )
 
 
@@ -27,4 +32,7 @@ def get_async_redis_client() -> AsyncRedis:
         username=settings.redis_username,
         password=settings.redis_password,
         decode_responses=True,
+        socket_connect_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
+        socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
+        retry_on_timeout=False,
     )
