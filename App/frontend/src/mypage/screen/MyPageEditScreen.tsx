@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { ArrowLeft, Briefcase, Camera, Github, Layers, Plus, User as UserIcon, X } from "lucide-react";
 import { useAuth } from "../../global/hooks/useAuth";
@@ -183,7 +183,23 @@ export function MyPageEditScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const valid = Boolean(name.trim());
+  // 이 화면 마운트 시점에 user가 아직 비동기 로딩 중이면(user === null) 위 useState 초기값은
+  // 전부 빈 값으로 잡힌다. user가 뒤늦게 채워져도 useState 초기값은 다시 평가되지 않으므로,
+  // 채워지지 않은 채로 저장을 누르면 실제 개인정보가 빈 값으로 덮어써진다. hydratedRef로
+  // "user 로딩 완료 후 폼을 한 번 채웠는지"를 추적해, 아직이면 저장을 막고 채워지는 대로
+  // 폼에 반영한다. 이후(아바타 업로드의 refreshMe 등으로) user가 다시 갱신돼도 재동기화하지
+  // 않는다 — 안 그러면 사용자가 입력 중인 값이 날아간다.
+  const hydratedRef = useRef(Boolean(user));
+  useEffect(() => {
+    if (hydratedRef.current || !user) return;
+    hydratedRef.current = true;
+    setName(user.name ?? "");
+    setAffiliation(user.affiliation ?? "");
+    setFieldTags(user.field ?? []);
+    setGithub(user.githubUsername ?? "");
+  }, [user]);
+
+  const valid = Boolean(name.trim()) && hydratedRef.current;
 
   const addFieldTag = (tag: string) => {
     setFieldTags(prev => (prev.includes(tag) ? prev : [...prev, tag]));

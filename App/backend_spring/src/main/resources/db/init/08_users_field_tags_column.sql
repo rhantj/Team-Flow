@@ -41,4 +41,16 @@ BEGIN
 END $$;
 
 COMMENT ON COLUMN users.field_tags IS '전공/관심 분야 태그 배열 (예: ["백엔드", "인프라"]). field 컬럼을 대체한다';
-COMMENT ON COLUMN users.field IS '[미사용/레거시] field_tags로 대체됨. 모든 환경 전환 확인 후 제거 예정';
+
+-- field 컬럼은 09_drop_legacy_field.sql로 이미 제거됐을 수 있다. 그 상태에서 이 스크립트가
+-- (예: 초기화 스크립트 전체 재실행으로) 다시 돌면 COMMENT ON COLUMN이 존재하지 않는 컬럼을
+-- 대상으로 실패해 재실행 안전성이 깨지므로, 컬럼이 남아있을 때만 코멘트를 단다.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'field'
+    ) THEN
+        COMMENT ON COLUMN users.field IS '[미사용/레거시] field_tags로 대체됨. 모든 환경 전환 확인 후 제거 예정';
+    END IF;
+END $$;
