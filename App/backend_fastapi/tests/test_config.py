@@ -22,6 +22,32 @@ def test_settings_loads_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.generation_model == "gemma4:e2b"
 
 
+def test_settings_defaults_redis_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pw@localhost:5432/workflow")
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.delenv("REDIS_USERNAME", raising=False)
+    monkeypatch.delenv("REDIS_PASSWORD", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.redis_url == "redis://localhost:6379/0"
+    assert settings.redis_username is None
+    assert settings.redis_password is None
+
+
+def test_settings_loads_redis_connection_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pw@localhost:5432/workflow")
+    monkeypatch.setenv("REDIS_URL", "redis://redis.internal:6380/2")
+    monkeypatch.setenv("REDIS_USERNAME", "queue-user")
+    monkeypatch.setenv("REDIS_PASSWORD", "test-password")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.redis_url == "redis://redis.internal:6380/2"
+    assert settings.redis_username == "queue-user"
+    assert settings.redis_password == "test-password"
+
+
 def test_settings_defaults_hf_embedding_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pw@localhost:5432/workflow")
     monkeypatch.delenv("HF_EMBEDDING_MODEL", raising=False)
