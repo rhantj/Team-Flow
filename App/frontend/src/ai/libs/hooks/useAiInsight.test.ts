@@ -1,6 +1,7 @@
+import { StrictMode } from "react";
 import { renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { useAiInsight } from "./useAiInsight";
+import { __resetInsightConcurrencyStateForTests, useAiInsight } from "./useAiInsight";
 import { apiFetch } from "../../../global/api/apiClient";
 
 vi.mock("../../../global/api/apiClient", () => ({
@@ -10,6 +11,10 @@ vi.mock("../../../global/api/apiClient", () => ({
 describe("useAiInsight", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    // activeInsightRequests/pendingInsightRequests는 모듈 레벨 전역 상태라, 이전
+    // 테스트에서 resolve되지 않은 요청이 슬롯을 점유한 채로 넘어오면 다음 테스트가
+    // 동시 실행 개수를 잘못 관찰한다.
+    __resetInsightConcurrencyStateForTests();
   });
 
   it("does not ask until ready is true", () => {
@@ -89,5 +94,60 @@ describe("useAiInsight", () => {
     pendingResolvers[3]();
     pendingResolvers[4]();
     await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(5));
+  });
+
+  it("still asks when queued under StrictMode's double-invoked effects", async () => {
+    // StrictMode(개발 모드)는 effect를 mount → cleanup → mount 순으로 두 번 실행한다.
+    // 대기열에서 순서를 기다리던 요청이 첫 mount의 cleanup 때문에 영구히 누락되지 않고,
+    // 두 번째 mount에서 다시 등록돼 정상적으로 질의가 나가는지 확인한다.
+    let releaseFirst: (() => void) | null = null;
+    const pendingResolvers: Array<() => void> = [];
+    let resolveCount = 0;
+    vi.mocked(apiFetch).mockImplementation(
+      () =>
+        new Promise(resolve => {
+          const release = () => {
+            resolveCount += 1;
+            resolve({ answer: `답변 ${resolveCount}`, sources: [] });
+          };
+          if (!releaseFirst) releaseFirst = release;
+          else pendingResolvers.push(release);
+        })
+    );
+
+    // 상한(2)을 채워 세 번째 인스턴스가 대기열로 밀리게 만든다.
+    renderHook(() => useAiInsight(1, "채워두기 1", true));
+    renderHook(() => useAiInsight(1, "채워두기 2", true));
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(2));
+
+    renderHook(
+      ({ ready }: { ready: boolean }) => useAiInsight(1, "대기열 질문", ready),
+      { initialProps: { ready: true }, wrapper: StrictMode }
+    );
+
+    // 대기열에서 아직 실행되지 않은 상태 - 앞선 두 요청이 끝나기 전까지 호출되면 안 된다.
+    expect(apiFetch).toHaveBeenCalledTimes(2);
+
+    releaseFirst!();
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(3));
+    expect(apiFetch).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      body: expect.stringContaining("대기열 질문"),
+    }));
+  });
+
+  it("releases the concurrency slot and drains the queue even when a request fails", async () => {
+    // ask가 실패(reject)해도 슬롯이 해제되지 않으면 대기열 전체가 멈춘다.
+    // useRagQuery.ask는 항상 async 함수라 실제로 동기 예외를 던지지는 않지만, 실패
+    // 케이스에서도 finally(releaseInsightSlot)가 반드시 실행돼야 한다는 요구사항은 같다.
+    vi.mocked(apiFetch).mockRejectedValueOnce(new Error("첫 요청 실패"));
+
+    renderHook(() => useAiInsight(1, "실패하는 질문", true));
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
+
+    // 슬롯이 해제되지 않았다면 이 두 번째 요청이 대기열에 갇혀 apiFetch가 다시 불리지 않는다.
+    vi.mocked(apiFetch).mockResolvedValue({ answer: "정상 답변", sources: [] });
+    const { result } = renderHook(() => useAiInsight(1, "그다음 질문", true));
+
+    await waitFor(() => expect(result.current.text).toBe("정상 답변"));
   });
 });

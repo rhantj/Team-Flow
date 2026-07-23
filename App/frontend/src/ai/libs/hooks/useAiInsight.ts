@@ -35,6 +35,15 @@ function releaseInsightSlot() {
   if (next) next();
 }
 
+/** 테스트 전용 - 모듈 레벨 동시성 상태를 초기화한다.
+ * activeInsightRequests/pendingInsightRequests는 모든 useAiInsight 인스턴스가 공유하는
+ * 전역 상태라, 이전 테스트에서 resolve되지 않은 요청이 남아 있으면 다음 테스트의 동시
+ * 실행 슬롯을 오염시킨다. */
+export function __resetInsightConcurrencyStateForTests() {
+  activeInsightRequests = 0;
+  pendingInsightRequests.length = 0;
+}
+
 /** 페이지에 상주하는 "AI 추천 액션" 문구를 RAG 질의로 한 번만 자동 채운다.
  * ready(=페이지 데이터 로딩 완료)가 true가 된 시점에 prompt로 한 번만 질의하고,
  * 이후 prompt가 바뀌어도 다시 묻지 않는다 — 페이지 방문마다 LLM 호출이 반복되는
@@ -47,18 +56,34 @@ function releaseInsightSlot() {
 export function useAiInsight(projectId: number | null | undefined, prompt: string, ready: boolean) {
   const { status, answer, error, ask } = useRagQuery();
   const askedRef = useRef(false);
-  const queuedRef = useRef(false);
+  // React StrictMode는 effect를 mount → cleanup → mount로 두 번 실행한다. 대기열에서
+  // 순서를 기다리는 동안 첫 mount가 cleanup되면, queuedRef를 true로 남겨두는 방식으로는
+  // 두 번째 mount가 "이미 대기열에 있다"고 착각해 재등록을 건너뛰어 요청이 영구 누락된다.
+  // 그래서 이 값을 boolean이 아니라 "대기열 취소 함수"로 들고 있다가, cleanup에서 그
+  // 취소 함수를 실행함과 동시에 null로 되돌려 다음 mount가 다시 등록할 수 있게 한다.
+  const cancelQueueEntryRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    if (!ready || projectId == null || askedRef.current || queuedRef.current) return;
-    queuedRef.current = true;
-    const cancelQueueEntry = runWhenSlotAvailable(() => {
+    if (!ready || projectId == null || askedRef.current || cancelQueueEntryRef.current) return;
+    cancelQueueEntryRef.current = runWhenSlotAvailable(() => {
       askedRef.current = true;
-      Promise.resolve(ask(projectId, prompt)).finally(releaseInsightSlot);
+      let result: unknown;
+      try {
+        result = ask(projectId, prompt);
+      } catch {
+        // ask가 (정상적으로는 일어나지 않아야 하지만) 동기적으로 예외를 던지는 경우까지
+        // 대비한다 - 여기서 슬롯을 해제하지 않으면 대기열 전체가 멈춘다.
+        releaseInsightSlot();
+        return;
+      }
+      Promise.resolve(result).finally(releaseInsightSlot);
     });
-    return cancelQueueEntry;
-    // prompt/ask는 매 렌더 계산값이라 의존성에 넣지 않는다 — askedRef/queuedRef가
-    // 최초 1회만 실행/대기열 등록되게 막는다.
+    return () => {
+      cancelQueueEntryRef.current?.();
+      cancelQueueEntryRef.current = null;
+    };
+    // prompt/ask는 매 렌더 계산값이라 의존성에 넣지 않는다 — askedRef가 최초 1회만
+    // 실행되게 막고, cancelQueueEntryRef는 대기열 등록 여부 자체를 추적한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, projectId]);
 
