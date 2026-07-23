@@ -3,6 +3,8 @@ package com.workflowai.meeting;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -16,10 +18,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.redis.connection.stream.MapRecord;
-import org.springframework.data.redis.connection.stream.RecordId;
-import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 
 @ExtendWith(MockitoExtension.class)
 class MeetingAnalysisJobPublisherTest {
@@ -27,7 +27,6 @@ class MeetingAnalysisJobPublisherTest {
     private static final String RAW_TEXT = "외부에 노출되면 안 되는 회의 원문";
 
     @Mock private StringRedisTemplate redisTemplate;
-    @Mock private StreamOperations<String, Object, Object> streamOperations;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final AiAnalyzeRequest request = new AiAnalyzeRequest(
@@ -43,29 +42,34 @@ class MeetingAnalysisJobPublisherTest {
 
     @Test
     void enqueuesSerializedJobAndReturnsRedisRecordId() throws Exception {
-        RecordId recordId = RecordId.of("1753257600000-0");
-        when(redisTemplate.opsForStream()).thenReturn(streamOperations);
-        when(streamOperations.size(MeetingAnalysisJobPublisher.STREAM_KEY)).thenReturn(999L);
-        when(streamOperations.add(any())).thenReturn(recordId);
+        String recordId = "1753257600000-0";
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class)))
+            .thenReturn(recordId);
         MeetingAnalysisJobPublisher publisher = new MeetingAnalysisJobPublisher(redisTemplate, objectMapper);
 
         String result = publisher.enqueue(42L, request);
 
-        ArgumentCaptor<MapRecord<String, Object, Object>> recordCaptor = ArgumentCaptor.captor();
-        verify(streamOperations).add(recordCaptor.capture());
-        MapRecord<String, Object, Object> record = recordCaptor.getValue();
-        assertThat(record.getStream()).isEqualTo(MeetingAnalysisJobPublisher.STREAM_KEY);
-        assertThat(record.getValue()).containsOnlyKeys("payload");
-
-        MeetingAnalysisJob job = objectMapper.readValue(
-            (String) record.getValue().get("payload"),
-            MeetingAnalysisJob.class
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<RedisScript<String>> scriptCaptor = ArgumentCaptor.forClass(RedisScript.class);
+        ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(redisTemplate).execute(
+            scriptCaptor.capture(),
+            eq(List.of(MeetingAnalysisJobPublisher.STREAM_KEY)),
+            eq(Integer.toString(MeetingAnalysisJobPublisher.MAX_OUTSTANDING_JOBS)),
+            payloadCaptor.capture()
         );
+        MeetingAnalysisJob job = objectMapper.readValue((String) payloadCaptor.getValue(), MeetingAnalysisJob.class);
         assertThat(job.jobId()).isNotBlank();
         assertThat(UUID.fromString(job.jobId())).isNotNull();
         assertThat(job.meetingId()).isEqualTo(42L);
         assertThat(job.request()).isEqualTo(request);
-        assertThat(result).isEqualTo(recordId.getValue());
+        assertThat(result).isEqualTo(recordId);
+
+        String script = scriptCaptor.getValue().getScriptAsString();
+        assertThat(script.indexOf("acl_check_cmd('XLEN'")).isGreaterThanOrEqualTo(0);
+        assertThat(script.indexOf("acl_check_cmd('XADD'")).isGreaterThan(script.indexOf("acl_check_cmd('XLEN'"));
+        assertThat(script.indexOf("redis.call('XLEN'")).isGreaterThan(script.indexOf("acl_check_cmd('XADD'"));
+        assertThat(script.indexOf("redis.call('XADD'")).isGreaterThan(script.indexOf("redis.call('XLEN'"));
     }
 
     @Test
@@ -80,21 +84,21 @@ class MeetingAnalysisJobPublisherTest {
             .hasMessage("Failed to enqueue meeting analysis job")
             .hasCause(failure)
             .hasMessageNotContaining(RAW_TEXT);
-        verify(streamOperations, never()).add(any());
+        verify(redisTemplate, never()).execute(any(RedisScript.class), anyList(), any(Object[].class));
     }
 
     @Test
-    void throwsIllegalStateExceptionWhenRedisAddFails() {
-        RuntimeException failure = new RuntimeException("redis unavailable");
-        when(redisTemplate.opsForStream()).thenReturn(streamOperations);
-        when(streamOperations.size(MeetingAnalysisJobPublisher.STREAM_KEY)).thenReturn(0L);
-        when(streamOperations.add(any())).thenThrow(failure);
+    void throwsSafeIllegalStateExceptionWhenAtomicRedisScriptFails() {
+        RuntimeException failure = new RuntimeException("redis://admin:secret@internal:6379");
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class)))
+            .thenThrow(failure);
         MeetingAnalysisJobPublisher publisher = new MeetingAnalysisJobPublisher(redisTemplate, objectMapper);
 
         assertThatThrownBy(() -> publisher.enqueue(42L, request))
             .isInstanceOf(IllegalStateException.class)
             .hasMessage("Failed to enqueue meeting analysis job")
-            .hasCause(failure)
+            .hasNoCause()
+            .hasMessageNotContaining("admin:secret")
             .hasMessageNotContaining(RAW_TEXT);
     }
 
@@ -116,36 +120,32 @@ class MeetingAnalysisJobPublisherTest {
             .isInstanceOf(IllegalStateException.class)
             .hasMessage("Failed to enqueue meeting analysis job")
             .hasMessageNotContaining("가");
-        verify(streamOperations, never()).add(any());
+        verify(redisTemplate, never()).execute(any(RedisScript.class), anyList(), any(Object[].class));
     }
 
     @Test
-    void rejectsJobWhenOutstandingQueueLimitIsReached() {
-        when(redisTemplate.opsForStream()).thenReturn(streamOperations);
-        when(streamOperations.size(MeetingAnalysisJobPublisher.STREAM_KEY))
-            .thenReturn((long) MeetingAnalysisJobPublisher.MAX_OUTSTANDING_JOBS);
-        MeetingAnalysisJobPublisher publisher = new MeetingAnalysisJobPublisher(redisTemplate, objectMapper);
-
-        assertThatThrownBy(() -> publisher.enqueue(42L, request))
-            .isInstanceOf(IllegalStateException.class)
-            .hasMessage("Failed to enqueue meeting analysis job")
-            .hasMessageNotContaining(RAW_TEXT);
-        verify(streamOperations, never()).add(any());
-    }
-
-    @Test
-    void rejectsJobSafelyWhenOutstandingQueueSizeCannotBeRead() {
-        RuntimeException failure = new RuntimeException("redis://admin:secret@internal:6379");
-        when(redisTemplate.opsForStream()).thenReturn(streamOperations);
-        when(streamOperations.size(MeetingAnalysisJobPublisher.STREAM_KEY)).thenThrow(failure);
+    void rejectsJobWhenAtomicScriptReturnsQueueFullSentinel() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class)))
+            .thenReturn(MeetingAnalysisJobPublisher.QUEUE_FULL_SENTINEL);
         MeetingAnalysisJobPublisher publisher = new MeetingAnalysisJobPublisher(redisTemplate, objectMapper);
 
         assertThatThrownBy(() -> publisher.enqueue(42L, request))
             .isInstanceOf(IllegalStateException.class)
             .hasMessage("Failed to enqueue meeting analysis job")
             .hasNoCause()
-            .hasMessageNotContaining("admin:secret")
             .hasMessageNotContaining(RAW_TEXT);
-        verify(streamOperations, never()).add(any());
+    }
+
+    @Test
+    void rejectsJobWhenAtomicScriptReturnsNull() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class)))
+            .thenReturn(null);
+        MeetingAnalysisJobPublisher publisher = new MeetingAnalysisJobPublisher(redisTemplate, objectMapper);
+
+        assertThatThrownBy(() -> publisher.enqueue(42L, request))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Failed to enqueue meeting analysis job")
+            .hasNoCause()
+            .hasMessageNotContaining(RAW_TEXT);
     }
 }

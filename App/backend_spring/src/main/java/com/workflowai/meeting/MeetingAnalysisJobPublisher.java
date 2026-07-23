@@ -3,13 +3,10 @@ package com.workflowai.meeting;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
+import java.util.List;
 import java.util.UUID;
-import org.springframework.data.redis.connection.stream.MapRecord;
-import org.springframework.data.redis.connection.stream.RecordId;
-import org.springframework.data.redis.connection.stream.StreamRecords;
-import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -18,8 +15,25 @@ public class MeetingAnalysisJobPublisher {
     public static final String STREAM_KEY = "meeting-analysis";
     public static final int MAX_PAYLOAD_BYTES = 1024 * 1024;
     public static final int MAX_OUTSTANDING_JOBS = 1000;
+    static final String QUEUE_FULL_SENTINEL = "QUEUE_FULL";
 
     private static final String ENQUEUE_FAILURE_MESSAGE = "Failed to enqueue meeting analysis job";
+    private static final RedisScript<String> ENQUEUE_IF_CAPACITY_SCRIPT = RedisScript.of(
+        """
+        if not redis.acl_check_cmd('XLEN', KEYS[1]) then
+            return redis.error_reply('XLEN permission denied')
+        end
+        if not redis.acl_check_cmd('XADD', KEYS[1], '*', 'payload', ARGV[2]) then
+            return redis.error_reply('XADD permission denied')
+        end
+        local outstanding = redis.call('XLEN', KEYS[1])
+        if outstanding >= tonumber(ARGV[1]) then
+            return '%s'
+        end
+        return redis.call('XADD', KEYS[1], '*', 'payload', ARGV[2])
+        """.formatted(QUEUE_FULL_SENTINEL),
+        String.class
+    );
 
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
@@ -35,32 +49,22 @@ public class MeetingAnalysisJobPublisher {
         if (payload.getBytes(StandardCharsets.UTF_8).length > MAX_PAYLOAD_BYTES) {
             throw new IllegalStateException(ENQUEUE_FAILURE_MESSAGE);
         }
-        MapRecord<String, String, String> record = StreamRecords.newRecord()
-            .ofMap(Map.of("payload", payload))
-            .withStreamKey(STREAM_KEY);
 
-        StreamOperations<String, Object, Object> streamOperations;
-        Long outstandingJobs;
+        String recordId;
         try {
-            streamOperations = redisTemplate.opsForStream();
-            outstandingJobs = streamOperations.size(STREAM_KEY);
+            recordId = redisTemplate.execute(
+                ENQUEUE_IF_CAPACITY_SCRIPT,
+                List.of(STREAM_KEY),
+                Integer.toString(MAX_OUTSTANDING_JOBS),
+                payload
+            );
         } catch (RuntimeException exception) {
             throw new IllegalStateException(ENQUEUE_FAILURE_MESSAGE);
         }
-        if (outstandingJobs == null || outstandingJobs >= MAX_OUTSTANDING_JOBS) {
+        if (recordId == null || QUEUE_FULL_SENTINEL.equals(recordId)) {
             throw new IllegalStateException(ENQUEUE_FAILURE_MESSAGE);
         }
-
-        RecordId recordId;
-        try {
-            recordId = streamOperations.add(record);
-        } catch (RuntimeException exception) {
-            throw new IllegalStateException(ENQUEUE_FAILURE_MESSAGE, exception);
-        }
-        if (recordId == null) {
-            throw new IllegalStateException(ENQUEUE_FAILURE_MESSAGE);
-        }
-        return recordId.getValue();
+        return recordId;
     }
 
     private String serialize(MeetingAnalysisJob job) {
