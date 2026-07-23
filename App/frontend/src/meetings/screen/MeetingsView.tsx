@@ -410,6 +410,7 @@ export function MeetingsView() {
   const [newTodoPriority, setNewTodoPriority] = useState<Priority>("medium");
   const [newTodoError, setNewTodoError] = useState<string | null>(null);
   const [saveMeetingMessage, setSaveMeetingMessage] = useState<string | null>(null);
+  const [saveMeetingError, setSaveMeetingError] = useState<string | null>(null);
   const [originalViewMessage, setOriginalViewMessage] = useState<string | null>(null);
   const [originalPreview, setOriginalPreview] = useState<{ kind: "text"; content: string; fileName: string } | { kind: "unsupported"; fileName: string } | null>(null);
   const [pdfExportMessage, setPdfExportMessage] = useState<string | null>(null);
@@ -774,8 +775,14 @@ export function MeetingsView() {
   // 로컬 상태 반영(handleSaveMeeting)에 더해 서버의 saved_at 확정과 MEETING_SAVED/_NOTIFY_LEADER 알림 발송을 트리거한다.
   const handleConfirmSave = async () => {
     handleSaveMeeting();
-    if (selected) {
+    if (!selected) return;
+    setSaveMeetingError(null);
+    try {
       await confirmMeetingSave(projectId, selected);
+    } catch (error) {
+      const status = error instanceof ApiRequestError ? ` (${error.status})` : "";
+      setSaveMeetingError(`서버 저장에 실패했습니다${status}. 잠시 후 다시 시도해주세요.`);
+      setTimeout(() => setSaveMeetingError(null), 6000);
     }
   };
 
@@ -1451,6 +1458,7 @@ export function MeetingsView() {
             </button>
           )}
           {saveMeetingMessage && <div className="text-[10px] text-emerald-600 text-center">{saveMeetingMessage}</div>}
+          {saveMeetingError && <div className="text-[10px] text-amber-600 text-center">{saveMeetingError}</div>}
           <button onClick={() => setUploadFlow(null)} className="w-full py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
             닫기
           </button>
