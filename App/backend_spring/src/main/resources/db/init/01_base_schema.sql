@@ -226,12 +226,14 @@ CREATE TABLE meetings (
     file_path       VARCHAR(500),
     transcript      TEXT,
     analysis_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    analysis_job_id UUID,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_meetings_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 COMMENT ON TABLE meetings IS '회의록/녹음 업로드';
 COMMENT ON COLUMN meetings.file_type IS 'document/audio';
 COMMENT ON COLUMN meetings.analysis_status IS '비동기 분석 상태';
+COMMENT ON COLUMN meetings.analysis_job_id IS '현재 Redis Stream 분석 작업의 세대 식별자';
 
 CREATE TABLE meeting_attendees (
     id         BIGSERIAL PRIMARY KEY,

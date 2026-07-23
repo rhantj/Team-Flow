@@ -20,6 +20,8 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
         LocalDate dueDate
     );
 
+    List<Task> findBySourceMeetingId(Long sourceMeetingId);
+
     /** 새 업무를 컬럼 맨 끝에 추가할 때 쓸 기준값(해당 프로젝트+상태에서 가장 큰 position). */
     Optional<Task> findTopByProjectIdAndStatusOrderByPositionDesc(Long projectId, String status);
 

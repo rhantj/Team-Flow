@@ -31,6 +31,11 @@ const GROUPS = [
 
 const PAGE_SIZE = 15;
 
+const STATUS_CHANGE_LABEL: Record<"done" | "blocked", string> = {
+  done: "완료",
+  blocked: "블로커",
+};
+
 function urgencyKey(daysLeft: number | null) {
   if (daysLeft == null) return null;
   if (daysLeft < 0) return "overdue";
@@ -51,6 +56,8 @@ export function UrgentTasksPage() {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [dueDateTarget, setDueDateTarget] = useState<string | null>(null);
   const [assigneeTarget, setAssigneeTarget] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
 
   const assigneeOptions = useMemo(
     () => Array.from(new Set(tasks.map(task => task.assigneeName).filter(Boolean))) as string[],
@@ -81,10 +88,19 @@ export function UrgentTasksPage() {
 
   const urgentQuestion = `마감 임박 업무 ${urgentTasks.length}개를 점검해줘. 오늘 마감인 업무는 ${counts.today}개, 3일 이내에 마감하는 업무는 ${counts["3day"]}개, 7일 이내에 마감하는 업무는 ${counts.week}개, 이미 지연된 업무는 ${counts.overdue}개야. 지금 가장 확인할 업무와 권장 조치를 우선순위대로 알려줘. 출력은 3문장 이내로 해.`;
 
-  const changeStatus = async (taskId: string, status: "done" | "blocked") => {
+  const changeStatus = async (taskId: string, taskTitle: string, status: "done" | "blocked") => {
     if (currentProjectId == null) return;
-    await updateTaskPosition(taskId, status, nextPositionForStatus(tasks, status), currentProjectId);
-    refetch();
+    if (!window.confirm(`'${taskTitle}' 업무를 ${STATUS_CHANGE_LABEL[status]}(으)로 변경할까요?`)) return;
+    setActionError(null);
+    setPendingTaskId(taskId);
+    try {
+      await updateTaskPosition(taskId, status, nextPositionForStatus(tasks, status), currentProjectId);
+      refetch();
+    } catch {
+      setActionError("상태 변경에 실패했습니다. 잠시 후 다시 시도해주세요.");
+    } finally {
+      setPendingTaskId(null);
+    }
   };
 
   const handleScroll = (event: UIEvent<HTMLDivElement>) => {
@@ -112,6 +128,7 @@ export function UrgentTasksPage() {
       </div>
 
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{error}</div>}
+      {actionError && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{actionError}</div>}
 
       <div className="grid grid-cols-4 gap-3 shrink-0">
         <DetailStatCard label="오늘 마감" value={loading ? "..." : counts.today} sub="즉시 확인 필요" color="#EF4444" icon={AlertCircle} />
@@ -228,8 +245,16 @@ export function UrgentTasksPage() {
                 <button className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium bg-blue-50 border border-blue-200 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors"><Bell className="w-3.5 h-3.5" />리마인드 알림 보내기</button>
                 <button onClick={() => setAssigneeTarget(selectedRow.task.id)} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><UserCog className="w-3.5 h-3.5" />담당자 변경</button>
                 <button onClick={() => setDueDateTarget(selectedRow.task.id)} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><Calendar className="w-3.5 h-3.5" />마감일 수정</button>
-                <button onClick={() => changeStatus(selectedRow.task.id, "done")} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />완료 처리</button>
-                <button onClick={() => changeStatus(selectedRow.task.id, "blocked")} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><AlertTriangle className="w-3.5 h-3.5 text-red-500" />블로커로 지정</button>
+                <button
+                  onClick={() => changeStatus(selectedRow.task.id, selectedRow.task.title, "done")}
+                  disabled={pendingTaskId === selectedRow.task.id}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+                ><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />완료 처리</button>
+                <button
+                  onClick={() => changeStatus(selectedRow.task.id, selectedRow.task.title, "blocked")}
+                  disabled={pendingTaskId === selectedRow.task.id}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+                ><AlertTriangle className="w-3.5 h-3.5 text-red-500" />블로커로 지정</button>
               </div>
             </div>
           </div>

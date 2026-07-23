@@ -7,7 +7,9 @@ import com.workflowai.rag.RagIngestService;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
 import java.time.LocalDate;
+import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,13 +66,71 @@ public class MeetingAnalysisPersistence {
 
     @Transactional
     public void saveAnalysisSuccess(Long meetingId, MeetingAnalysisResult result, String analysisSource) {
-        Meeting meeting = meetingRepository.findById(meetingId).orElseThrow(
+        persistAnalysisSuccess(meetingId, result, analysisSource, null, false);
+    }
+
+    @Transactional
+    public boolean claimJob(Long meetingId, UUID jobId) {
+        Meeting meeting = meetingRepository.findByIdForUpdate(meetingId).orElse(null);
+        if (meeting == null || isTerminal(meeting.getAnalysisStatus())) {
+            return false;
+        }
+        if (meeting.getAnalysisJobId() == null) {
+            meeting.setAnalysisJobId(jobId);
+            meetingRepository.save(meeting);
+            return true;
+        }
+        return Objects.equals(meeting.getAnalysisJobId(), jobId);
+    }
+
+    @Transactional
+    public void saveAnalysisSuccessForJob(
+        Long meetingId,
+        MeetingAnalysisResult result,
+        String analysisSource,
+        UUID jobId
+    ) {
+        persistAnalysisSuccess(meetingId, result, analysisSource, jobId, true);
+    }
+
+    private void persistAnalysisSuccess(
+        Long meetingId,
+        MeetingAnalysisResult result,
+        String analysisSource,
+        UUID jobId,
+        boolean fenced
+    ) {
+        Meeting meeting = meetingRepository.findByIdForUpdate(meetingId).orElseThrow(
             () -> new IllegalStateException("Meeting not found: " + meetingId));
+        if (fenced && !Objects.equals(meeting.getAnalysisJobId(), jobId)) {
+            log.info("이전 세대 회의 분석 성공 저장 생략. meetingId={}", meetingId);
+            return;
+        }
+        if ("completed".equalsIgnoreCase(meeting.getAnalysisStatus())
+            || (!fenced && "failed".equalsIgnoreCase(meeting.getAnalysisStatus()))) {
+            log.info("중복 회의 분석 저장 생략. meetingId={}, status={}", meetingId, meeting.getAnalysisStatus());
+            return;
+        }
 
         MeetingAnalysis analysis = meetingAnalysisRepository.save(new MeetingAnalysis(
             meetingId, result.summary(), result.decisions(), result.risks(), result.keywords(), analysisSource
         ));
-        ragIngestService.ingestBestEffort(meeting.getProjectId(), "meeting", analysis.getMeetingId(), buildMeetingIngestContent(result));
+        String meetingRagContent = buildMeetingIngestContent(result);
+        ragIngestService.recordIngestIntent(
+            meeting.getProjectId(),
+            "meeting",
+            analysis.getMeetingId(),
+            meetingRagContent,
+            null
+        );
+        runAfterCommit(() ->
+            ragIngestService.ingestBestEffort(
+                meeting.getProjectId(),
+                "meeting",
+                analysis.getMeetingId(),
+                meetingRagContent
+            )
+        );
 
         Set<Long> attendeeUserIds = meetingAttendeeRepository.findByMeetingId(meetingId).stream()
             .map(MeetingAttendee::getUserId)
@@ -89,9 +149,19 @@ public class MeetingAnalysisPersistence {
                 todo.evidence_text()
             ));
             if (actionItem != null) {
-                ragIngestService.ingestBestEffort(
-                    meeting.getProjectId(), "action_item", actionItem.getId(),
-                    buildActionItemIngestContent(actionItem), actionItem.getFinalAssigneeId()
+                String actionItemRagContent = buildActionItemIngestContent(actionItem);
+                ragIngestService.recordIngestIntent(
+                    meeting.getProjectId(),
+                    "action_item",
+                    actionItem.getId(),
+                    actionItemRagContent,
+                    actionItem.getFinalAssigneeId()
+                );
+                runAfterCommit(() ->
+                    ragIngestService.ingestBestEffort(
+                        meeting.getProjectId(), "action_item", actionItem.getId(),
+                        actionItemRagContent, actionItem.getFinalAssigneeId()
+                    )
                 );
             }
         }
@@ -109,17 +179,34 @@ public class MeetingAnalysisPersistence {
 
     @Transactional
     public void saveAnalysisFailure(Long meetingId, String errorMessage) {
-        persistAnalysisFailure(meetingId);
+        persistAnalysisFailure(meetingId, null, false);
+    }
+
+    @Transactional
+    public void saveAnalysisFailureForJob(Long meetingId, String errorMessage, UUID jobId) {
+        persistAnalysisFailure(meetingId, jobId, true);
     }
 
     /** afterCommit 호출에서도 이미 커밋된 원 트랜잭션에 합류하지 않도록 새 트랜잭션을 강제한다. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void saveAnalysisFailureInNewTransaction(Long meetingId, String errorMessage) {
-        persistAnalysisFailure(meetingId);
+        persistAnalysisFailure(meetingId, null, false);
     }
 
-    private void persistAnalysisFailure(Long meetingId) {
-        meetingRepository.findById(meetingId).ifPresent(meeting -> {
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void saveAnalysisFailureInNewTransaction(Long meetingId, String errorMessage, UUID jobId) {
+        persistAnalysisFailure(meetingId, jobId, true);
+    }
+
+    private void persistAnalysisFailure(Long meetingId, UUID jobId, boolean fenced) {
+        meetingRepository.findByIdForUpdate(meetingId).ifPresent(meeting -> {
+            if (fenced && !Objects.equals(meeting.getAnalysisJobId(), jobId)) {
+                log.info("이전 세대 회의 분석 실패 저장 생략. meetingId={}", meetingId);
+                return;
+            }
+            if (isTerminal(meeting.getAnalysisStatus())) {
+                return;
+            }
             meeting.setAnalysisStatus("failed");
             meetingRepository.save(meeting);
             if (meeting.getUploadedBy() != null) {
@@ -129,6 +216,10 @@ public class MeetingAnalysisPersistence {
                 );
             }
         });
+    }
+
+    private boolean isTerminal(String status) {
+        return "completed".equalsIgnoreCase(status) || "failed".equalsIgnoreCase(status);
     }
 
     public static String toSafeErrorMessage(String errorMessage) {
@@ -181,6 +272,19 @@ public class MeetingAnalysisPersistence {
             return;
         }
         sendNotificationSafely(userId, type, title, content, meetingId);
+    }
+
+    private void runAfterCommit(Runnable operation) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    operation.run();
+                }
+            });
+            return;
+        }
+        operation.run();
     }
 
     /**

@@ -19,6 +19,71 @@ jobs:
           chmod 600 ~/.ssh/oci_deploy_key
           ssh-keyscan -H "${{ secrets.OCI_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
+      - name: Preflight Redis ACL environment without changing services
+        run: |
+          ssh -i ~/.ssh/oci_deploy_key "${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }}" '
+            set -e
+            cd /home/ubuntu/work-flow/App
+            test -f .env
+            read_env_value() {
+              key="$1"
+              sed -n "s/^${key}=//p" .env | tail -n 1
+            }
+            validate_redis_password() {
+              key="$1"
+              value="$2"
+              if [ "${#value}" -lt 32 ] || [ "${#value}" -gt 128 ]; then
+                echo "Redis ACL password preflight failed: ${key} length must be 32..128"
+                exit 1
+              fi
+              case "$value" in
+                *[!A-Za-z0-9_-]*)
+                  echo "Redis ACL password preflight failed: ${key} contains unsupported characters"
+                  exit 1
+                  ;;
+              esac
+            }
+            redis_admin_password=$(read_env_value REDIS_ADMIN_PASSWORD)
+            redis_spring_password=$(read_env_value REDIS_SPRING_PASSWORD)
+            redis_fastapi_password=$(read_env_value REDIS_FASTAPI_PASSWORD)
+            validate_redis_password REDIS_ADMIN_PASSWORD "$redis_admin_password"
+            validate_redis_password REDIS_SPRING_PASSWORD "$redis_spring_password"
+            validate_redis_password REDIS_FASTAPI_PASSWORD "$redis_fastapi_password"
+            if [ "$redis_admin_password" = "$redis_spring_password" ] \
+              || [ "$redis_admin_password" = "$redis_fastapi_password" ] \
+              || [ "$redis_spring_password" = "$redis_fastapi_password" ]; then
+              echo "Redis ACL passwords must be distinct"
+              exit 1
+            fi
+            unset redis_admin_password redis_spring_password redis_fastapi_password
+
+            spring_jdbc_url=$(read_env_value SPRING_DATASOURCE_URL)
+            spring_db_user=$(read_env_value SPRING_DATASOURCE_USERNAME)
+            spring_db_password=$(read_env_value SPRING_DATASOURCE_PASSWORD)
+            spring_jdbc_url=${spring_jdbc_url:-jdbc:postgresql://db:5432/workflow}
+            spring_db_user=${spring_db_user:-postgres}
+            spring_db_password=${spring_db_password:-$(read_env_value POSTGRES_PASSWORD)}
+            test -n "$spring_db_password"
+            spring_psql_url=${spring_jdbc_url#jdbc:}
+            case "$spring_psql_url" in
+              *://db:*)
+                echo "Database schema preflight deferred to post-start readiness for local Compose database."
+                schema_ready=1
+                ;;
+              *)
+                schema_ready=$(docker run --rm --network host \
+                  -e PGPASSWORD="$spring_db_password" postgres:16-alpine \
+                  psql "$spring_psql_url" -U "$spring_db_user" -tA -v ON_ERROR_STOP=1 \
+                  -c "SELECT CASE WHEN to_regclass('"'"'public.rag_assignee_sync_failures'"'"') IS NOT NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='"'"'public'"'"' AND table_name='"'"'meetings'"'"' AND column_name='"'"'analysis_job_id'"'"') THEN 1 ELSE 0 END")
+                ;;
+            esac
+            unset spring_db_password
+            if [ "$schema_ready" != "1" ]; then
+              echo "Database schema preflight failed: apply migrations 009 and 010 before deployment."
+              exit 1
+            fi
+          '
+
       - name: Deploy (git fetch + reset --hard origin/main + docker compose up -d --build)
         id: deploy
         run: |
@@ -30,7 +95,7 @@ jobs:
             git reset --hard origin/main
             cd App
             test -f .env
-            # Compose가 dotenv를 직접 파싱하게 하며, required Redis ACL 변수 누락 시 기동 전에 실패한다.
+            # Preflight가 성공한 뒤에만 Compose를 검증하고 서비스를 변경한다.
             docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
@@ -40,7 +105,7 @@ jobs:
                    sh -c "REDISCLI_AUTH=\"\$REDIS_ADMIN_PASSWORD\" redis-cli --raw --user admin ping" \
                    2>/dev/null | grep -qx PONG \
                 && curl -fsS -m 10 http://127.0.0.1:8000/api/v1/health >/dev/null \
-                && curl -fsS -m 10 http://127.0.0.1:8080/api/v1/health >/dev/null \
+                && curl -fsS -m 10 http://127.0.0.1:8080/api/v1/health/ready >/dev/null \
                 && docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
                    sh -c "REDISCLI_AUTH=\"\$REDIS_ADMIN_PASSWORD\" redis-cli --raw --user admin XINFO GROUPS meeting-analysis" \
                    2>/dev/null | grep -qx meeting-analysis-workers; then
@@ -62,7 +127,7 @@ jobs:
         if: steps.deploy.outcome == 'success'
         run: |
           for i in $(seq 1 20); do
-            code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' "https://${{ secrets.OCI_DOMAIN }}/api/v1/health" || echo 000)
+            code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' "https://${{ secrets.OCI_DOMAIN }}/api/v1/health/ready" || echo 000)
             if [ "$code" = "200" ]; then
               echo "healthy (attempt $i)"
               exit 0
@@ -88,6 +153,18 @@ jobs:
           ssh -i ~/.ssh/oci_deploy_key "${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }}" '
             set -e
             cd /home/ubuntu/work-flow/App
+            spring_jdbc_url=$(docker inspect workflow-backend-spring \
+              --format "{{range .Config.Env}}{{println .}}{{end}}" \
+              | sed -n "s/^SPRING_DATASOURCE_URL=//p" | tail -n 1)
+            spring_db_user=$(docker inspect workflow-backend-spring \
+              --format "{{range .Config.Env}}{{println .}}{{end}}" \
+              | sed -n "s/^SPRING_DATASOURCE_USERNAME=//p" | tail -n 1)
+            spring_db_password=$(docker inspect workflow-backend-spring \
+              --format "{{range .Config.Env}}{{println .}}{{end}}" \
+              | sed -n "s/^SPRING_DATASOURCE_PASSWORD=//p" | tail -n 1)
+            spring_network=$(docker inspect workflow-backend-spring \
+              --format "{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}" \
+              | sed -n "1p")
             if docker ps -a --format "{{.Names}}" | grep -qx workflow-backend-spring; then
               spring_running=$(docker inspect --format "{{.State.Running}}" workflow-backend-spring)
               if [ "$spring_running" = "true" ]; then
@@ -105,18 +182,31 @@ jobs:
             queue_pending=$(docker exec workflow-redis \
               sh -c "REDISCLI_AUTH=\"\$REDIS_ADMIN_PASSWORD\" redis-cli --raw --user admin XPENDING meeting-analysis meeting-analysis-workers" \
               2>/dev/null | sed -n "1p" || printf unavailable)
+            rag_outbox_count=unavailable
+            spring_psql_url=${spring_jdbc_url#jdbc:}
+            if outbox_query_result=$(docker run --rm --network "$spring_network" \
+              -e PGPASSWORD="$spring_db_password" postgres:16-alpine \
+              psql "$spring_psql_url" -U "$spring_db_user" -tA -v ON_ERROR_STOP=1 \
+              -c "SELECT source_type FROM rag_assignee_sync_failures" \
+              2>/dev/null); then
+              rag_outbox_count=$(printf '%s\n' "$outbox_query_result" \
+                | grep -Ec '^(delete:|delete_project|sync:|ingest:)') || rag_outbox_count=0
+            fi
+            unset spring_db_password outbox_query_result
             [ -n "$queue_length" ] || queue_length=unavailable
             [ -n "$queue_pending" ] || queue_pending=unavailable
-            echo "Redis queue before rollback: length=${queue_length}, pending=${queue_pending}"
+            echo "Rollback safety metrics: queue_length=${queue_length}, queue_pending=${queue_pending}, rag_outbox=${rag_outbox_count}"
             echo "WARNING: 이전 코드는 Redis Stream을 drain할 수 없습니다. 처리 중 작업은 운영자가 확인해야 합니다."
+            echo "WARNING: 이전 코드는 새 RAG 삭제/담당자/인제스트 outbox를 재처리할 수 없습니다."
 
             if ! printf "%s\n" "$queue_length" | grep -Eq "^[0-9]+$" \
-              || ! printf "%s\n" "$queue_pending" | grep -Eq "^[0-9]+$"; then
-              echo "Automatic rollback blocked: queue metrics unavailable or non-numeric; manual drain/compensation required."
+              || ! printf "%s\n" "$queue_pending" | grep -Eq "^[0-9]+$" \
+              || ! printf "%s\n" "$rag_outbox_count" | grep -Eq "^[0-9]+$"; then
+              echo "Automatic rollback blocked: queue/outbox metrics unavailable or non-numeric; manual drain/compensation required."
               exit 1
             fi
-            if [ "$queue_length" -ne 0 ] || [ "$queue_pending" -ne 0 ]; then
-              echo "Automatic rollback blocked: queue is not drained; manual drain/compensation required."
+            if [ "$queue_length" -ne 0 ] || [ "$queue_pending" -ne 0 ] || [ "$rag_outbox_count" -ne 0 ]; then
+              echo "Automatic rollback blocked: queue or RAG outbox is not drained; manual drain/compensation required."
               exit 1
             fi
 

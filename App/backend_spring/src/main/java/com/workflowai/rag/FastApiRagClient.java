@@ -62,4 +62,23 @@ public class FastApiRagClient {
             .retrieve()
             .toBodilessEntity();
     }
+
+    public void deleteSource(Long projectId, String sourceType, Long sourceId) {
+        restClient.delete()
+            .uri(
+                "/ai/rag/projects/{projectId}/sources/{sourceType}/{sourceId}",
+                projectId,
+                sourceType,
+                sourceId
+            )
+            .retrieve()
+            .toBodilessEntity();
+    }
+
+    public void deleteProjectSources(Long projectId) {
+        restClient.delete()
+            .uri("/ai/rag/projects/{projectId}/sources", projectId)
+            .retrieve()
+            .toBodilessEntity();
+    }
 }

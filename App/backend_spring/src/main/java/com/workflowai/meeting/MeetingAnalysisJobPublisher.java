@@ -33,7 +33,11 @@ public class MeetingAnalysisJobPublisher {
     }
 
     public String enqueue(Long meetingId, AiAnalyzeRequest request) {
-        MeetingAnalysisJob job = new MeetingAnalysisJob(UUID.randomUUID().toString(), meetingId, request);
+        return enqueue(meetingId, request, UUID.randomUUID());
+    }
+
+    public String enqueue(Long meetingId, AiAnalyzeRequest request, UUID jobId) {
+        MeetingAnalysisJob job = new MeetingAnalysisJob(jobId.toString(), meetingId, request);
         String payload = serialize(job);
         if (payload.getBytes(StandardCharsets.UTF_8).length > MAX_PAYLOAD_BYTES) {
             throw new IllegalStateException(ENQUEUE_FAILURE_MESSAGE);

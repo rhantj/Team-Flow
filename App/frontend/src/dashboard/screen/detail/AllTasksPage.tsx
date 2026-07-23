@@ -290,6 +290,7 @@ export function AllTasksPage() {
       {statusTarget && currentProjectId != null && (
         <TaskStatusPopup
           task={statusTarget}
+          tasks={tasks}
           projectId={currentProjectId}
           onClose={() => setStatusTarget(null)}
           onChanged={() => { setStatusTarget(null); refetch(); }}

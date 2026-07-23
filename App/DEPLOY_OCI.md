@@ -97,6 +97,18 @@ openssl rand -base64 36
 
 Redis ACL 비밀번호는 특수문자 제한이 있으므로 각각 `openssl rand -hex 32`로 생성한다.
 세 값 중 하나라도 비어 있으면 운영 Compose와 배포 workflow가 즉시 실패한다.
+workflow는 서비스 변경 전에 세 값의 길이·허용 문자·상호 중복을 검사한다. 이 검사를 통과하지
+못하면 기존 컨테이너는 건드리지 않는다.
+
+### Redis Stream 최초 전환 주의
+
+이 릴리스는 기존 버전이 처리할 수 없는 Redis Stream과 세 개의 Redis ACL 비밀번호를 도입하는
+파괴적 전환이다. 고정 `container_name` 단일 Compose 배포이므로 무중단 배포가 아니다. 최초
+전환은 maintenance window에서 수행하고 OCI `.env`에 서로 다른 Redis 비밀번호 세 개를 먼저
+프로비저닝한다. 이전 버전으로 되돌릴 수 있는 조건은 `XLEN=0`, `XPENDING=0`뿐이다.
+
+Spring liveness는 `/api/v1/health/live`, Redis·Worker를 포함한 readiness는
+`/api/v1/health/ready`다. 트래픽 및 배포 판정에는 readiness를 사용한다.
 
 ### 이전에 노출된 자격 증명 회전
 
@@ -147,10 +159,13 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 첫 빌드는 2 OCPU에서 **10~20분** 걸린다 (Gradle + pnpm + pip).
 
-## 8. DB 마이그레이션 적용 (첫 기동 후 1회)
+## 8. DB 마이그레이션 적용 (신규 앱 기동 전)
 
 compose는 `backend_spring/src/main/resources/db/init`만 자동 실행한다.
-`docs/db/migrations/001~007`은 **수동으로 적용해야 한다.**
+`docs/db/migrations/001~010`은 **수동으로 적용해야 한다.** 특히 009와 010은
+RAG outbox와 Redis Stream 세대 펜싱에 필요하므로 신규 Spring 이미지를 기동하기 전에
+반드시 적용한다. OCI 자동 배포도 현재 Spring이 사용하는 실제 DB에서 두 스키마를
+확인하고, 누락 시 서비스를 변경하기 전에 중단한다.
 
 init 스크립트는 `document_chunks.embedding`을 JSONB로 만들고, 마이그레이션 001이 이걸
 `VECTOR(768)`로, 007이 다시 `VECTOR(1024)`로 바꾼다(RAG 챗봇 임베딩 모델이
@@ -163,6 +178,13 @@ for f in docs/db/migrations/0*.sql; do
   echo "적용: $f"
   docker exec -i workflow-db psql -U postgres -d workflow < "$f"
 done
+```
+
+Supabase 운영 환경에서는 연결된 프로젝트에 CLI 마이그레이션을 먼저 적용한다.
+
+```bash
+supabase db push --linked
+supabase migration list --linked
 ```
 
 > 두 디렉터리를 합칠 수 없는 이유: `docker-entrypoint-initdb.d`는 알파벳순으로 실행하는데
@@ -193,7 +215,7 @@ python -m llm_rag_assistant.scripts.reembed_document_chunks
 
 ```bash
 curl -I  https://<도메인>/                      # 200, 인증서 유효
-curl -fsS https://<도메인>/api/v1/health        # 200
+curl -fsS https://<도메인>/api/v1/health/ready  # 200
 
 # 아래는 전부 실패(404)해야 정상 — prod 프로필이 걸렸다는 뜻
 curl -o /dev/null -w '%{http_code}\n' https://<도메인>/api/v1/auth/dev-login/1
@@ -234,7 +256,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis sh
   case "$fastapi_denied" in *NOPERM*) ;; *) exit 1 ;; esac
 '
 curl -fsS http://127.0.0.1:8000/api/v1/health >/dev/null
-curl -fsS http://127.0.0.1:8080/api/v1/health >/dev/null
+curl -fsS http://127.0.0.1:8080/api/v1/health/ready >/dev/null
 ```
 
 `appendonly=yes`, `appendfsync=everysec`, `maxmemory-policy=noeviction`이어야 한다. `ACL LIST`은
@@ -245,7 +267,10 @@ curl -fsS http://127.0.0.1:8080/api/v1/health >/dev/null
 1. UI에서 테스트 회의록을 업로드하고 반환된 ID를 `MEETING_ID`로 기록한다.
 2. 아래 명령의 `XPENDING` 첫 줄이 1 이상일 때 Spring 컨테이너를 강제 종료한다. 명령은
    메시지 ID·payload를 출력하지 않고 pending 개수만 출력한다.
-3. Spring을 다시 시작한 뒤 상태가 `completed` 또는 `failed`가 되고 pending 개수가 0인지 확인한다.
+3. Spring을 다시 시작한다. Worker는 인스턴스별 consumer 이름을 사용하며 다른 consumer에 남은
+   pending이 10분 이상 idle이면 `XPENDING`/`XCLAIM`으로 회수한다. 실행 중에는 1분마다 현재
+   consumer의 pending lease를 갱신해 정상 장기 작업이 다른 인스턴스에 회수되지 않게 한다.
+   상태가 `completed` 또는 `failed`가 되고 pending 개수가 0인지 확인한다.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
@@ -255,7 +280,7 @@ docker kill workflow-backend-spring
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d backend-spring
 spring_ready=0
 for attempt in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:8080/api/v1/health >/dev/null; then
+  if curl -fsS http://127.0.0.1:8080/api/v1/health/ready >/dev/null; then
     spring_ready=1
     break
   fi
@@ -366,6 +391,10 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml restart backend-
   짧아지며 admin 계정으로 key 이름만 조회했을 때 `meeting_analysis:` key가 생성되는지 확인한다.
 - RAG: 같은 프로젝트·사용자 범위에서 완전히 같은 질문을 두 번 요청한다. 응답과 source가 같고 두 번째
   시간이 짧아지며 `rag_answer:` key가 생성되는지 확인한다.
+- 업무·회의·프로젝트를 수정하거나 삭제한 뒤 같은 질문을 다시 요청한다. `rag_epoch:<projectId>`가
+  증가하고 이전 답변 cache가 재사용되지 않으며 삭제한 source가 응답에 포함되지 않아야 한다.
+- FastAPI를 잠시 중지한 상태에서 삭제·담당자 변경을 수행하면 `rag_assignee_sync_failures`에
+  outbox 레코드가 남고, FastAPI 복구 후 스케줄러가 현재 DB 상태에 맞게 재처리해 제거하는지 확인한다.
 - 브라우저 Network timing이나 `curl -w '%{time_total}'`만 기록한다. 질문, 회의 원문, 응답 payload는
   CI 로그나 보고서에 남기지 않는다.
 
@@ -385,15 +414,17 @@ echo "payload marker absent from logs"
 
 ### rollback 전 queue 주의
 
-이전 코드는 Redis Stream을 drain할 수 없습니다. rollback 전에 반드시 `XLEN meeting-analysis`와
-`XPENDING meeting-analysis meeting-analysis-workers`의 개수만 기록한다. 두 값이 정확한 숫자 `0/0`인
-경우에만 자동 rollback한다. 하나라도 `unavailable`, 빈 값, 비숫자 또는 0이 아닌 값이면 fail closed로
-자동 rollback을 중단하고 신규 업로드를 막은 뒤 manual drain/compensation을 완료한다.
+이전 코드는 Redis Stream과 새 RAG 삭제·담당자·인제스트 outbox를 처리할 수 없습니다. rollback 전에 반드시
+`XLEN meeting-analysis`, `XPENDING meeting-analysis meeting-analysis-workers`, 그리고
+`rag_assignee_sync_failures`의 `delete:*`·`delete_project`·`sync:*`·`ingest:*` 개수만 기록한다. 세 값이
+정확한 숫자 `0/0/0`인 경우에만 자동 rollback한다. 하나라도 `unavailable`, 빈 값, 비숫자 또는
+0이 아닌 값이면 fail closed로 자동 rollback을 중단하고 신규 업로드를 막은 뒤
+manual drain/compensation을 완료한다.
 
 자동 rollback workflow는 최종 지표 수집 직전에 실행 중인 Spring을
 `docker stop --time 60 workflow-backend-spring`으로 먼저 정지해 ingress와 Worker를 quiesce한다.
 컨테이너가 없거나 이미 정지된 경우는 그대로 진행하지만, 실행 중인 컨테이너 정지에 실패하면 rollback을
-중단한다. 최종 지표가 0/0이 아니거나 조회 불가이면 다음 절차로 현재 feature 버전을 drain한다.
+중단한다. 최종 지표가 0/0/0이 아니거나 조회 불가이면 다음 절차로 현재 feature 버전을 drain한다.
 payload 조회와 수동 XACK/XDEL 금지이며 개수만 확인한다.
 
 ```bash

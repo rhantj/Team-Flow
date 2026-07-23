@@ -51,13 +51,19 @@ def _is_personal_intent(question: str) -> bool:
     return bool(_COMPACT_PERSONAL_TASK_PATTERN.search(question))
 
 
-def _answer_cache_key(project_id: int, assignee_id: int | None, question: str) -> str:
+def _answer_cache_key(
+    project_id: int,
+    assignee_id: int | None,
+    question: str,
+    cache_epoch: str = "0",
+) -> str:
     canonical_basis = json.dumps(
         {
             "schema_version": _ANSWER_CACHE_SCHEMA_VERSION,
             "project_id": project_id,
             "assignee_id": assignee_id,
             "question": question,
+            "cache_epoch": cache_epoch,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -66,6 +72,15 @@ def _answer_cache_key(project_id: int, assignee_id: int | None, question: str) -
     digest = hashlib.sha256(canonical_basis.encode("utf-8")).hexdigest()
     assignee_scope = str(assignee_id) if assignee_id is not None else "none"
     return f"rag_answer:{project_id}:{assignee_scope}:{digest}"
+
+
+async def _read_project_cache_epoch(redis_client, project_id: int) -> str | None:
+    try:
+        epoch = await redis_client.get(f"rag_epoch:{project_id}")
+    except Exception:
+        logger.warning("RAG 답변 캐시 버전 조회 실패, 캐시 없이 진행합니다.")
+        return None
+    return epoch if epoch is not None else "0"
 
 
 async def _read_cached_response(redis_client, cache_key: str) -> RagQueryResponse | None:
@@ -102,7 +117,8 @@ async def _write_cached_response(redis_client, cache_key: str, response: RagQuer
 
 async def answer_question(pool, project_id: int, question: str, user_id: int | None = None) -> RagQueryResponse:
     assignee_id = user_id if user_id is not None and _is_personal_intent(question) else None
-    cache_key = _answer_cache_key(project_id, assignee_id, question)
+    cache_key = None
+    cache_epoch = None
 
     try:
         redis_client = get_async_redis_client()
@@ -111,9 +127,20 @@ async def answer_question(pool, project_id: int, question: str, user_id: int | N
         redis_client = None
 
     if redis_client is not None:
-        cached_response = await _read_cached_response(redis_client, cache_key)
-        if cached_response is not None:
-            return cached_response
+        cache_epoch = await _read_project_cache_epoch(redis_client, project_id)
+        if cache_epoch is not None:
+            cache_key = _answer_cache_key(project_id, assignee_id, question, cache_epoch)
+            cached_response = await _read_cached_response(redis_client, cache_key)
+            if cached_response is not None:
+                latest_epoch = await _read_project_cache_epoch(redis_client, project_id)
+                if latest_epoch == cache_epoch:
+                    return cached_response
+                cache_epoch = latest_epoch
+                cache_key = (
+                    _answer_cache_key(project_id, assignee_id, question, cache_epoch)
+                    if cache_epoch is not None
+                    else None
+                )
 
     query_embedding = await embed_text(question)
     rows = await search_similar_chunks(pool, project_id, query_embedding, top_k=5, assignee_id=assignee_id)
@@ -129,8 +156,10 @@ async def answer_question(pool, project_id: int, question: str, user_id: int | N
         for row in rows
     ]
     response = RagQueryResponse(answer=answer, sources=sources)
-    if redis_client is not None:
-        await _write_cached_response(redis_client, cache_key, response)
+    if redis_client is not None and cache_key is not None and cache_epoch is not None:
+        latest_epoch = await _read_project_cache_epoch(redis_client, project_id)
+        if latest_epoch == cache_epoch:
+            await _write_cached_response(redis_client, cache_key, response)
     return response
 
 

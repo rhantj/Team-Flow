@@ -8,6 +8,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.LongConsumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +21,8 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.connection.stream.Consumer;
 import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.connection.stream.PendingMessage;
+import org.springframework.data.redis.connection.stream.PendingMessages;
 import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.connection.stream.StreamOffset;
@@ -24,6 +31,7 @@ import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.data.domain.Range;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -32,11 +40,13 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(MeetingAnalysisQueueWorker.class);
 
     private static final String GROUP = "meeting-analysis-workers";
-    private static final String CONSUMER_NAME = "meeting-analysis-worker";
+    private static final String CONSUMER_PREFIX = "meeting-analysis-worker";
     private static final String PAYLOAD_FIELD = "payload";
     private static final long INITIAL_BACKOFF_MILLIS = 250L;
     private static final long MAX_BACKOFF_MILLIS = 5_000L;
     private static final long SHUTDOWN_JOIN_MILLIS = 6_000L;
+    private static final long PENDING_SCAN_COUNT = 100L;
+    private static final Duration STALE_PENDING_IDLE = Duration.ofMinutes(10);
 
     private static final RedisScript<Long> ACK_AND_DELETE_SCRIPT = RedisScript.of(
         """
@@ -52,7 +62,6 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
         Long.class
     );
 
-    private static final Consumer CONSUMER = Consumer.from(GROUP, CONSUMER_NAME);
     private static final StreamReadOptions PENDING_READ_OPTIONS = StreamReadOptions.empty().count(1);
     private static final StreamReadOptions NEW_READ_OPTIONS = StreamReadOptions.empty()
         .block(Duration.ofSeconds(5))
@@ -71,6 +80,9 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
     private final MeetingRepository meetingRepository;
     private final MeetingAnalysisRunner runner;
     private final LongConsumer delay;
+    private final String consumerName;
+    private final Consumer consumer;
+    private final ScheduledExecutorService pendingLeaseExecutor;
 
     private volatile boolean running;
     private volatile boolean groupInitialized;
@@ -83,7 +95,15 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
         MeetingRepository meetingRepository,
         MeetingAnalysisRunner runner
     ) {
-        this(redisTemplate, objectMapper, meetingRepository, runner, MeetingAnalysisQueueWorker::sleep);
+        this(
+            redisTemplate,
+            objectMapper,
+            meetingRepository,
+            runner,
+            MeetingAnalysisQueueWorker::sleep,
+            CONSUMER_PREFIX + "-" + UUID.randomUUID(),
+            null
+        );
     }
 
     MeetingAnalysisQueueWorker(
@@ -93,11 +113,39 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
         MeetingAnalysisRunner runner,
         LongConsumer delay
     ) {
+        this(redisTemplate, objectMapper, meetingRepository, runner, delay, CONSUMER_PREFIX, null);
+    }
+
+    MeetingAnalysisQueueWorker(
+        StringRedisTemplate redisTemplate,
+        ObjectMapper objectMapper,
+        MeetingRepository meetingRepository,
+        MeetingAnalysisRunner runner,
+        LongConsumer delay,
+        String consumerName
+    ) {
+        this(redisTemplate, objectMapper, meetingRepository, runner, delay, consumerName, null);
+    }
+
+    MeetingAnalysisQueueWorker(
+        StringRedisTemplate redisTemplate,
+        ObjectMapper objectMapper,
+        MeetingRepository meetingRepository,
+        MeetingAnalysisRunner runner,
+        LongConsumer delay,
+        String consumerName,
+        ScheduledExecutorService pendingLeaseExecutor
+    ) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
         this.meetingRepository = meetingRepository;
         this.runner = runner;
         this.delay = delay;
+        this.consumerName = consumerName;
+        this.consumer = Consumer.from(GROUP, consumerName);
+        this.pendingLeaseExecutor = pendingLeaseExecutor == null
+            ? createPendingLeaseExecutor(consumerName)
+            : pendingLeaseExecutor;
     }
 
     @Override
@@ -106,7 +154,7 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
             return;
         }
         running = true;
-        Thread thread = new Thread(this::workLoop, CONSUMER_NAME);
+        Thread thread = new Thread(this::workLoop, consumerName);
         thread.setDaemon(true);
         workerThread = thread;
         thread.start();
@@ -136,6 +184,7 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
     synchronized void shutdown() {
         running = false;
         groupInitialized = false;
+        pendingLeaseExecutor.shutdownNow();
         Thread thread = workerThread;
         if (thread == null) {
             return;
@@ -182,14 +231,53 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
 
     private void doPollOnce() {
         StreamOperations<String, String, String> operations = streamOperations();
-        List<MapRecord<String, String, String>> records = operations.read(CONSUMER, PENDING_READ_OPTIONS, PENDING_OFFSET);
+        List<MapRecord<String, String, String>> records = operations.read(consumer, PENDING_READ_OPTIONS, PENDING_OFFSET);
         if (records == null || records.isEmpty()) {
-            records = operations.read(CONSUMER, NEW_READ_OPTIONS, NEW_OFFSET);
+            records = claimStalePending(operations);
+        }
+        if (records == null || records.isEmpty()) {
+            records = operations.read(consumer, NEW_READ_OPTIONS, NEW_OFFSET);
         }
         if (records == null || records.isEmpty()) {
             return;
         }
         process(records.getFirst());
+    }
+
+    private List<MapRecord<String, String, String>> claimStalePending(
+        StreamOperations<String, String, String> operations
+    ) {
+        Range<?> pendingRange = Range.unbounded();
+        while (true) {
+            PendingMessages pending = operations.pending(
+                MeetingAnalysisJobPublisher.STREAM_KEY,
+                GROUP,
+                pendingRange,
+                PENDING_SCAN_COUNT
+            );
+            if (pending == null || pending.isEmpty()) {
+                return List.of();
+            }
+            for (PendingMessage message : pending) {
+                if (consumerName.equals(message.getConsumerName())
+                    || message.getElapsedTimeSinceLastDelivery().compareTo(STALE_PENDING_IDLE) < 0) {
+                    continue;
+                }
+                return operations.claim(
+                    MeetingAnalysisJobPublisher.STREAM_KEY,
+                    GROUP,
+                    consumerName,
+                    STALE_PENDING_IDLE,
+                    message.getId()
+                );
+            }
+            if (pending.size() < PENDING_SCAN_COUNT) {
+                return List.of();
+            }
+            pendingRange = Range.rightUnbounded(
+                Range.Bound.exclusive(pending.get(pending.size() - 1).getIdAsString())
+            );
+        }
     }
 
     private void process(MapRecord<String, String, String> record) {
@@ -226,8 +314,12 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
             return;
         }
 
+        ScheduledFuture<?> pendingLease = startPendingLeaseRefresh(record.getId());
+        if (pendingLease == null) {
+            return;
+        }
         try {
-            runner.runAnalysis(job.meetingId(), job.request());
+            runner.runAnalysis(job.meetingId(), job.request(), UUID.fromString(job.jobId()));
         } catch (RuntimeException exception) {
             log.warn(
                 "Meeting analysis runner failed; record remains pending. recordId={}, jobId={}, meetingId={}, errorType={}",
@@ -237,8 +329,46 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
                 exception.getClass().getSimpleName()
             );
             return;
+        } finally {
+            pendingLease.cancel(false);
         }
         acknowledgeAndDelete(record.getId());
+    }
+
+    private ScheduledFuture<?> startPendingLeaseRefresh(RecordId recordId) {
+        try {
+            return pendingLeaseExecutor.scheduleWithFixedDelay(
+                () -> refreshPendingLease(recordId),
+                1L,
+                1L,
+                TimeUnit.MINUTES
+            );
+        } catch (RuntimeException exception) {
+            log.warn(
+                "Pending lease refresh scheduling failed; record remains pending. recordId={}, errorType={}",
+                recordId.getValue(),
+                exception.getClass().getSimpleName()
+            );
+            return null;
+        }
+    }
+
+    private void refreshPendingLease(RecordId recordId) {
+        try {
+            streamOperations().claim(
+                MeetingAnalysisJobPublisher.STREAM_KEY,
+                GROUP,
+                consumerName,
+                Duration.ZERO,
+                recordId
+            );
+        } catch (RuntimeException exception) {
+            log.warn(
+                "Pending lease refresh failed. recordId={}, errorType={}",
+                recordId.getValue(),
+                exception.getClass().getSimpleName()
+            );
+        }
     }
 
     private MeetingAnalysisJob deserialize(MapRecord<String, String, String> record) throws JsonProcessingException {
@@ -247,6 +377,7 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
         if (job.jobId() == null || job.jobId().isBlank() || job.meetingId() == null || job.request() == null) {
             throw new IllegalArgumentException("Missing required job field");
         }
+        UUID.fromString(job.jobId());
         return job;
     }
 
@@ -289,5 +420,13 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    private static ScheduledExecutorService createPendingLeaseExecutor(String consumerName) {
+        return Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, consumerName + "-lease");
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 }

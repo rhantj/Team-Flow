@@ -48,8 +48,9 @@ class MeetingAnalysisJobPublisherTest {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class)))
             .thenReturn(recordId);
         MeetingAnalysisJobPublisher publisher = new MeetingAnalysisJobPublisher(redisTemplate, objectMapper);
+        UUID jobId = UUID.randomUUID();
 
-        String result = publisher.enqueue(42L, request);
+        String result = publisher.enqueue(42L, request, jobId);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<RedisScript<String>> scriptCaptor = ArgumentCaptor.forClass(RedisScript.class);
@@ -61,8 +62,7 @@ class MeetingAnalysisJobPublisherTest {
             payloadCaptor.capture()
         );
         MeetingAnalysisJob job = objectMapper.readValue((String) payloadCaptor.getValue(), MeetingAnalysisJob.class);
-        assertThat(job.jobId()).isNotBlank();
-        assertThat(UUID.fromString(job.jobId())).isNotNull();
+        assertThat(job.jobId()).isEqualTo(jobId.toString());
         assertThat(job.meetingId()).isEqualTo(42L);
         assertThat(job.request()).isEqualTo(request);
         assertThat(result).isEqualTo(recordId);

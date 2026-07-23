@@ -27,6 +27,7 @@ import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
@@ -110,7 +111,8 @@ class MeetingAnalysisServiceTest {
         ArgumentCaptor<Meeting> meetingCaptor = ArgumentCaptor.forClass(Meeting.class);
         verify(meetingRepository, atLeastOnce()).save(meetingCaptor.capture());
         assertThat(meetingCaptor.getAllValues().get(0).getAnalysisStatus()).isEqualTo("processing");
-        verify(meetingAnalysisJobPublisher).enqueue(any(), any(AiAnalyzeRequest.class));
+        assertThat(meetingCaptor.getAllValues().get(0).getAnalysisJobId()).isNotNull();
+        verify(meetingAnalysisJobPublisher).enqueue(any(), any(AiAnalyzeRequest.class), any(UUID.class));
     }
 
     @Test
@@ -131,7 +133,7 @@ class MeetingAnalysisServiceTest {
         );
 
         ArgumentCaptor<AiAnalyzeRequest> requestCaptor = ArgumentCaptor.forClass(AiAnalyzeRequest.class);
-        verify(meetingAnalysisJobPublisher).enqueue(any(), requestCaptor.capture());
+        verify(meetingAnalysisJobPublisher).enqueue(any(), requestCaptor.capture(), any(UUID.class));
         assertThat(requestCaptor.getValue().text()).contains("Meeting minutes body");
         assertThat(requestCaptor.getValue().text()).doesNotContain("텍스트 추출 예정");
     }
@@ -152,9 +154,9 @@ class MeetingAnalysisServiceTest {
             "demo-project", file, "7차 정기회의", "2026-07-15", "정기회의", "document", List.of("김민준"), null
         );
 
-        verify(meetingAnalysisJobPublisher, never()).enqueue(any(), any());
+        verify(meetingAnalysisJobPublisher, never()).enqueue(any(), any(), any());
         TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
-        verify(meetingAnalysisJobPublisher).enqueue(eq(12L), any(AiAnalyzeRequest.class));
+        verify(meetingAnalysisJobPublisher).enqueue(eq(12L), any(AiAnalyzeRequest.class), any(UUID.class));
     }
 
     @Test
@@ -167,7 +169,7 @@ class MeetingAnalysisServiceTest {
             return meeting;
         });
         doThrow(new IllegalStateException("redis unavailable"))
-            .when(meetingAnalysisJobPublisher).enqueue(any(), any());
+            .when(meetingAnalysisJobPublisher).enqueue(any(), any(), any());
 
         MockMultipartFile file = new MockMultipartFile("file", "notes.txt", "text/plain", "회의 내용".getBytes());
         service.analyze(
@@ -175,8 +177,9 @@ class MeetingAnalysisServiceTest {
         );
 
         verify(meetingAnalysisPersistence).saveAnalysisFailureInNewTransaction(
-            13L,
-            MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE
+            eq(13L),
+            eq(MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE),
+            any(UUID.class)
         );
     }
 
@@ -190,7 +193,7 @@ class MeetingAnalysisServiceTest {
             return meeting;
         });
         doThrow(new IllegalStateException("redis unavailable"))
-            .when(meetingAnalysisJobPublisher).enqueue(any(), any());
+            .when(meetingAnalysisJobPublisher).enqueue(any(), any(), any());
         TransactionSynchronizationManager.initSynchronization();
 
         MockMultipartFile file = new MockMultipartFile("file", "notes.txt", "text/plain", "회의 내용".getBytes());
@@ -200,8 +203,9 @@ class MeetingAnalysisServiceTest {
 
         TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
         verify(meetingAnalysisPersistence).saveAnalysisFailureInNewTransaction(
-            14L,
-            MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE
+            eq(14L),
+            eq(MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE),
+            any(UUID.class)
         );
     }
 
@@ -281,7 +285,7 @@ class MeetingAnalysisServiceTest {
     @Test
     void deleteReturnsNullWhenMeetingBelongsToAnotherProject() {
         mockMember(1L);
-        when(meetingRepository.findByIdAndProjectId(99L, 1L)).thenReturn(Optional.empty());
+        when(meetingRepository.findByIdAndProjectIdForUpdate(99L, 1L)).thenReturn(Optional.empty());
         MeetingAnalysisService service = newService();
 
         assertThat(service.delete("demo-project", "99", false)).isNull();
@@ -302,7 +306,7 @@ class MeetingAnalysisServiceTest {
         Path file = dir.resolve("notes.txt");
         Files.writeString(file, "삭제할 회의록");
         Meeting meeting = new Meeting(1L, "삭제 회의", "document", file.toString(), "completed", LocalDate.now(), "정기회의", "notes.txt", CURRENT_USER_ID, 5L);
-        when(meetingRepository.findByIdAndProjectId(8L, 1L)).thenReturn(Optional.of(meeting));
+        when(meetingRepository.findByIdAndProjectIdForUpdate(8L, 1L)).thenReturn(Optional.of(meeting));
         when(meetingAnalysisRepository.existsById(8L)).thenReturn(true);
         MeetingAnalysisService service = newService();
 
@@ -317,6 +321,8 @@ class MeetingAnalysisServiceTest {
         verify(taskRepository, never()).deleteBySourceMeetingId(any());
         verify(meetingAnalysisRepository).deleteById(8L);
         verify(meetingRepository).delete(meeting);
+        verify(ragIngestService).recordDeleteSourceIntent(1L, "meeting", 8L);
+        verify(ragIngestService).deleteSourceBestEffort(1L, "meeting", 8L);
         assertThat(Files.exists(file)).isFalse();
         Files.deleteIfExists(dir);
     }
@@ -326,7 +332,7 @@ class MeetingAnalysisServiceTest {
         mockMember(1L);
         Long otherUploaderId = 999L;
         Meeting meeting = new Meeting(1L, "삭제 회의", "document", "/tmp/x.txt", "completed", LocalDate.now(), "정기회의", "notes.txt", otherUploaderId, 5L);
-        when(meetingRepository.findByIdAndProjectId(10L, 1L)).thenReturn(Optional.of(meeting));
+        when(meetingRepository.findByIdAndProjectIdForUpdate(10L, 1L)).thenReturn(Optional.of(meeting));
         MeetingAnalysisService service = newService();
 
         assertThatThrownBy(() -> service.delete("demo-project", "10", false))
@@ -341,7 +347,7 @@ class MeetingAnalysisServiceTest {
     void deleteRejectsWhenMeetingHasNoRecordedUploader() {
         mockMember(1L);
         Meeting meeting = new Meeting(1L, "삭제 회의", "document", "/tmp/x.txt", "completed", LocalDate.now(), "정기회의", "notes.txt", null, 5L);
-        when(meetingRepository.findByIdAndProjectId(11L, 1L)).thenReturn(Optional.of(meeting));
+        when(meetingRepository.findByIdAndProjectIdForUpdate(11L, 1L)).thenReturn(Optional.of(meeting));
         MeetingAnalysisService service = newService();
 
         assertThatThrownBy(() -> service.delete("demo-project", "11", false))
@@ -354,7 +360,17 @@ class MeetingAnalysisServiceTest {
     void deleteCanRemoveLinkedBoardTasksWhenRequested() {
         mockMember(1L);
         Meeting meeting = new Meeting(1L, "삭제 회의", "document", null, "completed", LocalDate.now(), "정기회의", "notes.txt", CURRENT_USER_ID, 5L);
-        when(meetingRepository.findByIdAndProjectId(9L, 1L)).thenReturn(Optional.of(meeting));
+        com.workflowai.task.Task linkedTask = new com.workflowai.task.Task(
+            1L, "연결 업무", "other", "todo", null, null, null, null, "MEETING_AI", 9L, 1L, 0.0
+        );
+        ReflectionTestUtils.setField(linkedTask, "id", 77L);
+        MeetingActionItem linkedActionItem = new MeetingActionItem(
+            9L, "후속 조치", null, "other", null, null, null, null, null
+        );
+        ReflectionTestUtils.setField(linkedActionItem, "id", 88L);
+        when(meetingRepository.findByIdAndProjectIdForUpdate(9L, 1L)).thenReturn(Optional.of(meeting));
+        when(taskRepository.findBySourceMeetingId(9L)).thenReturn(List.of(linkedTask));
+        when(meetingActionItemRepository.findByMeetingId(9L)).thenReturn(List.of(linkedActionItem));
         MeetingAnalysisService service = newService();
 
         MeetingDeleteResponse response = service.delete("demo-project", "9", true);
@@ -368,6 +384,11 @@ class MeetingAnalysisServiceTest {
         verify(taskRepository, never()).clearSourceMeetingId(any());
         verify(meetingActionItemRepository, never()).clearMeetingId(any());
         verify(meetingRepository).delete(meeting);
+        verify(ragIngestService).recordDeleteSourceIntent(1L, "meeting", 9L);
+        verify(ragIngestService).recordDeleteSourceIntent(1L, "task", 77L);
+        verify(ragIngestService).recordDeleteSourceIntent(1L, "action_item", 88L);
+        verify(ragIngestService).deleteSourceBestEffort(1L, "task", 77L);
+        verify(ragIngestService).deleteSourceBestEffort(1L, "action_item", 88L);
     }
 
     @Test
@@ -378,7 +399,7 @@ class MeetingAnalysisServiceTest {
         MeetingAnalysisService service = newService();
 
         assertThatThrownBy(() -> service.retry("demo-project", "3")).isInstanceOf(IllegalStateException.class);
-        verify(meetingAnalysisJobPublisher, never()).enqueue(any(), any());
+        verify(meetingAnalysisJobPublisher, never()).enqueue(any(), any(), any());
     }
 
     @Test
@@ -421,9 +442,9 @@ class MeetingAnalysisServiceTest {
 
         assertThat(response.status()).isEqualTo("PROCESSING");
         assertThat(meeting.getAnalysisStatus()).isEqualTo("processing");
-        verify(meetingAnalysisJobPublisher).enqueue(4L, new AiAnalyzeRequest(
+        verify(meetingAnalysisJobPublisher).enqueue(eq(4L), eq(new AiAnalyzeRequest(
             "demo-project", "정기회의", meeting.getMeetingDate().toString(), "정기회의", "document", "x.txt", "재분석할 회의 내용", List.of()
-        ));
+        )), eq(meeting.getAnalysisJobId()));
         Files.deleteIfExists(textFile);
     }
 
@@ -436,14 +457,15 @@ class MeetingAnalysisServiceTest {
         when(meetingRepository.findByIdAndProjectId(8L, 1L)).thenReturn(Optional.of(meeting));
         when(meetingAttendeeRepository.findByMeetingId(8L)).thenReturn(List.of());
         doThrow(new IllegalStateException("redis unavailable"))
-            .when(meetingAnalysisJobPublisher).enqueue(any(), any());
+            .when(meetingAnalysisJobPublisher).enqueue(any(), any(), any());
         MeetingAnalysisService service = newService();
 
         service.retry("demo-project", "8");
 
         verify(meetingAnalysisPersistence).saveAnalysisFailureInNewTransaction(
-            8L,
-            MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE
+            eq(8L),
+            eq(MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE),
+            eq(meeting.getAnalysisJobId())
         );
         Files.deleteIfExists(textFile);
     }
@@ -465,7 +487,7 @@ class MeetingAnalysisServiceTest {
         assertThat(response.errorMessage()).isEqualTo(MeetingAnalysisPersistence.REUPLOAD_REQUIRED_ERROR_MESSAGE);
         verify(meetingAnalysisPersistence).saveAnalysisFailure(6L, MeetingAnalysisPersistence.REUPLOAD_REQUIRED_ERROR_MESSAGE);
         verify(meetingAnalysisRepository, never()).save(any());
-        verify(meetingAnalysisJobPublisher, never()).enqueue(any(), any());
+        verify(meetingAnalysisJobPublisher, never()).enqueue(any(), any(), any());
         Files.deleteIfExists(audioFile);
     }
 
@@ -485,7 +507,7 @@ class MeetingAnalysisServiceTest {
         assertThat(response.errorMessage()).isEqualTo(MeetingAnalysisPersistence.REUPLOAD_READ_ERROR_MESSAGE);
         verify(meetingAnalysisPersistence).saveAnalysisFailure(7L, MeetingAnalysisPersistence.REUPLOAD_READ_ERROR_MESSAGE);
         verify(meetingAnalysisRepository, never()).save(any());
-        verify(meetingAnalysisJobPublisher, never()).enqueue(any(), any());
+        verify(meetingAnalysisJobPublisher, never()).enqueue(any(), any(), any());
         Files.deleteIfExists(emptyFile);
     }
 

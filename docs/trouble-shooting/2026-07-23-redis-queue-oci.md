@@ -21,7 +21,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
   sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin ping'
 curl -fsS http://127.0.0.1:8000/api/v1/health >/dev/null
-curl -fsS http://127.0.0.1:8080/api/v1/health >/dev/null
+curl -fsS http://127.0.0.1:8080/api/v1/health/ready >/dev/null
 docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
   sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin XINFO GROUPS meeting-analysis' \
   | grep -qx meeting-analysis-workers
@@ -105,13 +105,15 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
 ```
 
 group이 없거나 pending이 줄지 않으면 Spring 로그에서 exception 종류만 확인하고 payload 관련 행은
-출력하지 않는다. 그 다음 Spring을 재시작해 동일 consumer의 pending 복구를 유도한다.
+출력하지 않는다. Worker는 인스턴스별 consumer 이름을 사용한다. 재시작 뒤 다른 consumer에 남은
+작업이 10분 이상 idle이면 `XPENDING`/`XCLAIM`으로 새 Worker가 회수한다. 정상 실행 중인 작업은
+1분마다 pending lease를 갱신하므로 10분을 넘는 분석도 다른 consumer가 중복 회수하지 않는다.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml restart backend-spring
 spring_ready=0
 for attempt in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:8080/api/v1/health >/dev/null; then
+  if curl -fsS http://127.0.0.1:8080/api/v1/health/ready >/dev/null; then
     spring_ready=1
     break
   fi
@@ -141,6 +143,14 @@ Redis PING과 Spring readiness를 복구한 뒤에만 공식 retry API 또는 UI
 
 cache 장애는 회의 분석과 RAG 응답을 실패시키지 않고 cache miss로 처리되어야 한다. key 이름의 개수만
 확인하고 값을 `GET`하거나 실제 질문·회의 원문을 출력하지 않는다.
+
+RAG 원본 변경은 `rag_epoch:<projectId>`를 증가시켜 이전 답변 key를 무효화한다. 업무·회의·
+프로젝트 삭제 뒤 epoch가 증가하지 않거나 삭제된 원본이 계속 반환되면 FastAPI 삭제
+요청 실패와 Redis `INCR` 권한을 확인한다. cache 값과 질문 원문은 출력하지 않는다.
+삭제와 담당자 변경 의도는 원본 DB 변경과 같은 트랜잭션에서 `rag_assignee_sync_failures`에 먼저
+기록되고, 성공 시 제거된다. 장애 중 남은 `delete:*`, `delete_project`, `sync:*` 레코드는
+스케줄러가 재처리하며, `sync:*`는 현재 업무 담당자와 일치할 때만 적용한다. 이 레코드를 수동
+삭제하지 말고 FastAPI·Redis를 복구한 뒤 자연 감소하는지 확인한다.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
@@ -175,11 +185,12 @@ marker가 발견되면 관련 로그의 외부 전송을 중단하고 보존 정
 rollback 전에 위의 `XLEN meeting-analysis`와
 `XPENDING meeting-analysis meeting-analysis-workers` 첫 줄만 기록한다.
 
-**이전 코드는 Redis Stream을 drain할 수 없습니다.** queue와 pending이 모두 정확한 숫자 `0/0`일
-때만 자동 rollback한다. 하나라도 `unavailable`, 빈 값, 비숫자 또는 0이 아닌 값이면 fail closed로
-자동 rollback을 중단하고 신규 요청을 막은 뒤 manual drain/compensation을 완료한다. rollback 후에는
-public health뿐 아니라 Redis PING, local FastAPI health, local Spring readiness와 consumer group을
-다시 확인한다.
+**이전 코드는 Redis Stream과 새 RAG outbox를 처리할 수 없습니다.** queue/pending과
+`rag_assignee_sync_failures`의 `delete:*`·`delete_project`·`sync:*` 개수가 모두 정확한 숫자
+`0/0/0`일 때만 자동 rollback한다. 하나라도 `unavailable`, 빈 값, 비숫자 또는 0이 아닌 값이면
+fail closed로 자동 rollback을 중단하고 신규 요청을 막은 뒤 manual drain/compensation을 완료한다.
+rollback 후에는 public health뿐 아니라 Redis PING, local FastAPI health, local Spring readiness와
+consumer group을 다시 확인한다.
 
 자동 workflow는 최종 `XLEN`/`XPENDING` 직전에 실행 중인 Spring을
 `docker stop --time 60 workflow-backend-spring`으로 정지한다. 컨테이너가 없거나 이미 중지된 경우는

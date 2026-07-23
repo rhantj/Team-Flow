@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate } from "react-router";
 import { AlertCircle, AlertTriangle, Calendar, CheckCheck, Clock, Layers, MessageSquare, Plus, Sparkles } from "lucide-react";
 import { AiInsightBox } from "../../../ai/components/AiInsightBox";
@@ -6,6 +7,7 @@ import { useAiInsight } from "../../../ai/libs/hooks/useAiInsight";
 import { BackBtn } from "../../../global/component/BackBtn";
 import { DetailStatCard } from "../../../global/component/DetailStatCard";
 import { useAuth } from "../../../global/hooks/useAuth";
+import { useInViewport } from "../../../global/hooks/useInViewport";
 import { useDashboardProgress } from "../../libs/hooks/useDashboardProgress";
 import { useDashboardTasks } from "../../libs/hooks/useDashboardTasks";
 import { updateTaskPosition } from "../../../board/libs/utils/taskApi";
@@ -30,13 +32,22 @@ const BLOCKER_PRIORITY_LABEL: Record<Priority, { label: string; cls: string }> =
 };
 
 function BlockerAiSuggestion({ task, projectId, ready }: { task: DashboardTaskDto; projectId: number | null | undefined; ready: boolean }) {
+  // 블로커 카드가 몇 개든 화면에 스크롤해서 보여지는 카드만 RAG 질의를 보낸다 -
+  // 뷰포트 밖 카드까지 한꺼번에 요청하면 업무 수만큼 LLM 호출이 낭비된다.
+  const [cardRef, inView] = useInViewport<HTMLDivElement>();
   const prompt = `블로커 업무 '${task.title}'(설명: ${task.description || "등록된 설명 없음"})에 대해 먼저 처리할 일과, 해결 방법을 추천해줘. 출력은 3문장 이내로 해.`;
-  const { text, loading, error } = useAiInsight(projectId, prompt, ready);
+  const { text, loading, error } = useAiInsight(projectId, prompt, ready && inView);
   return (
-    <div className="rounded-lg p-3 flex items-start gap-2.5 border" style={{ background: "rgba(112,72,232,0.05)", borderColor: "rgba(112,72,232,0.2)" }}>
+    <div ref={cardRef} className="rounded-lg p-3 flex items-start gap-2.5 border" style={{ background: "rgba(112,72,232,0.05)", borderColor: "rgba(112,72,232,0.2)" }}>
       <Sparkles className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: "#7048E8" }} />
       <p className="text-xs leading-relaxed" style={{ color: "#5B3DC8" }}>
-        {loading ? "AI가 해결 방법을 분석하고 있습니다..." : !error && text ? text : "AI 해결 방법을 불러오지 못했습니다."}
+        {!inView
+          ? "화면에 표시되면 AI 해결 방법을 분석합니다..."
+          : loading
+            ? "AI가 해결 방법을 분석하고 있습니다..."
+            : !error && text
+              ? text
+              : "AI 해결 방법을 불러오지 못했습니다."}
       </p>
     </div>
   );
@@ -45,6 +56,8 @@ function BlockerAiSuggestion({ task, projectId, ready }: { task: DashboardTaskDt
 export function BlockersPage() {
   const { user, currentProjectId } = useAuth();
   const { data: tasks, loading, error, refetch } = useDashboardTasks(currentProjectId);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [resolvingTaskId, setResolvingTaskId] = useState<string | null>(null);
   const { data: progress, loading: progressLoading } = useDashboardProgress(currentProjectId);
   const navigate = useNavigate();
   const onBack = () => navigate("/dashboard");
@@ -75,10 +88,19 @@ export function BlockersPage() {
     ? `${user?.name ?? "담당자"}님의 ${longestStalledDangerTask.title}이 지연 위험입니다.`
     : "현재 지연 위험('위험') 업무가 없습니다.";
 
-  const resolveBlocker = async (taskId: string) => {
+  const resolveBlocker = async (taskId: string, taskTitle: string) => {
     if (currentProjectId == null) return;
-    await updateTaskPosition(taskId, "done", nextPositionForStatus(tasks, "done"), currentProjectId);
-    refetch();
+    if (!window.confirm(`'${taskTitle}' 블로커를 해결 완료로 처리할까요?`)) return;
+    setActionError(null);
+    setResolvingTaskId(taskId);
+    try {
+      await updateTaskPosition(taskId, "done", nextPositionForStatus(tasks, "done"), currentProjectId);
+      refetch();
+    } catch {
+      setActionError("블로커 해결 처리에 실패했습니다. 잠시 후 다시 시도해주세요.");
+    } finally {
+      setResolvingTaskId(null);
+    }
   };
 
   return (
@@ -95,6 +117,7 @@ export function BlockersPage() {
       </div>
 
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{error}</div>}
+      {actionError && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{actionError}</div>}
 
       <div className="grid grid-cols-4 gap-3">
         <DetailStatCard label="현재 블로커" value={loading ? "..." : blockedTasks.length} sub="해결 대기" color="#EF4444" icon={AlertTriangle} />
@@ -167,8 +190,12 @@ export function BlockersPage() {
                 <BlockerAiSuggestion task={task} projectId={currentProjectId} ready={aiInsightReady} />
 
                 <div className="flex items-center flex-wrap gap-2 pt-1 border-t border-border">
-                  <button onClick={() => resolveBlocker(task.id)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg bg-red-500 hover:bg-red-600 transition-colors">
-                    <CheckCheck className="w-3.5 h-3.5" /> 해결 완료
+                  <button
+                    onClick={() => resolveBlocker(task.id, task.title)}
+                    disabled={resolvingTaskId === task.id}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg bg-red-500 hover:bg-red-600 transition-colors disabled:opacity-50"
+                  >
+                    <CheckCheck className="w-3.5 h-3.5" /> {resolvingTaskId === task.id ? "처리 중..." : "해결 완료"}
                   </button>
                   <button onClick={() => navigate("/board")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
                     <Calendar className="w-3.5 h-3.5" /> 마감 조정

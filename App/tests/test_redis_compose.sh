@@ -164,9 +164,9 @@ grep -Fq -- '--auto-aof-rewrite-min-size' "${app_dir}/docker-compose.yml"
 
 grep -q 'user default off' "${app_dir}/redis/users.acl.template"
 grep -Fq 'user admin on >__ADMIN_PASSWORD__ ~* &* +@all' "${app_dir}/redis/users.acl.template"
-grep -Fq 'user spring on >__SPRING_PASSWORD__ resetkeys ~meeting-analysis* -@all +ping +hello +client|setinfo +client|setname +select +xadd +xlen +xgroup +xreadgroup +xack +xdel +eval +evalsha' \
+grep -Fq 'user spring on >__SPRING_PASSWORD__ resetkeys ~meeting-analysis -@all +ping +hello +client|setinfo +client|setname +select +xadd +xlen +xgroup|create +xreadgroup +xpending +xclaim +xack +xdel +eval +evalsha' \
   "${app_dir}/redis/users.acl.template"
-grep -Fq 'user fastapi on >__FASTAPI_PASSWORD__ resetkeys ~meeting_analysis:* ~rag_answer:* -@all +ping +hello +client|setinfo +client|setname +select +get +set +del' \
+grep -Fq 'user fastapi on >__FASTAPI_PASSWORD__ resetkeys -@all +ping +hello +client|setinfo +client|setname +select (~meeting_analysis:* ~rag_answer:* +get +set +del) (~rag_epoch:* +get +incr)' \
   "${app_dir}/redis/users.acl.template"
 if grep -Eq '(^|[[:space:]])\+client([[:space:]]|$)' "${app_dir}/redis/users.acl.template"; then
   printf '%s\n' "Redis service users must not receive all CLIENT subcommands" >&2
@@ -196,36 +196,45 @@ assert_contains() {
 }
 
 assert_contains "${workflow}" 'config --quiet' "safe Compose credential gate"
+assert_contains "${workflow}" 'validate_redis_password' "Redis ACL password format preflight"
+assert_contains "${workflow}" 'Redis ACL passwords must be distinct' "Redis ACL password distinctness preflight"
 assert_contains "${workflow}" 'REDISCLI_AUTH=' "authenticated Redis command"
 assert_contains "${workflow}" 'redis-cli --raw --user admin ping' "authenticated Redis PING"
 assert_contains "${workflow}" 'http://127.0.0.1:8000/api/v1/health' "local FastAPI health check"
-assert_contains "${workflow}" 'http://127.0.0.1:8080/api/v1/health' "local Spring readiness check"
+assert_contains "${workflow}" 'http://127.0.0.1:8080/api/v1/health/ready' "local Spring readiness check"
 assert_contains "${workflow}" 'XINFO GROUPS meeting-analysis' "meeting-analysis group readiness check"
 assert_contains "${workflow}" 'meeting-analysis-workers' "expected queue consumer group"
-assert_contains "${workflow}" 'https://${{ secrets.OCI_DOMAIN }}/api/v1/health' "public Spring health check"
+assert_contains "${workflow}" 'https://${{ secrets.OCI_DOMAIN }}/api/v1/health/ready' "public Spring health check"
+assert_contains "${app_dir}/backend_spring/src/main/java/com/workflowai/security/SecurityConfig.java" \
+  '"/api/v1/health/**"' "unauthenticated readiness/liveness matcher"
 assert_contains "${workflow}" 'XLEN meeting-analysis' "rollback queue length metric"
 assert_contains "${workflow}" 'XPENDING meeting-analysis meeting-analysis-workers' "rollback pending metric"
 assert_contains "${workflow}" '이전 코드는 Redis Stream을 drain할 수 없습니다' "rollback queue warning"
 assert_contains "${workflow}" '^[0-9]+$' "numeric rollback metric validation"
 assert_contains "${workflow}" '[ "$queue_length" -ne 0 ]' "nonzero queue length rollback gate"
 assert_contains "${workflow}" '[ "$queue_pending" -ne 0 ]' "nonzero pending rollback gate"
+assert_contains "${workflow}" 'SELECT source_type FROM rag_assignee_sync_failures' "RAG outbox rollback metric"
+assert_contains "${workflow}" '[ "$rag_outbox_count" -ne 0 ]' "nonzero RAG outbox rollback gate"
 assert_contains "${workflow}" 'Automatic rollback blocked' "fail-closed rollback message"
 assert_contains "${workflow}" 'manual drain/compensation required' "manual recovery requirement"
 assert_contains "${workflow}" 'docker stop --time 60 workflow-backend-spring' "rollback Spring quiesce"
 config_line=$(grep -nF 'config --quiet' "${workflow}" | head -n 1 | cut -d: -f1)
+password_preflight_line=$(grep -nF 'validate_redis_password' "${workflow}" | head -n 1 | cut -d: -f1)
 up_line=$(grep -nF 'docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build' \
   "${workflow}" | head -n 1 | cut -d: -f1)
 readiness_loop_line=$(grep -nF 'for attempt in $(seq 1 30)' "${workflow}" | head -n 1 | cut -d: -f1)
 readiness_end_line=$(grep -nF 'if [ "$internal_ready" -ne 1 ]' "${workflow}" | head -n 1 | cut -d: -f1)
 rollback_length_line=$(grep -nF 'queue_length=$(docker exec workflow-redis' "${workflow}" | cut -d: -f1)
 rollback_pending_line=$(grep -nF 'queue_pending=$(docker exec workflow-redis' "${workflow}" | cut -d: -f1)
+rollback_outbox_line=$(grep -nF 'SELECT source_type FROM rag_assignee_sync_failures' "${workflow}" | cut -d: -f1)
 rollback_stop_line=$(grep -nF 'docker stop --time 60 workflow-backend-spring' "${workflow}" | cut -d: -f1)
 rollback_numeric_gate_line=$(grep -nF '^[0-9]+$' "${workflow}" | head -n 1 | cut -d: -f1)
 rollback_zero_gate_line=$(grep -nF '[ "$queue_length" -ne 0 ]' "${workflow}" | head -n 1 | cut -d: -f1)
 rollback_reset_line=$(grep -nF 'git reset --hard deploy-previous' "${workflow}" | cut -d: -f1)
 test "${config_line}" -lt "${up_line}"
+test "${password_preflight_line}" -lt "${config_line}"
 for readiness_command in 'redis-cli --raw --user admin ping' \
-  'http://127.0.0.1:8000/api/v1/health' 'http://127.0.0.1:8080/api/v1/health' \
+  'http://127.0.0.1:8000/api/v1/health' 'http://127.0.0.1:8080/api/v1/health/ready' \
   'XINFO GROUPS meeting-analysis'; do
   command_line=$(grep -nF "${readiness_command}" "${workflow}" | head -n 1 | cut -d: -f1)
   test "${command_line}" -gt "${readiness_loop_line}"
@@ -233,7 +242,8 @@ for readiness_command in 'redis-cli --raw --user admin ping' \
 done
 test "${rollback_stop_line}" -lt "${rollback_length_line}"
 test "${rollback_length_line}" -lt "${rollback_pending_line}"
-test "${rollback_pending_line}" -lt "${rollback_numeric_gate_line}"
+test "${rollback_pending_line}" -lt "${rollback_outbox_line}"
+test "${rollback_outbox_line}" -lt "${rollback_numeric_gate_line}"
 test "${rollback_numeric_gate_line}" -lt "${rollback_zero_gate_line}"
 test "${rollback_zero_gate_line}" -lt "${rollback_reset_line}"
 if grep -Eq '(^|[[:space:]])(source[[:space:]]+|\.[[:space:]]+\.\/\.env|set[[:space:]]+-a)' "${workflow}"; then
@@ -276,7 +286,8 @@ assert_contains "${troubleshooting}" 'REDISCLI_AUTH=' "secret-safe Redis authent
 assert_contains "${troubleshooting}" 'XLEN meeting-analysis' "queue length diagnosis"
 assert_contains "${troubleshooting}" 'XPENDING meeting-analysis meeting-analysis-workers' "pending diagnosis"
 assert_contains "${troubleshooting}" 'XINFO GROUPS meeting-analysis' "consumer group diagnosis"
-assert_contains "${troubleshooting}" '이전 코드는 Redis Stream을 drain할 수 없습니다' "rollback recovery caution"
+assert_contains "${troubleshooting}" '이전 코드는 Redis Stream과 새 RAG outbox를 처리할 수 없습니다' \
+  "rollback recovery caution"
 for scenario in "BGREWRITEAOF" "aof_last_bgrewrite_status" "암호화" "접근 권한" \
   "보존 기간" "unavailable" "manual drain/compensation" "payload 조회 금지" \
   "aof_rewrite_scheduled:0" "docker stop --time 60 workflow-backend-spring" \
@@ -387,7 +398,7 @@ if [ "${smoke_mode}" != "0" ] \
         spring client setinfo lib-name workflow-queue-smoke >/dev/null
       fi
 
-      stream=meeting-analysis:acl-smoke
+      stream=meeting-analysis
       group=meeting-analysis-workers-smoke
       consumer=meeting-analysis-worker-smoke
       ack_script="
@@ -401,7 +412,7 @@ if [ "${smoke_mode}" != "0" ] \
         return redis.call(\"XDEL\", KEYS[1], ARGV[2])
       "
       publisher_script="$(cat /run/workflow-redis/meeting-analysis-enqueue.lua)"
-      publisher_stream=meeting-analysis:publisher-acl-smoke
+      publisher_stream=meeting-analysis
       publisher_eval="$(spring eval "$publisher_script" 1 "$publisher_stream" 2 fixture-eval)"
       case "$publisher_eval" in
         [0-9]*-[0-9]*) ;;
@@ -419,11 +430,14 @@ if [ "${smoke_mode}" != "0" ] \
       [ "$(spring xlen "$publisher_stream")" = "2" ]
       [ "$(spring evalsha "$publisher_sha" 1 "$publisher_stream" 2 fixture-full-evalsha)" = "QUEUE_FULL" ]
       [ "$(spring xlen "$publisher_stream")" = "2" ]
+      admin del "$publisher_stream" >/dev/null
 
       first_id="$(spring xadd "$stream" "*" payload fixture-one)"
       spring xgroup create "$stream" "$group" 0 >/dev/null
       spring xreadgroup group "$group" "$consumer" count 1 streams "$stream" ">" >/dev/null
       [ -n "$(admin xpending "$stream" "$group" - + 10)" ]
+      [ -n "$(spring xpending "$stream" "$group" - + 10)" ]
+      spring xclaim "$stream" "$group" recovery-worker 0 "$first_id" >/dev/null
       [ "$(spring eval "$ack_script" 1 "$stream" "$group" "$first_id")" = "1" ]
       [ "$(admin xlen "$stream")" = "0" ]
       [ -z "$(admin xpending "$stream" "$group" - + 10)" ]
@@ -435,6 +449,11 @@ if [ "${smoke_mode}" != "0" ] \
       [ "$(spring evalsha "$script_sha" 1 "$stream" "$group" "$second_id")" = "1" ]
       [ "$(admin xlen "$stream")" = "0" ]
       [ -z "$(admin xpending "$stream" "$group" - + 10)" ]
+      xgroup_destroy_denied="$(spring xgroup destroy "$stream" "$group" 2>&1 || true)"
+      case "$xgroup_destroy_denied" in
+        *NOPERM*) ;;
+        *) exit 1 ;;
+      esac
 
       spring_denied="$(spring set meeting_analysis:forbidden fixture 2>&1 || true)"
       case "$spring_denied" in
@@ -442,12 +461,25 @@ if [ "${smoke_mode}" != "0" ] \
         *) exit 1 ;;
       esac
       [ "$(admin exists meeting_analysis:forbidden)" = "0" ]
+      spring_stream_denied="$(spring xadd meeting-analysis:forbidden "*" payload fixture 2>&1 || true)"
+      case "$spring_stream_denied" in
+        *NOPERM*) ;;
+        *) exit 1 ;;
+      esac
+      [ "$(admin exists meeting-analysis:forbidden)" = "0" ]
 
       fastapi set meeting_analysis:acl-smoke fixture >/dev/null
       [ "$(fastapi get meeting_analysis:acl-smoke)" = "fixture" ]
       fastapi set rag_answer:acl-smoke fixture >/dev/null
       [ "$(fastapi get rag_answer:acl-smoke)" = "fixture" ]
+      [ "$(fastapi incr rag_epoch:acl-smoke)" = "1" ]
       fastapi del meeting_analysis:acl-smoke rag_answer:acl-smoke >/dev/null
+      fastapi_epoch_delete_denied="$(fastapi del rag_epoch:acl-smoke 2>&1 || true)"
+      case "$fastapi_epoch_delete_denied" in
+        *NOPERM*) ;;
+        *) exit 1 ;;
+      esac
+      [ "$(admin get rag_epoch:acl-smoke)" = "1" ]
 
       fastapi_denied="$(fastapi xadd meeting-analysis:forbidden "*" payload fixture 2>&1 || true)"
       case "$fastapi_denied" in

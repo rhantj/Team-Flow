@@ -2,6 +2,7 @@ package com.workflowai.meeting;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
@@ -10,7 +11,11 @@ import com.workflowai.notification.NotificationService;
 import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.rag.RagIngestService;
 import com.workflowai.security.UserPrincipal;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,6 +30,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @DataJpaTest
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -79,7 +86,7 @@ class MeetingAnalysisServiceAfterCommitFailureIntegrationTest {
     @Test
     void afterCommitEnqueueFailureDurablyPersistsFailedStatusInNewTransaction() {
         doThrow(new IllegalStateException("redis unavailable"))
-            .when(meetingAnalysisJobPublisher).enqueue(any(), any());
+            .when(meetingAnalysisJobPublisher).enqueue(any(), any(), any());
 
         MeetingAnalysisResponse response = service.analyze(
             "demo-project",
@@ -99,5 +106,50 @@ class MeetingAnalysisServiceAfterCommitFailureIntegrationTest {
         );
 
         assertThat(status).isEqualTo("failed");
+    }
+
+    @Test
+    void retryEnqueuesOnlyAfterCallerTransactionCommits() throws Exception {
+        Path textFile = Files.createTempFile("workflow-retry-", ".txt");
+        Files.writeString(textFile, "재시도할 회의록");
+        Meeting meeting = meetingRepository.save(
+            new Meeting(
+                1L,
+                "재시도 회의",
+                "document",
+                textFile.toString(),
+                "failed",
+                LocalDate.now(),
+                "정기회의",
+                "retry.txt",
+                1L,
+                Files.size(textFile)
+            )
+        );
+        AtomicBoolean enqueueObserved = new AtomicBoolean();
+        AtomicBoolean commitObserved = new AtomicBoolean();
+        doAnswer(invocation -> {
+            assertThat(commitObserved).isTrue();
+            enqueueObserved.set(true);
+            return null;
+        }).when(meetingAnalysisJobPublisher).enqueue(any(), any(), any());
+
+        try {
+            new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        commitObserved.set(true);
+                    }
+                });
+                service.retry("demo-project", String.valueOf(meeting.getId()));
+            });
+        } finally {
+            Files.deleteIfExists(textFile);
+        }
+
+        assertThat(enqueueObserved).isTrue();
+        assertThat(meetingRepository.findById(meeting.getId()).orElseThrow().getAnalysisStatus())
+            .isEqualTo("processing");
     }
 }

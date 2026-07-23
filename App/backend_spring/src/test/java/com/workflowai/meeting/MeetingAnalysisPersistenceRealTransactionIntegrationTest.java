@@ -97,6 +97,8 @@ class MeetingAnalysisPersistenceRealTransactionIntegrationTest {
         });
 
         verify(notificationService, never()).notify(any(), any(), any(), any(), any(), any());
+        verify(ragIngestService, never()).ingestBestEffort(any(), any(), any(), any());
+        verify(ragIngestService, never()).ingestBestEffort(any(), any(), any(), any(), any());
         assertThat(meetingRepository.findById(meetingId).orElseThrow().getAnalysisStatus()).isEqualTo("processing");
     }
 

@@ -289,6 +289,13 @@ def test_answer_cache_key_scopes_schema_project_assignee_and_exact_question() ->
     with patch("llm_rag_assistant.app.services.chat_service._ANSWER_CACHE_SCHEMA_VERSION", "v2"):
         assert baseline != _answer_cache_key(project_id=5, assignee_id=None, question="동일 질문")
 
+    assert baseline != _answer_cache_key(
+        project_id=5,
+        assignee_id=None,
+        question="동일 질문",
+        cache_epoch="1",
+    )
+
 
 @pytest.mark.asyncio
 async def test_answer_question_cache_hit_skips_embedding_search_and_generation() -> None:
@@ -313,6 +320,78 @@ async def test_answer_question_cache_hit_skips_embedding_search_and_generation()
     embed.assert_not_awaited()
     search.assert_not_awaited()
     generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_answer_question_project_epoch_change_bypasses_stale_cached_answer() -> None:
+    stale = RagQueryResponse(answer="삭제 전 답변", sources=[])
+    cache = _FakeAsyncRedis(
+        {
+            "rag_epoch:5": "2",
+            _answer_cache_key(5, None, "질문", cache_epoch="1"): stale.model_dump_json(),
+        }
+    )
+
+    with (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.get_async_redis_client",
+            return_value=cache,
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="삭제 후 답변"),
+        ),
+    ):
+        result = await answer_question(object(), project_id=5, question="질문")
+
+    assert result.answer == "삭제 후 답변"
+    assert cache.set_calls[0][0] == _answer_cache_key(5, None, "질문", cache_epoch="2")
+
+
+@pytest.mark.asyncio
+async def test_answer_question_rechecks_epoch_before_returning_cache_hit() -> None:
+    stale = RagQueryResponse(answer="권한 변경 전 답변", sources=[])
+    cache = _FakeAsyncRedis(
+        {_answer_cache_key(5, None, "질문", cache_epoch="1"): stale.model_dump_json()}
+    )
+    epoch_reads = iter(("1", "2", "2"))
+    original_get = cache.get
+
+    async def get_with_epoch_change(key: str) -> str | None:
+        if key == "rag_epoch:5":
+            return next(epoch_reads)
+        return await original_get(key)
+
+    cache.get = get_with_epoch_change
+    with (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.get_async_redis_client",
+            return_value=cache,
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="권한 변경 후 답변"),
+        ),
+    ):
+        result = await answer_question(object(), project_id=5, question="질문")
+
+    assert result.answer == "권한 변경 후 답변"
 
 
 @pytest.mark.asyncio

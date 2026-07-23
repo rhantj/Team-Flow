@@ -48,4 +48,46 @@ describe("useAiInsight", () => {
     await waitFor(() => expect(result.current.error).toBeTruthy());
     expect(result.current.text).toBeNull();
   });
+
+  it("caps concurrent auto-queries when many instances become ready at once", async () => {
+    // BlockersPage처럼 useAiInsight를 쓰는 카드가 여러 개 동시에 렌더되는 상황을 흉내낸다.
+    // apiFetch가 즉시 resolve되지 않게 해서, 동시에 실행 중인 호출 수가 상한을 넘는지 확인한다.
+    let resolveCount = 0;
+    const pendingResolvers: Array<() => void> = [];
+    vi.mocked(apiFetch).mockImplementation(
+      () =>
+        new Promise(resolve => {
+          pendingResolvers.push(() => {
+            resolveCount += 1;
+            resolve({ answer: `답변 ${resolveCount}`, sources: [] });
+          });
+        })
+    );
+
+    const CARD_COUNT = 5;
+    renderHook(() => {
+      for (let i = 0; i < CARD_COUNT; i += 1) {
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        useAiInsight(1, `질문 ${i}`, true);
+      }
+    });
+
+    // 동시 실행 상한(2)을 넘는 호출이 즉시 나가지 않아야 한다.
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(2));
+    expect(apiFetch).not.toHaveBeenCalledTimes(3);
+
+    // 앞선 요청이 끝나면 대기열에서 다음 요청이 순서대로 실행된다.
+    pendingResolvers[0]();
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(3));
+
+    pendingResolvers[1]();
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(4));
+
+    pendingResolvers[2]();
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(5));
+
+    pendingResolvers[3]();
+    pendingResolvers[4]();
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(5));
+  });
 });

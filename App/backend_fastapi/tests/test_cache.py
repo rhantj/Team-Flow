@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -88,3 +88,15 @@ def test_cache_clear_rebuilds_clients(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert first is first_client
     assert second is second_client
+
+
+@pytest.mark.asyncio
+async def test_advance_rag_project_epoch_uses_project_scoped_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    redis_client = AsyncMock()
+    monkeypatch.setattr(cache, "get_async_redis_client", Mock(return_value=redis_client))
+
+    await cache.advance_rag_project_epoch(42)
+
+    redis_client.incr.assert_awaited_once_with("rag_epoch:42")

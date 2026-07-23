@@ -36,3 +36,7 @@ def get_async_redis_client() -> AsyncRedis:
         socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
         retry_on_timeout=False,
     )
+
+
+async def advance_rag_project_epoch(project_id: int) -> None:
+    await get_async_redis_client().incr(f"rag_epoch:{project_id}")

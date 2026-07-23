@@ -22,6 +22,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,6 +41,8 @@ import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.connection.RedisStreamCommands;
 import org.springframework.data.redis.connection.stream.Consumer;
 import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.connection.stream.PendingMessage;
+import org.springframework.data.redis.connection.stream.PendingMessages;
 import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.connection.stream.StreamOffset;
@@ -48,6 +53,7 @@ import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.data.domain.Range;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -63,6 +69,8 @@ class MeetingAnalysisQueueWorkerTest {
     @Mock private MeetingAnalysisRunner runner;
     @Mock private RedisConnection redisConnection;
     @Mock private RedisStreamCommands streamCommands;
+    @Mock private ScheduledExecutorService pendingLeaseExecutor;
+    @Mock private ScheduledFuture<?> pendingLeaseFuture;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final List<Long> delays = new ArrayList<>();
@@ -105,6 +113,109 @@ class MeetingAnalysisQueueWorkerTest {
     }
 
     @Test
+    void claimsStalePendingFromAnotherConsumerBeforeReadingNewRecords() throws Exception {
+        RecordId recordId = RecordId.of("1-1");
+        PendingMessages pendingMessages = new PendingMessages(
+            GROUP,
+            List.of(new PendingMessage(
+                recordId,
+                Consumer.from(GROUP, "retired-worker"),
+                Duration.ofMinutes(11),
+                1L
+            ))
+        );
+        MapRecord<String, String, String> claimed = record("1-1", validPayload(21L));
+        when(streamOperations.read(any(Consumer.class), any(StreamReadOptions.class), anyStreamOffset()))
+            .thenReturn(List.of());
+        when(streamOperations.pending(MeetingAnalysisJobPublisher.STREAM_KEY, GROUP, Range.unbounded(), 100L))
+            .thenReturn(pendingMessages);
+        when(streamOperations.claim(
+            MeetingAnalysisJobPublisher.STREAM_KEY,
+            GROUP,
+            CONSUMER,
+            Duration.ofMinutes(10),
+            recordId
+        )).thenReturn(List.of(claimed));
+        when(meetingRepository.findById(21L)).thenReturn(Optional.of(processingMeeting()));
+
+        newWorker().pollOnce();
+
+        verify(runner).runAnalysis(eq(21L), eq(request), any(UUID.class));
+        verify(streamOperations, never()).read(
+            Consumer.from(GROUP, CONSUMER),
+            StreamReadOptions.empty().block(Duration.ofSeconds(5)).count(1),
+            StreamOffset.create(MeetingAnalysisJobPublisher.STREAM_KEY, ReadOffset.lastConsumed())
+        );
+    }
+
+    @Test
+    void productionWorkersUseDifferentConsumerNames() {
+        List<String> consumerNames = new ArrayList<>();
+        when(streamOperations.read(any(Consumer.class), any(StreamReadOptions.class), anyStreamOffset()))
+            .thenAnswer(invocation -> {
+                Consumer consumer = invocation.getArgument(0);
+                consumerNames.add(consumer.getName());
+                return List.of();
+            });
+
+        new MeetingAnalysisQueueWorker(redisTemplate, objectMapper, meetingRepository, runner).pollOnce();
+        new MeetingAnalysisQueueWorker(redisTemplate, objectMapper, meetingRepository, runner).pollOnce();
+
+        assertThat(consumerNames).hasSize(4);
+        assertThat(consumerNames.get(0)).isNotEqualTo(consumerNames.get(2));
+    }
+
+    @Test
+    void scansPastFirstPendingPageToClaimStaleOtherConsumerRecord() throws Exception {
+        List<PendingMessage> firstPage = new ArrayList<>();
+        for (int index = 1; index <= 100; index++) {
+            firstPage.add(new PendingMessage(
+                RecordId.of("2-" + index),
+                Consumer.from(GROUP, CONSUMER),
+                Duration.ofMinutes(11),
+                1L
+            ));
+        }
+        RecordId staleId = RecordId.of("3-1");
+        PendingMessages secondPage = new PendingMessages(
+            GROUP,
+            List.of(new PendingMessage(
+                staleId,
+                Consumer.from(GROUP, "retired-worker"),
+                Duration.ofMinutes(11),
+                1L
+            ))
+        );
+        MapRecord<String, String, String> claimed = record("3-1", validPayload(22L));
+        when(streamOperations.read(any(Consumer.class), any(StreamReadOptions.class), anyStreamOffset()))
+            .thenReturn(List.of());
+        when(streamOperations.pending(
+            eq(MeetingAnalysisJobPublisher.STREAM_KEY),
+            eq(GROUP),
+            any(Range.class),
+            eq(100L)
+        )).thenReturn(new PendingMessages(GROUP, firstPage), secondPage);
+        when(streamOperations.claim(
+            MeetingAnalysisJobPublisher.STREAM_KEY,
+            GROUP,
+            CONSUMER,
+            Duration.ofMinutes(10),
+            staleId
+        )).thenReturn(List.of(claimed));
+        when(meetingRepository.findById(22L)).thenReturn(Optional.of(processingMeeting()));
+
+        newWorker().pollOnce();
+
+        verify(runner).runAnalysis(eq(22L), eq(request), any(UUID.class));
+        verify(streamOperations, org.mockito.Mockito.times(2)).pending(
+            eq(MeetingAnalysisJobPublisher.STREAM_KEY),
+            eq(GROUP),
+            any(Range.class),
+            eq(100L)
+        );
+    }
+
+    @Test
     void runsProcessingMeetingThenAcknowledgesAndDeletesInOrder() throws Exception {
         MapRecord<String, String, String> record = record("2-0", validPayload(12L));
         when(streamOperations.read(any(Consumer.class), any(StreamReadOptions.class), anyStreamOffset()))
@@ -114,13 +225,55 @@ class MeetingAnalysisQueueWorkerTest {
         newWorker().pollOnce();
 
         InOrder order = inOrder(runner, redisTemplate);
-        order.verify(runner).runAnalysis(12L, request);
+        order.verify(runner).runAnalysis(eq(12L), eq(request), any(UUID.class));
         order.verify(redisTemplate).execute(
             any(RedisScript.class),
             eq(List.of(MeetingAnalysisJobPublisher.STREAM_KEY)),
             eq(GROUP),
             eq(record.getId().getValue())
         );
+    }
+
+    @Test
+    void refreshesPendingLeaseWhileRunnerOwnsRecord() throws Exception {
+        MapRecord<String, String, String> record = record("2-1", validPayload(12L));
+        when(streamOperations.read(any(Consumer.class), any(StreamReadOptions.class), anyStreamOffset()))
+            .thenReturn(List.of(), List.of(record));
+        when(meetingRepository.findById(12L)).thenReturn(Optional.of(processingMeeting()));
+        doReturn(pendingLeaseFuture).when(pendingLeaseExecutor).scheduleWithFixedDelay(
+            any(Runnable.class),
+            eq(1L),
+            eq(1L),
+            eq(TimeUnit.MINUTES)
+        );
+        MeetingAnalysisQueueWorker worker = new MeetingAnalysisQueueWorker(
+            redisTemplate,
+            objectMapper,
+            meetingRepository,
+            runner,
+            delays::add,
+            CONSUMER,
+            pendingLeaseExecutor
+        );
+
+        worker.pollOnce();
+
+        ArgumentCaptor<Runnable> leaseRefresh = ArgumentCaptor.forClass(Runnable.class);
+        verify(pendingLeaseExecutor).scheduleWithFixedDelay(
+            leaseRefresh.capture(),
+            eq(1L),
+            eq(1L),
+            eq(TimeUnit.MINUTES)
+        );
+        leaseRefresh.getValue().run();
+        verify(streamOperations).claim(
+            MeetingAnalysisJobPublisher.STREAM_KEY,
+            GROUP,
+            CONSUMER,
+            Duration.ZERO,
+            record.getId()
+        );
+        verify(pendingLeaseFuture).cancel(false);
     }
 
     @Test
@@ -148,7 +301,7 @@ class MeetingAnalysisQueueWorkerTest {
 
         newWorker().pollOnce();
 
-        verify(runner, never()).runAnalysis(any(), any());
+        verify(runner, never()).runAnalysis(any(), any(), any());
         verify(redisTemplate).execute(
             any(RedisScript.class),
             eq(List.of(MeetingAnalysisJobPublisher.STREAM_KEY)),
@@ -164,7 +317,7 @@ class MeetingAnalysisQueueWorkerTest {
             .thenReturn(List.of(record));
         when(meetingRepository.findById(15L)).thenReturn(Optional.of(processingMeeting()));
         org.mockito.Mockito.doThrow(new IllegalStateException("runner failed"))
-            .when(runner).runAnalysis(15L, request);
+            .when(runner).runAnalysis(eq(15L), eq(request), any(UUID.class));
 
         newWorker().pollOnce();
 
@@ -336,7 +489,8 @@ class MeetingAnalysisQueueWorkerTest {
     }
 
     private String validPayload(Long meetingId) throws Exception {
-        return objectMapper.writeValueAsString(new MeetingAnalysisJob("job-" + meetingId, meetingId, request));
+        UUID jobId = UUID.nameUUIDFromBytes(("job-" + meetingId).getBytes());
+        return objectMapper.writeValueAsString(new MeetingAnalysisJob(jobId.toString(), meetingId, request));
     }
 
     private MapRecord<String, String, String> record(String id, String payload) {

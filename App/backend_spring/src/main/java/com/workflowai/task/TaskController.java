@@ -18,9 +18,13 @@ import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -34,6 +38,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/projects/{projectId}/tasks")
 public class TaskController {
+    private static final Logger log = LoggerFactory.getLogger(TaskController.class);
     private static final Map<String, String> STATUS_LABELS = Map.of(
         "todo", "할 일",
         "inprogress", "진행 중",
@@ -179,6 +184,19 @@ public class TaskController {
                 "'" + task.getTitle() + "' 업무가 배정되었습니다.", "task", task.getId()
             );
         }
+        String ragContent = buildRagContent(task);
+        ragIngestService.recordIngestIntent(
+            projectDbId, "task", task.getId(), ragContent, task.getAssigneeId()
+        );
+        runAfterCommit(() ->
+            ragIngestService.ingestBestEffort(
+                projectDbId,
+                "task",
+                task.getId(),
+                ragContent,
+                task.getAssigneeId()
+            )
+        );
         return ResponseEntity.ok(ApiResponse.ok(TaskListItem.from(task)));
     }
 
@@ -288,7 +306,10 @@ public class TaskController {
         if (assigneeChanged) {
             // RAG 검색에서 "내가 담당한 업무"가 재배정 이후에도 옛 담당자에게 계속 잡히지
             // 않도록, 이미 인제스트된 청크의 assignee_id 메타데이터를 동기화한다.
-            ragIngestService.syncAssigneeBestEffort(projectDbId, "task", task.getId(), task.getAssigneeId());
+            ragIngestService.recordAssigneeSyncIntent(projectDbId, "task", taskId, task.getAssigneeId());
+            runAfterCommit(() ->
+                ragIngestService.syncAssigneeBestEffort(projectDbId, "task", taskId, task.getAssigneeId())
+            );
             activityService.record(
                 projectDbId, actorId, "ASSIGNEE_CHANGED", task.getId(),
                 "담당자를 '" + userName(task.getAssigneeId()) + "'(으)로 변경했습니다."
@@ -301,6 +322,19 @@ public class TaskController {
             }
         }
         if (otherFieldsChanged) {
+            String ragContent = buildRagContent(task);
+            ragIngestService.recordIngestIntent(
+                projectDbId, "task", task.getId(), ragContent, task.getAssigneeId()
+            );
+            runAfterCommit(() ->
+                ragIngestService.ingestBestEffort(
+                    projectDbId,
+                    "task",
+                    task.getId(),
+                    ragContent,
+                    task.getAssigneeId()
+                )
+            );
             activityService.record(projectDbId, actorId, "TASK_UPDATED", task.getId(), "'" + task.getTitle() + "' 업무 정보를 수정했습니다.");
             if (task.getAssigneeId() != null && !task.getAssigneeId().equals(actorId)) {
                 notificationService.notify(
@@ -310,6 +344,34 @@ public class TaskController {
             }
         }
         return ResponseEntity.ok(ApiResponse.ok(TaskListItem.from(task)));
+    }
+
+    private String buildRagContent(Task task) {
+        if (task.getDescription() == null || task.getDescription().isBlank()) {
+            return task.getTitle();
+        }
+        return task.getTitle() + " - " + task.getDescription();
+    }
+
+    private void runAfterCommit(Runnable operation) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    runAfterCommitOperationSafely(operation);
+                }
+            });
+            return;
+        }
+        runAfterCommitOperationSafely(operation);
+    }
+
+    private void runAfterCommitOperationSafely(Runnable operation) {
+        try {
+            operation.run();
+        } catch (RuntimeException exception) {
+            log.warn("RAG after-commit 작업 제출 실패. errorType={}", exception.getClass().getSimpleName());
+        }
     }
 
     @Operation(
@@ -340,7 +402,9 @@ public class TaskController {
                 "'" + task.getTitle() + "' 업무가 삭제되었습니다.", "task", task.getId()
             );
         }
+        ragIngestService.recordDeleteSourceIntent(projectDbId, "task", taskId);
         taskRepository.delete(task);
+        runAfterCommit(() -> ragIngestService.deleteSourceBestEffort(projectDbId, "task", taskId));
         return ResponseEntity.ok(ApiResponse.ok(null));
     }
 
