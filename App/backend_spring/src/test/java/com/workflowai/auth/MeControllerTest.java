@@ -168,6 +168,19 @@ class MeControllerTest {
     }
 
     @Test
+    void uploadAvatar_rejectsImageOverMaxDimension() throws Exception {
+        authenticateAs(1L);
+        BufferedImage oversizedImage = new BufferedImage(201, 201, BufferedImage.TYPE_INT_RGB);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ImageIO.write(oversizedImage, "png", out);
+        MockMultipartFile oversized = new MockMultipartFile("file", "avatar.png", "image/png", out.toByteArray());
+
+        mockMvc.perform(multipart("/api/v1/me/avatar").file(oversized))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("IMAGE_TOO_LARGE"));
+    }
+
+    @Test
     void uploadAvatar_succeedsAndUpdatesProfileImagePath() throws Exception {
         authenticateAs(1L);
         User user = existingUser();

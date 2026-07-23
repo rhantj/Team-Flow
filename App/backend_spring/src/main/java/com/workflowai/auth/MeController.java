@@ -45,7 +45,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class MeController {
     private static final Set<String> ALLOWED_AVATAR_TYPES = Set.of("image/png", "image/jpeg");
     private static final long MAX_AVATAR_BYTES = 10L * 1024 * 1024;
-    private static final int MAX_AVATAR_DIMENSION = 4096;
+    private static final int MAX_AVATAR_DIMENSION = 200;
 
     private final UserRepository userRepository;
     private final ProjectMemberRepository projectMemberRepository;
@@ -237,7 +237,10 @@ public class MeController {
      * 신뢰하지 않는다. 반환값은 저장 시 그대로 확장자로 쓰인다 ("png" 또는 "jpg"), 그 외에는 null.
      * 가로/세로가 MAX_AVATAR_DIMENSION을 넘으면 IllegalArgumentException을 던진다 — 파일 용량은
      * 10MB 이하로 작아도 압축을 풀면 거대한 비트맵이 되는 "압축 폭탄" 이미지로 메모리가 고갈되는
-     * 것을 막기 위해, 전체 디코딩(read)을 하기 전에 크기부터 먼저 확인한다.
+     * 것을 막기 위해, 전체 디코딩(read)을 하기 전에 크기부터 먼저 확인한다. 아바타는 작은 원형
+     * 썸네일로만 표시되므로 한도를 200x200으로 낮게 잡는다 — 동시 업로드 요청이 몰려도 요청당
+     * 디코딩 버퍼가 최대 200*200*4바이트(~160KB) 수준으로 묶여, 큰 해상도 이미지를 병렬로 밀어넣어
+     * 메모리를 고갈시키는 방식의 DoS 여지가 줄어든다.
      */
     private String detectImageFormat(MultipartFile file) {
         try (ImageInputStream iis = ImageIO.createImageInputStream(file.getInputStream())) {
