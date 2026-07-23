@@ -192,6 +192,22 @@ python -m llm_rag_assistant.scripts.reembed_document_chunks
 > 시나리오(고정 baseline은 새 마이그레이션을 정상 적용 / baseline을 새 버전으로 올리면 그
 > 마이그레이션이 스킵됨)를 직접 재현해 검증한다.
 
+`V20260721_1` 이후 실제로 하나가 더 추가됐다: `V20260723_1__avatar_and_field_tags_columns.sql`은
+`users.field_tags`/`users.profile_image_path`를 만든다. 이 두 컬럼은 그동안 db/init·
+docs/db/migrations로만 적용돼 왔고 Flyway 마이그레이션에는 없었다 — db/init을 거치지 않았거나
+docs/db/migrations의 008/010을 아직 수동 적용 못 한 DB에서 Flyway만으로 baseline을 잡으면,
+Flyway는 그 부재를 알아채지 못하고 "이미 완료"로 취급해버려 JPA `ddl-auto=validate`가
+field_tags/profile_image_path를 찾지 못하고 기동에 실패할 수 있었다. 이미 db/init이나
+docs/db/migrations로 이 컬럼들이 있는 환경에서는 `IF NOT EXISTS`/존재 확인으로 안전하게
+스킵된다.
+
+> ⚠️ 이 저장소의 base 스키마(`01_base_schema.sql`/`001_...`가 만드는 `users`/`projects` 등
+> 테이블 자체)는 아직 Flyway 마이그레이션으로 옮겨지지 않았다. 즉 Flyway는 여전히 "테이블은
+> 이미 있다"고 가정하고 컬럼만 추가/보정한다 — db/init도 docs/db/migrations도 전혀 거치지
+> 않은 완전히 빈 DB에 Flyway만으로 처음부터 스키마를 만들 수는 없다. 모든 환경은 반드시
+> db/init(로컬/OCI compose) 또는 docs/db/migrations 001~010(기존 운영 DB) 중 하나로 base
+> 테이블을 먼저 갖춘 뒤에 Flyway를 켤 것.
+
 **운영(OCI) DB에서 최초로 켜기 전 검증 절차 (필수):** `docker-compose.prod.yml`은
 `SPRING_FLYWAY_ENABLED`를 다시 기본 `false`로 되돌려서, 로컬에서 기본으로 켜지는 것과 달리
 운영에서는 자동으로 켜지지 않는다. 아래를 거친 뒤에만 `.env`에 `SPRING_FLYWAY_ENABLED=true`를
@@ -199,17 +215,22 @@ python -m llm_rag_assistant.scripts.reembed_document_chunks
 
 1. 운영 DB의 최근 스냅샷(또는 동등한 복제본)에 로컬/스테이징에서 `SPRING_FLYWAY_ENABLED=true`로
    앱을 한 번 기동해본다.
-2. 시작 로그에서 Flyway가 `Successfully baselined schema with version: 20260721_1` 같은
-   메시지를 남기는지, 그 뒤에 `Successfully applied ...`로 실제 적용된 마이그레이션이
-   있다면 그게 정말 의도한 것인지 확인한다 — baseline 외에 아무것도 안 뜨는 게 정상이다.
+2. 시작 로그에서 Flyway가 `Successfully baselined schema with version: 20260721_1`을 남기고,
+   그 뒤에 `V20260723_1__avatar_and_field_tags_columns.sql`이 `Successfully applied`로
+   적용되는지 확인한다 — 이 하나가 실제로 적용되는 건 정상이다(그 DB에 field_tags/
+   profile_image_path가 없었다는 뜻). 그 외에 예상 못한 마이그레이션이 더 적용된다면 원인을
+   먼저 파악할 것.
 3. `SELECT * FROM flyway_schema_history ORDER BY installed_rank;`로 baseline 행(version
-   20260721_1, type BASELINE)만 있고 그 외 성공적으로 적용된 실제 마이그레이션이 없는지
-   눈으로 확인한다.
-4. 위 확인이 끝난 뒤에만 실제 운영 `.env`에 `SPRING_FLYWAY_ENABLED=true`를 추가하고
+   20260721_1, type BASELINE)과 `V20260723_1`(및 그 이후 추가된 파일들) 외에 예상 못한 행이
+   없는지 눈으로 확인한다.
+4. `\d users`(또는 동등한 방법)로 `field_tags`/`profile_image_path` 컬럼이 실제로 생겼는지
+   확인한다.
+5. 위 확인이 끝난 뒤에만 실제 운영 `.env`에 `SPRING_FLYWAY_ENABLED=true`를 추가하고
    재배포한다.
 
 새 스키마 변경이 필요하면 `docs/db/migrations`에 번호를 추가하지 말고 `db/migration/`에
-`V20260723_1__description.sql` 형식으로 추가할 것 — `baseline-version`은 건드리지 않는다.
+`V20260723_1__avatar_and_field_tags_columns.sql`처럼 `V<날짜>_<순번>__설명.sql` 형식으로
+추가할 것 — `baseline-version`은 건드리지 않는다.
 
 ## 8-1. (선택, 1회) 레거시 users.field 정리
 
