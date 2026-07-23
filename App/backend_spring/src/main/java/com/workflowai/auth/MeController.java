@@ -201,7 +201,7 @@ public class MeController {
         } catch (RuntimeException e) {
             // DB 반영이 실패하면 방금 쓴 새 파일을 되돌린다 — 새 파일은 이전 파일과 이름이 겹치지
             // 않으므로(storeAvatar 참고) 기존 사진은 그대로 남는다. DB 경로와 실제 파일이 어긋나지 않게 한다.
-            deleteAvatarFile(newPath);
+            deleteAvatarFile(userId, newPath);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.fail("UPLOAD_FAILED", "이미지 업로드에 실패했습니다."));
         }
@@ -209,14 +209,14 @@ public class MeController {
         if (updatedRows == 0) {
             // 그 사이 다른 요청이 먼저 반영됐다 — 내가 방금 쓴 새 파일은 아무도 참조하지 않으므로
             // 지운다. oldPath도 이미 다른 요청이 정리했을 값이라 여기서는 건드리지 않는다.
-            deleteAvatarFile(newPath);
+            deleteAvatarFile(userId, newPath);
             return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.fail("CONCURRENT_UPDATE", "동시에 다른 업로드가 반영되었습니다. 다시 시도해주세요."));
         }
 
         // DB에 새 경로가 반영된 게 확인된 뒤에만 이전 파일을 지운다.
         if (oldPath != null && !oldPath.equals(newPath)) {
-            deleteAvatarFile(oldPath);
+            deleteAvatarFile(userId, oldPath);
         }
 
         user.setProfileImagePath(newPath);
@@ -336,13 +336,21 @@ public class MeController {
      * DB 반영이 확인된 뒤에만 호출한다. 정리 실패는 무시한다 — orphan 파일만 남을 뿐 서비스에는
      * 영향 없다. relativePath는 항상 storeAvatar()가 만든 값이라 정상적으로는 안전하지만,
      * DB 값이 손상/변조됐을 가능성까지 방어적으로 차단하기 위해 avatars 디렉터리를 벗어나는
-     * 경로는 지우지 않는다 (MeetingAnalysisService의 zip-slip 가드와 동일한 패턴).
+     * 경로는 지우지 않는다 (MeetingAnalysisService의 zip-slip 가드와 동일한 패턴). 여기에 더해
+     * 파일명이 userId 소유가 맞는지도 확인한다 — storeAvatar가 만드는 파일명은 항상
+     * "{userId}-{nanoTime}.{ext}" 형식이므로, 이 조건은 정상 경로에서는 항상 성립한다. 이걸
+     * 확인하는 이유는 profile_image_path가 (버그나 DB 직접 조작으로) 다른 유저의 경로를 가리키게
+     * 되는 이상 상황이 생기더라도, 그 값을 그대로 믿고 지워서 남의 아바타 파일을 삭제하는 사고를
+     * 막기 위해서다.
      */
-    private void deleteAvatarFile(String relativePath) {
+    private void deleteAvatarFile(Long userId, String relativePath) {
         try {
             Path avatarsDir = Path.of(uploadsDir, "avatars").toAbsolutePath().normalize();
             Path target = Path.of(uploadsDir, relativePath).toAbsolutePath().normalize();
             if (!target.startsWith(avatarsDir)) {
+                return;
+            }
+            if (!target.getFileName().toString().startsWith(userId + "-")) {
                 return;
             }
             Files.deleteIfExists(target);
