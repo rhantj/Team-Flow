@@ -2,7 +2,6 @@ package com.workflowai.meeting;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -23,7 +22,6 @@ public class MeetingAnalysisRunner {
         this.meetingAnalysisPersistence = meetingAnalysisPersistence;
     }
 
-    @Async("meetingAnalysisExecutor")
     public void runAnalysis(Long meetingId, AiAnalyzeRequest request) {
         MeetingAnalysisResult result;
         String analysisSource;
