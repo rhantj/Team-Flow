@@ -404,6 +404,27 @@ class MeetingAnalysisServiceTest {
     }
 
     @Test
+    void findIncludesTranscriptForProcessingAndCompletedResponses() {
+        mockMember(1L);
+        Meeting meeting = new Meeting(1L, "정기회의", "document", "/tmp/x.txt", "pending", LocalDate.now(), "정기회의", "x.txt", null, 5L);
+        ReflectionTestUtils.setField(meeting, "transcript", "수정된 회의록 원문");
+        when(meetingRepository.findByIdAndProjectId(7L, 1L)).thenReturn(Optional.of(meeting));
+        MeetingAnalysisService service = newService();
+
+        MeetingAnalysisResponse processing = service.find("demo-project", "7");
+        assertThat(processing.transcript()).isEqualTo("수정된 회의록 원문");
+
+        meeting.setAnalysisStatus("completed");
+        when(meetingAnalysisRepository.findById(7L)).thenReturn(Optional.of(new MeetingAnalysis(
+            7L, "요약", List.of("결정"), List.of("위험"), List.of("키워드"), "FASTAPI"
+        )));
+        when(meetingActionItemRepository.findByMeetingId(7L)).thenReturn(List.of());
+
+        MeetingAnalysisResponse completed = service.find("demo-project", "7");
+        assertThat(completed.transcript()).isEqualTo("수정된 회의록 원문");
+    }
+
+    @Test
     void retryTransitionsFailedMeetingBackToProcessing() throws Exception {
         mockMember(1L);
         Path textFile = Files.createTempFile("meeting-notes", ".txt");

@@ -86,6 +86,7 @@ describe("MeetingsView 저장된 회의록 수정 진입점", () => {
       analysis: null,
       errorMessage: null,
       attendees: [],
+      transcript: "실제 회의록 원문 내용입니다.",
     });
   });
 
@@ -99,6 +100,20 @@ describe("MeetingsView 저장된 회의록 수정 진입점", () => {
 
     expect(screen.getByRole("textbox")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "분석하기" })).toBeInTheDocument();
+  });
+
+  it("'수정' 클릭 시 회의록 상세를 조회해 실제 원문을 textarea에 채운다", async () => {
+    const user = userEvent.setup();
+    renderView();
+    await openSavedTab(user);
+    await screen.findByText("저장된 정기회의");
+
+    await user.click(screen.getByRole("button", { name: "수정" }));
+
+    expect(fetchMeeting).toHaveBeenCalledWith("1", "1");
+    await waitFor(() =>
+      expect(screen.getByRole("textbox")).toHaveValue("실제 회의록 원문 내용입니다.")
+    );
   });
 
   it("심사자에게는 저장된 회의록 카드에 '수정' 버튼이 보이지 않는다", async () => {

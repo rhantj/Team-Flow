@@ -425,6 +425,7 @@ export function MeetingsView() {
   const [deleteTarget, setDeleteTarget] = useState<Meeting | null>(null);
   const [confirmReregister, setConfirmReregister] = useState<(() => void) | null>(null);
   const [editingMeetingId, setEditingMeetingId] = useState<string | null>(null);
+  const [editingTranscript, setEditingTranscript] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pdfCaptureRef = useRef<HTMLDivElement | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -816,14 +817,23 @@ export function MeetingsView() {
   };
 
   // 저장된 회의록 탭에서 "수정"/"AI 재분석하기"를 누르면 수정 화면(MeetingEditPanel)을 연다.
-  // 주의: 현재 GET /meetings/{id} 응답(MeetingAnalysisResponse)에는 원문(transcript)이 내려오지 않는다.
-  // 백엔드 DTO 확장 전까지는 빈 문자열로 시작해 사용자가 직접 채우도록 한다(별도 이슈로 보고됨).
+  // 상세 조회(fetchMeeting)로 실제 원문(transcript)을 가져온 뒤에 패널을 열어야
+  // MeetingEditPanel의 초기 textarea 값이 빈 문자열로 뜨지 않는다.
   const handleOpenMeetingEdit = (meetingId: string) => {
-    setEditingMeetingId(meetingId);
+    fetchMeeting(projectId, meetingId)
+      .then(response => {
+        setEditingTranscript(response.transcript ?? "");
+        setEditingMeetingId(meetingId);
+      })
+      .catch(() => {
+        setEditingTranscript("");
+        setEditingMeetingId(meetingId);
+      });
   };
 
   const closeMeetingEditAndRefresh = () => {
     setEditingMeetingId(null);
+    setEditingTranscript("");
     void refreshMeetingsFromServer();
   };
 
@@ -2365,7 +2375,7 @@ export function MeetingsView() {
               <MeetingEditPanel
                 projectId={projectId}
                 meetingId={editingMeetingId}
-                initialTranscript=""
+                initialTranscript={editingTranscript}
                 onSaved={closeMeetingEditAndRefresh}
                 onAnalyzed={closeMeetingEditAndRefresh}
               />

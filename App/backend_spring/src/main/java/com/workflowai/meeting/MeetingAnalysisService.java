@@ -158,7 +158,7 @@ public class MeetingAnalysisService {
         String meetingId = String.valueOf(meeting.getId());
         return new MeetingAnalysisResponse(
             meetingId, projectId, "PROCESSING", resolvedSourceType, fileName, null, null, null,
-            buildAttendeeSummaries(meeting.getId(), projectDbId)
+            buildAttendeeSummaries(meeting.getId(), projectDbId), meeting.getTranscript()
         );
     }
 
@@ -181,7 +181,8 @@ public class MeetingAnalysisService {
                 null,
                 null,
                 errorMessage,
-                buildAttendeeSummaries(id, meeting.getProjectId())
+                buildAttendeeSummaries(id, meeting.getProjectId()),
+                meeting.getTranscript()
             );
         }
 
@@ -212,7 +213,8 @@ public class MeetingAnalysisService {
             analysis.getAnalysisEngine(),
             result,
             null,
-            buildAttendeeSummaries(id, meeting.getProjectId())
+            buildAttendeeSummaries(id, meeting.getProjectId()),
+            meeting.getTranscript()
         );
     }
 
@@ -251,7 +253,8 @@ public class MeetingAnalysisService {
                 null,
                 null,
                 errorMessage,
-                buildAttendeeSummaries(id, meeting.getProjectId())
+                buildAttendeeSummaries(id, meeting.getProjectId()),
+                meeting.getTranscript()
             );
         }
         if (text.isBlank()) {
@@ -266,7 +269,8 @@ public class MeetingAnalysisService {
                 null,
                 null,
                 errorMessage,
-                buildAttendeeSummaries(id, meeting.getProjectId())
+                buildAttendeeSummaries(id, meeting.getProjectId()),
+                meeting.getTranscript()
             );
         }
         List<String> participantNames = meetingAttendeeRepository.findByMeetingId(id).stream()
@@ -299,7 +303,8 @@ public class MeetingAnalysisService {
             null,
             null,
             null,
-            buildAttendeeSummaries(id, meeting.getProjectId())
+            buildAttendeeSummaries(id, meeting.getProjectId()),
+            meeting.getTranscript()
         );
     }
 

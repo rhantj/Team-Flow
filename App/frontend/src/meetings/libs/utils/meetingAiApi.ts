@@ -30,6 +30,7 @@ export interface MeetingAnalysisResponse {
   analysis: MeetingAiResult | null;
   errorMessage: string | null;
   attendees: AttendeeSummary[];
+  transcript: string | null;
 }
 
 export async function analyzeMeeting(params: AnalyzeMeetingParams): Promise<MeetingAnalysisResponse> {
