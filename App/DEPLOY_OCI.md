@@ -128,7 +128,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ## 8. DB 마이그레이션 적용 (첫 기동 후 1회)
 
 compose는 `backend_spring/src/main/resources/db/init`만 자동 실행한다.
-`docs/db/migrations/001~007`은 **수동으로 적용해야 한다.**
+`docs/db/migrations/001~011`은 **수동으로 적용해야 한다.**
 
 init 스크립트는 `document_chunks.embedding`을 JSONB로 만들고, 마이그레이션 001이 이걸
 `VECTOR(768)`로, 007이 다시 `VECTOR(1024)`로 바꾼다(RAG 챗봇 임베딩 모델이
@@ -166,6 +166,15 @@ done
 cd work-flow/App/backend_fastapi
 python -m llm_rag_assistant.scripts.reembed_document_chunks
 ```
+
+> ⚠️ **011 최초 적용 시 배포 순서 주의:** 011은 `users.field`를 `field_legacy_removed`로
+> 이름만 바꿔 보관한다(진짜 `DROP` 아님, 문제 생기면 `RENAME COLUMN field_legacy_removed TO
+> field`로 즉시 원복 가능). 006/010처럼 재배포 때마다 다시 실행돼도 안전하도록 idempotent하게
+> 작성돼 있지만, **처음으로 실제 rename이 일어나는 그 배포 순간만큼은** 옛 컬럼명 `field`를
+> 참조하는 구버전 인스턴스가 아직 떠 있으면 그 인스턴스는 즉시 오류를 낸다. 현재 OCI 배포는
+> 단일 컨테이너(`docker compose up -d --build`가 컨테이너를 통째로 교체)라 신·구 인스턴스가
+> 동시에 DB에 붙어있는 시간이 짧지만, 향후 다중 인스턴스로 확장하면 반드시 모든 인스턴스가
+> 새 코드로 교체된 뒤에 이 for 루프를 돌릴 것.
 
 ## 9. 검증
 
