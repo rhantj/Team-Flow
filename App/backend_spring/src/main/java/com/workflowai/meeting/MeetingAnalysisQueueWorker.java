@@ -7,6 +7,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.LongConsumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,7 @@ import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -35,6 +37,20 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
     private static final long INITIAL_BACKOFF_MILLIS = 250L;
     private static final long MAX_BACKOFF_MILLIS = 5_000L;
     private static final long SHUTDOWN_JOIN_MILLIS = 6_000L;
+
+    private static final RedisScript<Long> ACK_AND_DELETE_SCRIPT = RedisScript.of(
+        """
+        if not redis.acl_check_cmd('XACK', KEYS[1], ARGV[1], ARGV[2]) then
+            return redis.error_reply('XACK permission denied')
+        end
+        if not redis.acl_check_cmd('XDEL', KEYS[1], ARGV[2]) then
+            return redis.error_reply('XDEL permission denied')
+        end
+        redis.call('XACK', KEYS[1], ARGV[1], ARGV[2])
+        return redis.call('XDEL', KEYS[1], ARGV[2])
+        """,
+        Long.class
+    );
 
     private static final Consumer CONSUMER = Consumer.from(GROUP, CONSUMER_NAME);
     private static final StreamReadOptions PENDING_READ_OPTIONS = StreamReadOptions.empty().count(1);
@@ -91,7 +107,7 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
         }
         running = true;
         Thread thread = new Thread(this::workLoop, CONSUMER_NAME);
-        thread.setDaemon(false);
+        thread.setDaemon(true);
         workerThread = thread;
         thread.start();
     }
@@ -173,23 +189,32 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
         if (records == null || records.isEmpty()) {
             return;
         }
-        process(records.getFirst(), operations);
+        process(records.getFirst());
     }
 
-    private void process(
-        MapRecord<String, String, String> record,
-        StreamOperations<String, String, String> operations
-    ) {
+    private void process(MapRecord<String, String, String> record) {
         MeetingAnalysisJob job;
         try {
             job = deserialize(record);
         } catch (JsonProcessingException | IllegalArgumentException exception) {
             log.warn("Discarding malformed meeting analysis record. recordId={}", record.getId().getValue());
-            acknowledgeAndDelete(record.getId(), operations);
+            acknowledgeAndDelete(record.getId());
             return;
         }
 
-        var meeting = meetingRepository.findById(job.meetingId());
+        Optional<Meeting> meeting;
+        try {
+            meeting = meetingRepository.findById(job.meetingId());
+        } catch (DataAccessException exception) {
+            log.warn(
+                "Meeting lookup failed; record remains pending. recordId={}, jobId={}, meetingId={}, errorType={}",
+                record.getId().getValue(),
+                job.jobId(),
+                job.meetingId(),
+                exception.getClass().getSimpleName()
+            );
+            return;
+        }
         if (meeting.isEmpty() || isTerminal(meeting.get().getAnalysisStatus())) {
             log.info(
                 "Skipping terminal meeting analysis job. recordId={}, jobId={}, meetingId={}",
@@ -197,7 +222,7 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
                 job.jobId(),
                 job.meetingId()
             );
-            acknowledgeAndDelete(record.getId(), operations);
+            acknowledgeAndDelete(record.getId());
             return;
         }
 
@@ -213,7 +238,7 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
             );
             return;
         }
-        acknowledgeAndDelete(record.getId(), operations);
+        acknowledgeAndDelete(record.getId());
     }
 
     private MeetingAnalysisJob deserialize(MapRecord<String, String, String> record) throws JsonProcessingException {
@@ -225,9 +250,13 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
         return job;
     }
 
-    private void acknowledgeAndDelete(RecordId recordId, StreamOperations<String, String, String> operations) {
-        operations.acknowledge(MeetingAnalysisJobPublisher.STREAM_KEY, GROUP, recordId);
-        operations.delete(MeetingAnalysisJobPublisher.STREAM_KEY, recordId);
+    private void acknowledgeAndDelete(RecordId recordId) {
+        redisTemplate.execute(
+            ACK_AND_DELETE_SCRIPT,
+            List.of(MeetingAnalysisJobPublisher.STREAM_KEY),
+            GROUP,
+            recordId.getValue()
+        );
     }
 
     @SuppressWarnings("unchecked")

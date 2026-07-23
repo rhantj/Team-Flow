@@ -3,7 +3,9 @@ package com.workflowai.meeting;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
@@ -25,6 +27,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
@@ -40,9 +43,12 @@ import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.serializer.RedisSerializer;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class MeetingAnalysisQueueWorkerTest {
@@ -79,13 +85,18 @@ class MeetingAnalysisQueueWorkerTest {
 
         newWorker().pollOnce();
 
-        InOrder order = inOrder(streamOperations);
+        InOrder order = inOrder(streamOperations, redisTemplate);
         order.verify(streamOperations).read(
             Consumer.from(GROUP, CONSUMER),
             StreamReadOptions.empty().count(1),
             StreamOffset.create(MeetingAnalysisJobPublisher.STREAM_KEY, ReadOffset.from("0"))
         );
-        order.verify(streamOperations).acknowledge(MeetingAnalysisJobPublisher.STREAM_KEY, GROUP, RecordId.of("1-0"));
+        order.verify(redisTemplate).execute(
+            any(RedisScript.class),
+            eq(List.of(MeetingAnalysisJobPublisher.STREAM_KEY)),
+            eq(GROUP),
+            eq("1-0")
+        );
         verify(streamOperations, never()).read(
             Consumer.from(GROUP, CONSUMER),
             StreamReadOptions.empty().block(Duration.ofSeconds(5)).count(1),
@@ -102,10 +113,14 @@ class MeetingAnalysisQueueWorkerTest {
 
         newWorker().pollOnce();
 
-        InOrder order = inOrder(runner, streamOperations);
+        InOrder order = inOrder(runner, redisTemplate);
         order.verify(runner).runAnalysis(12L, request);
-        order.verify(streamOperations).acknowledge(MeetingAnalysisJobPublisher.STREAM_KEY, GROUP, record.getId());
-        order.verify(streamOperations).delete(MeetingAnalysisJobPublisher.STREAM_KEY, record.getId());
+        order.verify(redisTemplate).execute(
+            any(RedisScript.class),
+            eq(List.of(MeetingAnalysisJobPublisher.STREAM_KEY)),
+            eq(GROUP),
+            eq(record.getId().getValue())
+        );
     }
 
     @Test
@@ -118,8 +133,12 @@ class MeetingAnalysisQueueWorkerTest {
 
             newWorker().pollOnce();
 
-            verify(streamOperations).acknowledge(MeetingAnalysisJobPublisher.STREAM_KEY, GROUP, record.getId());
-            verify(streamOperations).delete(MeetingAnalysisJobPublisher.STREAM_KEY, record.getId());
+            verify(redisTemplate).execute(
+                any(RedisScript.class),
+                eq(List.of(MeetingAnalysisJobPublisher.STREAM_KEY)),
+                eq(GROUP),
+                eq(record.getId().getValue())
+            );
         }
 
         MapRecord<String, String, String> missing = record("5-0", validPayload(14L));
@@ -130,8 +149,12 @@ class MeetingAnalysisQueueWorkerTest {
         newWorker().pollOnce();
 
         verify(runner, never()).runAnalysis(any(), any());
-        verify(streamOperations).acknowledge(MeetingAnalysisJobPublisher.STREAM_KEY, GROUP, missing.getId());
-        verify(streamOperations).delete(MeetingAnalysisJobPublisher.STREAM_KEY, missing.getId());
+        verify(redisTemplate).execute(
+            any(RedisScript.class),
+            eq(List.of(MeetingAnalysisJobPublisher.STREAM_KEY)),
+            eq(GROUP),
+            eq(missing.getId().getValue())
+        );
     }
 
     @Test
@@ -170,9 +193,12 @@ class MeetingAnalysisQueueWorkerTest {
             .filteredOn(event -> event.getLevel().isGreaterOrEqual(Level.WARN))
             .extracting(ILoggingEvent::getFormattedMessage)
             .noneMatch(message -> message.contains(secretPayload));
-        InOrder order = inOrder(streamOperations);
-        order.verify(streamOperations).acknowledge(MeetingAnalysisJobPublisher.STREAM_KEY, GROUP, poison.getId());
-        order.verify(streamOperations).delete(MeetingAnalysisJobPublisher.STREAM_KEY, poison.getId());
+        verify(redisTemplate).execute(
+            any(RedisScript.class),
+            eq(List.of(MeetingAnalysisJobPublisher.STREAM_KEY)),
+            eq(GROUP),
+            eq(poison.getId().getValue())
+        );
     }
 
     @Test
@@ -215,6 +241,9 @@ class MeetingAnalysisQueueWorkerTest {
         await().atMost(Duration.ofSeconds(1)).until(worker::isReady);
 
         assertThat(worker.isWorkerAlive()).isTrue();
+        Thread workerThread = (Thread) ReflectionTestUtils.getField(worker, "workerThread");
+        assertThat(workerThread).isNotNull();
+        assertThat(workerThread.isDaemon()).isTrue();
         verify(streamCommands).xGroupCreate(
             RedisSerializer.string().serialize(MeetingAnalysisJobPublisher.STREAM_KEY),
             GROUP,
@@ -224,6 +253,62 @@ class MeetingAnalysisQueueWorkerTest {
         worker.shutdown();
         assertThat(worker.isReady()).isFalse();
         assertThat(worker.isWorkerAlive()).isFalse();
+    }
+
+    @Test
+    void ackAndDeleteAreOneAtomicScriptWithPermissionPreflightAndAckFirst() throws Exception {
+        MapRecord<String, String, String> record = record("8-0", validPayload(18L));
+        when(streamOperations.read(any(Consumer.class), any(StreamReadOptions.class), anyStreamOffset()))
+            .thenReturn(List.of(record));
+        when(meetingRepository.findById(18L)).thenReturn(Optional.of(processingMeeting()));
+
+        newWorker().pollOnce();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<RedisScript<Long>> scriptCaptor = ArgumentCaptor.forClass(RedisScript.class);
+        verify(redisTemplate).execute(
+            scriptCaptor.capture(),
+            eq(List.of(MeetingAnalysisJobPublisher.STREAM_KEY)),
+            eq(GROUP),
+            eq(record.getId().getValue())
+        );
+        String script = scriptCaptor.getValue().getScriptAsString();
+        assertThat(script.indexOf("acl_check_cmd('XACK'")).isGreaterThanOrEqualTo(0);
+        assertThat(script.indexOf("acl_check_cmd('XDEL'")).isGreaterThan(script.indexOf("acl_check_cmd('XACK'"));
+        assertThat(script.indexOf("redis.call('XACK'")).isGreaterThan(script.indexOf("acl_check_cmd('XDEL'"));
+        assertThat(script.indexOf("redis.call('XDEL'")).isGreaterThan(script.indexOf("redis.call('XACK'"));
+        verify(streamOperations, never()).acknowledge(anyString(), anyString(), any(RecordId[].class));
+        verify(streamOperations, never()).delete(anyString(), any(RecordId[].class));
+    }
+
+    @Test
+    void atomicRemovalFailureLeavesNoStandalonePartialCleanupAndBacksOff() throws Exception {
+        MapRecord<String, String, String> record = record("9-0", validPayload(19L));
+        when(streamOperations.read(any(Consumer.class), any(StreamReadOptions.class), anyStreamOffset()))
+            .thenReturn(List.of(record));
+        when(meetingRepository.findById(19L)).thenReturn(Optional.of(processingMeeting()));
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class)))
+            .thenThrow(new RedisConnectionFailureException("script unavailable"));
+
+        newWorker().pollOnce();
+
+        assertThat(delays).containsExactly(250L);
+        verify(streamOperations, never()).acknowledge(anyString(), anyString(), any(RecordId[].class));
+        verify(streamOperations, never()).delete(anyString(), any(RecordId[].class));
+    }
+
+    @Test
+    void repositoryFailureLeavesPendingWithoutRedisBackoffClassification() throws Exception {
+        MapRecord<String, String, String> record = record("10-0", validPayload(20L));
+        when(streamOperations.read(any(Consumer.class), any(StreamReadOptions.class), anyStreamOffset()))
+            .thenReturn(List.of(record));
+        when(meetingRepository.findById(20L)).thenThrow(new DataAccessResourceFailureException("database unavailable"));
+
+        newWorker().pollOnce();
+
+        assertThat(delays).isEmpty();
+        verify(streamOperations, never()).acknowledge(anyString(), anyString(), any(RecordId[].class));
+        verify(streamOperations, never()).delete(anyString(), any(RecordId[].class));
     }
 
     @Test
