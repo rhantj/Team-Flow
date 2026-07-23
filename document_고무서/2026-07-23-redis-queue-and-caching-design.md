@@ -74,7 +74,14 @@ dead-letter queue, 신규 DB 컬럼, 별도 Worker 서비스는 여전히 범위
    `failed`로 바꾼다. 사용자 수동 retry 경로를 유지한다. DB와 Redis의 완전한 원자성을 위한
    transactional outbox는 신규 DB 스키마가 필요하므로 이번 범위에서 제외한다.
 10. **장애 제어**: Redis 읽기 오류에는 최대 5초의 지수 backoff를 적용해 busy loop와 로그 폭주를
-    막는다. 종료 시 Worker interrupt 후 제한 시간 동안 join한다.
+    막는다. 종료 시 Worker interrupt 후 제한 시간 동안 join한다. Spring→FastAPI HTTP 호출에는
+    connect 5초/read 45초 timeout을 적용하고, 컨테이너 `stop_grace_period`는 60초로 둔다.
+11. **멱등 처리**: pending 메시지를 다시 받았을 때 해당 회의 상태가 이미 `completed` 또는
+    `failed`이면 Runner를 재호출하지 않고 ACK/XDEL한다. `saveAnalysisSuccess()`가 하나의 DB
+    트랜잭션이므로 DB 커밋 후 ACK 전 종료 시에도 액션 아이템·RAG ingest·알림 중복을 막는다.
+12. **준비 상태**: Spring readiness는 Redis PING, consumer group 생성 완료, Worker thread 생존을
+    함께 확인한다. OCI 배포 workflow는 Spring readiness, FastAPI health, Redis PING을 모두
+    통과해야 성공으로 판정한다.
 
 ### 처리 흐름 (변경 후)
 
@@ -135,15 +142,21 @@ Frontend → GET .../status 폴링 (기존과 동일, 변경 없음)
 
 - 두 서비스(Spring, FastAPI) 모두 `App/docker-compose.yml`의 기존 `redis` 서비스를 그대로
   재사용한다. 새 인프라 추가 없음.
-- 개발용 Redis host port는 `127.0.0.1`에만 bind해 외부 네트워크 노출을 막는다. 운영 compose의
-  localhost bind는 그대로 유지한다. Redis 인증/TLS는 별도 인프라 보안 작업으로 분리한다.
+- Redis는 `redis-data:/data` named volume과 AOF(`appendonly yes`, `appendfsync everysec`)를
+  사용하고 `maxmemory-policy noeviction`으로 Stream 메시지가 캐시 압력 때문에 축출되지 않게 한다.
+- 운영에서는 Redis host port를 게시하지 않는다. 기본 사용자를 끄고 `spring`, `fastapi`, `admin`
+  ACL 사용자를 분리한다. 비밀번호는 `REDIS_SPRING_PASSWORD`, `REDIS_FASTAPI_PASSWORD`,
+  `REDIS_ADMIN_PASSWORD` 환경변수로만 주입하며 저장소에 기본값을 두지 않는다.
+- Spring 사용자는 `meeting-analysis*` Stream key와 Stream 명령만, FastAPI 사용자는
+  `meeting_analysis:*`/`rag_answer:*` cache key와 GET/SET/DEL만 접근하도록 제한한다. payload
+  원문은 어떤 오류 로그에도 출력하지 않는다.
 - WF-264(큐)와 캐싱은 같은 Redis 인스턴스를 공유하지만 서로 기능적으로 독립적이다 — 큐는
   Spring에서만, 캐시 1/2는 FastAPI에서만 사용.
 
 ## 이번 범위에서 제외되는 것 (명시적 보류)
 
 - 회의록 분석 자동 retry 횟수/timeout/dead-letter queue 정책
-- transactional outbox와 Redis ACL/TLS
+- transactional outbox와 Redis TLS(단일 호스트 내부 Docker network이므로 이번 범위에서는 ACL 적용)
 - `analysis_error_message`/`analysis_started_at`/`analysis_completed_at`/
   `analysis_retry_count`/`analysis_job_id` DB 컬럼 추가
 - 기여도 리포트 LLM 요약 캐싱, 워크로드 대시보드 캐싱, Spring 대시보드 집계 캐싱
