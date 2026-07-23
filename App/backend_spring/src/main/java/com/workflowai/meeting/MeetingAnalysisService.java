@@ -649,7 +649,7 @@ public class MeetingAnalysisService {
                 meetingId,
                 exception.getClass().getSimpleName()
             );
-            meetingAnalysisPersistence.saveAnalysisFailure(
+            meetingAnalysisPersistence.saveAnalysisFailureInNewTransaction(
                 meetingId,
                 MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE
             );

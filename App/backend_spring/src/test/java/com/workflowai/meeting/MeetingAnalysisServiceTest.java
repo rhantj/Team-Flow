@@ -174,7 +174,7 @@ class MeetingAnalysisServiceTest {
             "demo-project", file, "7차 정기회의", "2026-07-15", "정기회의", "document", List.of("김민준"), null
         );
 
-        verify(meetingAnalysisPersistence).saveAnalysisFailure(
+        verify(meetingAnalysisPersistence).saveAnalysisFailureInNewTransaction(
             13L,
             MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE
         );
@@ -199,7 +199,7 @@ class MeetingAnalysisServiceTest {
         );
 
         TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
-        verify(meetingAnalysisPersistence).saveAnalysisFailure(
+        verify(meetingAnalysisPersistence).saveAnalysisFailureInNewTransaction(
             14L,
             MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE
         );
@@ -441,7 +441,7 @@ class MeetingAnalysisServiceTest {
 
         service.retry("demo-project", "8");
 
-        verify(meetingAnalysisPersistence).saveAnalysisFailure(
+        verify(meetingAnalysisPersistence).saveAnalysisFailureInNewTransaction(
             8L,
             MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE
         );

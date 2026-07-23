@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -108,6 +109,16 @@ public class MeetingAnalysisPersistence {
 
     @Transactional
     public void saveAnalysisFailure(Long meetingId, String errorMessage) {
+        persistAnalysisFailure(meetingId);
+    }
+
+    /** afterCommit 호출에서도 이미 커밋된 원 트랜잭션에 합류하지 않도록 새 트랜잭션을 강제한다. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void saveAnalysisFailureInNewTransaction(Long meetingId, String errorMessage) {
+        persistAnalysisFailure(meetingId);
+    }
+
+    private void persistAnalysisFailure(Long meetingId) {
         meetingRepository.findById(meetingId).ifPresent(meeting -> {
             meeting.setAnalysisStatus("failed");
             meetingRepository.save(meeting);
