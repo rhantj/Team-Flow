@@ -311,7 +311,9 @@ public class MeetingAnalysisService {
                 m.getTitle(),
                 m.getMeetingDate() == null ? null : m.getMeetingDate().toString(),
                 m.getMeetingType(),
-                m.getAnalysisStatus()
+                m.getAnalysisStatus(),
+                m.getSavedAt() == null ? null : m.getSavedAt().toString(),
+                m.getOriginalMeetingId() == null ? null : String.valueOf(m.getOriginalMeetingId())
             ))
             .toList();
     }

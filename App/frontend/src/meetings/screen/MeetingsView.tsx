@@ -373,6 +373,7 @@ export function MeetingsView() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [meetings, setMeetings] = useState<Meeting[]>(() => getStoredMeetings(projectId));
   const [selected, setSelected] = useState<string|null>(() => getStoredMeetings(projectId)[0]?.id ?? null);
+  const [homeTab, setHomeTab] = useState<"analyze" | "saved">("analyze");
   const [uploadFlow, setUploadFlow] = useState<UploadFlow>(null);
   const [uploadType, setUploadType] = useState<UploadType>(null);
   const [modalStep, setModalStep] = useState(0);
@@ -602,6 +603,8 @@ export function MeetingsView() {
             date: dto.meetingDate ?? "",
             duration: dto.analysisStatus === "completed" ? "분석 완료" : dto.analysisStatus,
             status,
+            savedAt: dto.savedAt,
+            originalMeetingId: dto.originalMeetingId,
           };
           // 목록 API는 요약만 내려주므로, 이미 상세 분석 결과를 캐시해둔 회의록은 그 결과를 보존한다.
           // 그렇지 않으면 탭을 옮겼다가 돌아올 때마다 상세 조회를 다시 하게 되어 화면이 늦게 뜬다.
@@ -676,6 +679,7 @@ export function MeetingsView() {
   const meeting = meetings.find(m => m.id === selected);
   // meetingId가 있으면 우선 사용, 없으면(review 화면에서 아직 meetings에 반영 전 등) meetTitle로 대체.
   const meetingIdentifier = meeting?.id || meetTitle;
+  const savedMeetingsList = meetings.filter(m => Boolean(m.savedAt));
 
   // ── Upload type metadata ─────────────────────────────────────────────────────
   const UPLOAD_TYPES = [
@@ -1906,11 +1910,30 @@ export function MeetingsView() {
   if (uploadFlow === "done")      return renderDone();
 
   return (
-    <div className="flex h-full overflow-hidden relative" style={{ fontFamily:"'Inter','Noto Sans KR',sans-serif" }}>
+    <div className="flex flex-col h-full overflow-hidden relative" style={{ fontFamily:"'Inter','Noto Sans KR',sans-serif" }}>
       {renderRegisteringOverlay()}
       {renderDeletingOverlay()}
       {renderDeleteConfirmModal()}
       {renderReregisterConfirmModal()}
+
+      <div className="flex gap-2 border-b border-border px-4 shrink-0">
+        <button
+          onClick={() => setHomeTab("analyze")}
+          className={`px-4 py-2 text-sm font-semibold ${homeTab === "analyze" ? "border-b-2 border-blue-600 text-blue-600" : "text-muted-foreground"}`}
+        >
+          분석/업로드
+        </button>
+        <button
+          onClick={() => setHomeTab("saved")}
+          className={`px-4 py-2 text-sm font-semibold ${homeTab === "saved" ? "border-b-2 border-blue-600 text-blue-600" : "text-muted-foreground"}`}
+        >
+          저장된 회의록
+        </button>
+      </div>
+
+      <div className="flex flex-1 overflow-hidden">
+      {homeTab === "analyze" && (
+      <>
       {/* ── Upload modal ── */}
       {uploadFlow === "modal" && (
         <>
@@ -2287,6 +2310,49 @@ export function MeetingsView() {
             )}
           </div>
         )}
+      </div>
+      </>
+      )}
+
+      {homeTab === "saved" && (
+        <div className="flex-1 overflow-y-auto p-6">
+          {savedMeetingsList.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full gap-3 text-center text-muted-foreground">
+              <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center">
+                <FileAudio className="w-8 h-8 text-slate-400" />
+              </div>
+              <div className="text-sm font-semibold text-foreground mb-1">저장된 회의록이 없습니다</div>
+              <div className="text-xs leading-relaxed max-w-sm">회의록 분석 후 '회의록 분석결과 저장'을 눌러 저장하면 이곳에 표시됩니다.</div>
+            </div>
+          ) : (
+            <div className="space-y-2 max-w-2xl">
+              {savedMeetingsList.map(m => (
+                <div key={m.id} onClick={() => setSelected(m.id)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={event => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelected(m.id);
+                    }
+                  }}
+                  className="w-full text-left p-3 rounded-lg border border-border bg-card hover:bg-muted transition-all cursor-pointer">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-mono text-muted-foreground">{m.date}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-600">등록완료</span>
+                      {m.originalMeetingId && (
+                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">수정됨</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-sm font-medium text-foreground leading-snug">{m.title}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       </div>
     </div>
   );

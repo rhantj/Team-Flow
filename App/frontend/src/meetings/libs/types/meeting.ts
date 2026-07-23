@@ -7,6 +7,8 @@ export interface Meeting {
   fileName?: string;
   uploadedAt?: string;
   analyzedAt?: string;
+  savedAt?: string | null;
+  originalMeetingId?: string | null;
 }
 
 export type UploadFlow = null | "modal" | "analyzing" | "results" | "review" | "done";

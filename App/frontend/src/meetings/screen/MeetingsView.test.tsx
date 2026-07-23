@@ -1,6 +1,38 @@
-import { describe, expect, it } from "vitest";
-import { buildGeneratedTodos, deriveCurrentUserRole } from "./MeetingsView";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { buildGeneratedTodos, deriveCurrentUserRole, MeetingsView } from "./MeetingsView";
 import type { MeetingAiResult } from "../libs/types/meetingAiTypes";
+
+vi.mock("../../global/hooks/useAuth", () => ({
+  useAuth: () => ({
+    user: { id: 1, email: "leader@test.com", name: "김민준" },
+    projectRoles: [{ projectId: 1, projectTitle: "테스트 프로젝트", role: "팀장" }],
+    currentProjectId: 1,
+    currentProject: { projectId: 1, projectTitle: "테스트 프로젝트", role: "팀장" },
+    logout: vi.fn(),
+  }),
+}));
+
+vi.mock("../../global/api/projectsApi", () => ({
+  getProjectMembers: vi.fn().mockResolvedValue([
+    { userId: 1, name: "김민준", email: "leader@test.com", role: "팀장" },
+  ]),
+}));
+
+const fetchMeetings = vi.fn();
+const fetchMeeting = vi.fn();
+
+vi.mock("../libs/utils/meetingAiApi", () => ({
+  analyzeMeeting: vi.fn(),
+  confirmMeetingSave: vi.fn(),
+  fetchMeeting: (...args: unknown[]) => fetchMeeting(...args),
+  fetchMeetings: (...args: unknown[]) => fetchMeetings(...args),
+  deleteMeeting: vi.fn(),
+  retryMeetingAnalysis: vi.fn(),
+  registerMeetingTasks: vi.fn(),
+}));
 
 const baseResult = (assignee_id: string | null): MeetingAiResult => ({
   summary: "요약",
@@ -72,5 +104,44 @@ describe("deriveCurrentUserRole", () => {
   it("역할 정보가 없으면(null/undefined) member로 폴백한다, 하드코딩된 leader로 기본값을 두지 않는다", () => {
     expect(deriveCurrentUserRole(null)).toBe("member");
     expect(deriveCurrentUserRole(undefined)).toBe("member");
+  });
+});
+
+describe("MeetingsView 홈 탭", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    fetchMeetings.mockResolvedValue([
+      { meetingId: "1", title: "저장된 정기회의", meetingDate: "2026-07-19", meetingType: "정기회의", analysisStatus: "completed", savedAt: "2026-07-19T10:00:00", originalMeetingId: null },
+      { meetingId: "2", title: "미저장 준비회의", meetingDate: "2026-07-20", meetingType: "정기회의", analysisStatus: "completed", savedAt: null, originalMeetingId: null },
+    ]);
+    fetchMeeting.mockResolvedValue({
+      meetingId: "1",
+      projectId: "1",
+      status: "COMPLETED",
+      sourceType: "document",
+      fileName: "meeting.txt",
+      analysisSource: "FASTAPI",
+      analysis: null,
+      errorMessage: null,
+      attendees: [],
+    });
+  });
+
+  it("저장된 회의록 탭을 누르면 savedAt이 있는 회의록만 목록에 보인다", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/meetings"]}>
+        <MeetingsView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(fetchMeetings).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getAllByText("저장된 정기회의").length).toBeGreaterThan(0));
+
+    await user.click(screen.getByRole("button", { name: "저장된 회의록" }));
+
+    expect(screen.getByText("저장된 정기회의")).toBeInTheDocument();
+    expect(screen.queryByText("미저장 준비회의")).not.toBeInTheDocument();
   });
 });

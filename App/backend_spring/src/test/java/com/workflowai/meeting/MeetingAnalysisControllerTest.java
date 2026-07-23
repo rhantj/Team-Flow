@@ -25,7 +25,7 @@ class MeetingAnalysisControllerTest {
     @Test
     void getMeetingsPassesProjectIdToService() throws Exception {
         when(meetingAnalysisService.findByProject("project-a")).thenReturn(List.of(
-            new MeetingSummary("11", "A 프로젝트 회의", "2026-07-19", "정기회의", "completed")
+            new MeetingSummary("11", "A 프로젝트 회의", "2026-07-19", "정기회의", "completed", null, null)
         ));
         MeetingAnalysisController controller = new MeetingAnalysisController(meetingAnalysisService);
         MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();

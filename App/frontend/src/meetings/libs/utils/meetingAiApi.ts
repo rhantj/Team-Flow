@@ -99,6 +99,8 @@ export interface MeetingSummaryDto {
   meetingDate: string | null;
   meetingType: string | null;
   analysisStatus: string;
+  savedAt: string | null;
+  originalMeetingId: string | null;
 }
 
 export async function fetchMeetings(projectId: string): Promise<MeetingSummaryDto[]> {
