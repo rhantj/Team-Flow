@@ -1,6 +1,5 @@
 package com.workflowai.rag;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
@@ -8,14 +7,14 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.never;
 
+import com.workflowai.task.TaskRepository;
 import java.time.Duration;
 import java.util.concurrent.Executor;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -50,14 +49,17 @@ class RagIngestServiceAsyncRetryIntegrationTest {
     @Autowired
     private RagAssigneeSyncFailureRepository ragAssigneeSyncFailureRepository;
 
+    @Autowired
+    private TaskRepository taskRepository;
+
     @BeforeEach
     void setUp() {
-        reset(fastApiRagClient, ragAssigneeSyncFailureRepository);
+        reset(fastApiRagClient, ragAssigneeSyncFailureRepository, taskRepository);
     }
 
     @AfterEach
     void tearDown() {
-        reset(fastApiRagClient, ragAssigneeSyncFailureRepository);
+        reset(fastApiRagClient, ragAssigneeSyncFailureRepository, taskRepository);
     }
 
     @Test
@@ -72,11 +74,11 @@ class RagIngestServiceAsyncRetryIntegrationTest {
         // @Async이므로 호출은 즉시 반환된다 - 재시도는 실행기 스레드에서 뒤늦게 일어나므로 폴링한다.
         await().atMost(Duration.ofSeconds(5))
             .untilAsserted(() -> verify(fastApiRagClient, times(3)).syncAssignee(any()));
-        verifyNoInteractions(ragAssigneeSyncFailureRepository);
+        verify(ragAssigneeSyncFailureRepository, never()).save(any());
     }
 
     @Test
-    void asyncPlusRetryRecordsFailureAfterExhaustingAllAttempts() {
+    void asyncPlusRetryKeepsPreRecordedIntentAfterExhaustingAllAttempts() {
         doThrow(new RestClientException("boom")).when(fastApiRagClient).syncAssignee(any());
 
         ragIngestService.syncAssigneeBestEffort(1L, "task", 10L, 99L);
@@ -84,17 +86,7 @@ class RagIngestServiceAsyncRetryIntegrationTest {
         await().atMost(Duration.ofSeconds(5))
             .untilAsserted(() -> verify(fastApiRagClient, times(3)).syncAssignee(any()));
 
-        await().atMost(Duration.ofSeconds(5))
-            .untilAsserted(() -> verify(ragAssigneeSyncFailureRepository).save(any()));
-
-        ArgumentCaptor<RagAssigneeSyncFailure> captor = ArgumentCaptor.forClass(RagAssigneeSyncFailure.class);
-        verify(ragAssigneeSyncFailureRepository).save(captor.capture());
-        RagAssigneeSyncFailure saved = captor.getValue();
-        assertThat(saved.getProjectId()).isEqualTo(1L);
-        assertThat(saved.getSourceType()).isEqualTo("task");
-        assertThat(saved.getSourceId()).isEqualTo(10L);
-        assertThat(saved.getAssigneeId()).isEqualTo(99L);
-        assertThat(saved.getErrorMessage()).contains("boom");
+        verify(ragAssigneeSyncFailureRepository, never()).save(any());
     }
 
     @Configuration
@@ -123,8 +115,17 @@ class RagIngestServiceAsyncRetryIntegrationTest {
         }
 
         @Bean
-        RagIngestService ragIngestService(FastApiRagClient client, RagAssigneeSyncFailureRepository repo) {
-            return new RagIngestService(client, repo);
+        TaskRepository taskRepository() {
+            return mock(TaskRepository.class);
+        }
+
+        @Bean
+        RagIngestService ragIngestService(
+            FastApiRagClient client,
+            RagAssigneeSyncFailureRepository repo,
+            TaskRepository taskRepository
+        ) {
+            return new RagIngestService(client, repo, taskRepository);
         }
     }
 }

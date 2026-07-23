@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.workflowai.rag.RagIngestService;
 import com.workflowai.task.Task;
 import com.workflowai.task.TaskRepository;
 import com.workflowai.user.UserRepository;
@@ -31,6 +32,7 @@ class ProjectServiceTest {
     @Mock private ProjectMemberRepository projectMemberRepository;
     @Mock private UserRepository userRepository;
     @Mock private TaskRepository taskRepository;
+    @Mock private RagIngestService ragIngestService;
 
     private ProjectService projectService;
 
@@ -47,7 +49,8 @@ class ProjectServiceTest {
             projectMemberRepository,
             userRepository,
             taskRepository,
-            transactionOperations
+            transactionOperations,
+            ragIngestService
         );
     }
 
@@ -163,6 +166,15 @@ class ProjectServiceTest {
 
         assertThatThrownBy(() -> projectService.joinByCode(5L, "badcode1"))
             .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void delete_removesProjectRagSources() {
+        projectService.delete(10L);
+
+        verify(projectRepository).deleteById(10L);
+        verify(ragIngestService).recordDeleteProjectIntent(10L);
+        verify(ragIngestService).deleteProjectSourcesBestEffort(10L);
     }
 
     @Test

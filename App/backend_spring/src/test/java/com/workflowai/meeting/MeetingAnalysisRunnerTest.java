@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -21,8 +22,10 @@ class MeetingAnalysisRunnerTest {
     private final AiAnalyzeRequest request = new AiAnalyzeRequest(
         "demo-project", "정기회의", "2026-07-15", "정기회의", "document", "a.txt", "내용", List.of("김민준")
     );
+    private final UUID jobId = UUID.randomUUID();
 
     private MeetingAnalysisRunner newRunner() {
+        when(meetingAnalysisPersistence.claimJob(9L, jobId)).thenReturn(true);
         return new MeetingAnalysisRunner(fastApiMeetingClient, fallbackMeetingAnalyzer, meetingAnalysisPersistence);
     }
 
@@ -33,10 +36,10 @@ class MeetingAnalysisRunnerTest {
         );
         when(fastApiMeetingClient.analyze(request)).thenReturn(result);
 
-        newRunner().runAnalysis(9L, request);
+        newRunner().runAnalysis(9L, request, jobId);
 
-        verify(meetingAnalysisPersistence).saveAnalysisSuccess(9L, result, "FASTAPI");
-        verify(meetingAnalysisPersistence, never()).saveAnalysisFailure(any(), any());
+        verify(meetingAnalysisPersistence).saveAnalysisSuccessForJob(9L, result, "FASTAPI", jobId);
+        verify(meetingAnalysisPersistence, never()).saveAnalysisFailureForJob(any(), any(), any());
     }
 
     @Test
@@ -47,9 +50,9 @@ class MeetingAnalysisRunnerTest {
         when(fastApiMeetingClient.analyze(request)).thenThrow(new RuntimeException("연결 실패"));
         when(fallbackMeetingAnalyzer.analyze(request)).thenReturn(fallbackResult);
 
-        newRunner().runAnalysis(9L, request);
+        newRunner().runAnalysis(9L, request, jobId);
 
-        verify(meetingAnalysisPersistence).saveAnalysisSuccess(9L, fallbackResult, "SPRING_FALLBACK");
+        verify(meetingAnalysisPersistence).saveAnalysisSuccessForJob(9L, fallbackResult, "SPRING_FALLBACK", jobId);
     }
 
     @Test
@@ -57,11 +60,12 @@ class MeetingAnalysisRunnerTest {
         when(fastApiMeetingClient.analyze(request)).thenThrow(new RuntimeException("연결 실패"));
         when(fallbackMeetingAnalyzer.analyze(request)).thenThrow(new RuntimeException("fallback 실패"));
 
-        newRunner().runAnalysis(9L, request);
+        newRunner().runAnalysis(9L, request, jobId);
 
-        verify(meetingAnalysisPersistence).saveAnalysisFailure(
+        verify(meetingAnalysisPersistence).saveAnalysisFailureForJob(
             9L,
-            MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE
+            MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE,
+            jobId
         );
     }
 }

@@ -16,6 +16,12 @@ server:
 spring:
   application:
     name: workflow-ai-backend
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      username: ${REDIS_USERNAME:}
+      password: ${REDIS_PASSWORD:}
   servlet:
     multipart:
       max-file-size: 100MB
@@ -51,6 +57,8 @@ spring:
 workflow:
   ai:
     base-url: ${WORKFLOW_AI_FASTAPI_URL:http://localhost:8000}
+    connect-timeout-seconds: ${WORKFLOW_AI_CONNECT_TIMEOUT_SECONDS:5}
+    read-timeout-seconds: ${WORKFLOW_AI_READ_TIMEOUT_SECONDS:45}
     internal-key: ${RAG_INTERNAL_API_KEY}
   cors:
     allowed-origins: ${WORKFLOW_CORS_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}

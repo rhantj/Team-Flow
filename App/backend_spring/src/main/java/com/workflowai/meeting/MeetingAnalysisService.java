@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -43,7 +44,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class MeetingAnalysisService {
     private static final Logger log = LoggerFactory.getLogger(MeetingAnalysisService.class);
 
-    private final MeetingAnalysisRunner meetingAnalysisRunner;
+    private final MeetingAnalysisJobPublisher meetingAnalysisJobPublisher;
     private final DemoDataService demoDataService;
     private final MeetingRepository meetingRepository;
     private final MeetingAttendeeRepository meetingAttendeeRepository;
@@ -58,7 +59,7 @@ public class MeetingAnalysisService {
     private final String uploadsDir;
 
     public MeetingAnalysisService(
-        MeetingAnalysisRunner meetingAnalysisRunner,
+        MeetingAnalysisJobPublisher meetingAnalysisJobPublisher,
         DemoDataService demoDataService,
         MeetingRepository meetingRepository,
         MeetingAttendeeRepository meetingAttendeeRepository,
@@ -72,7 +73,7 @@ public class MeetingAnalysisService {
         MeetingAnalysisPersistence meetingAnalysisPersistence,
         @Value("${workflow.uploads.dir}") String uploadsDir
     ) {
-        this.meetingAnalysisRunner = meetingAnalysisRunner;
+        this.meetingAnalysisJobPublisher = meetingAnalysisJobPublisher;
         this.demoDataService = demoDataService;
         this.meetingRepository = meetingRepository;
         this.meetingAttendeeRepository = meetingAttendeeRepository;
@@ -112,7 +113,8 @@ public class MeetingAnalysisService {
         String resolvedDate = defaultString(meetingDate, LocalDate.now().toString());
         String resolvedSourceType = defaultString(sourceType, "document");
 
-        Meeting meeting = meetingRepository.save(new Meeting(
+        UUID jobId = UUID.randomUUID();
+        Meeting newMeeting = new Meeting(
             projectDbId,
             resolvedTitle,
             resolvedSourceType,
@@ -123,7 +125,9 @@ public class MeetingAnalysisService {
             fileName,
             null,
             file == null ? null : file.getSize()
-        ));
+        );
+        newMeeting.setAnalysisJobId(jobId);
+        Meeting meeting = meetingRepository.save(newMeeting);
 
         meeting.setFilePath(storeUploadedFile(meeting.getId(), file));
         meetingRepository.save(meeting);
@@ -148,7 +152,7 @@ public class MeetingAnalysisService {
             text,
             resolvedParticipantNames
         );
-        runAnalysisAfterCommit(meeting.getId(), request);
+        runAnalysisAfterCommit(meeting.getId(), request, jobId);
 
         String meetingId = String.valueOf(meeting.getId());
         return new MeetingAnalysisResponse(
@@ -225,6 +229,7 @@ public class MeetingAnalysisService {
         return new MeetingStatusResponse(meetingId, status, errorMessage);
     }
 
+    @Transactional
     public MeetingAnalysisResponse retry(String projectId, String meetingId) {
         Meeting meeting = requireProjectMeeting(projectId, meetingId);
         if (meeting == null) return null;
@@ -280,10 +285,12 @@ public class MeetingAnalysisService {
             participantNames
         );
 
+        UUID jobId = UUID.randomUUID();
         meeting.setAnalysisStatus("processing");
+        meeting.setAnalysisJobId(jobId);
         meetingRepository.save(meeting);
 
-        meetingAnalysisRunner.runAnalysis(id, request);
+        runAnalysisAfterCommit(id, request, jobId);
 
         return new MeetingAnalysisResponse(
             meetingId,
@@ -371,13 +378,27 @@ public class MeetingAnalysisService {
 
     @Transactional
     public MeetingDeleteResponse delete(String projectId, String meetingId, boolean deleteLinkedTasks) {
-        Meeting meeting = requireProjectMeeting(projectId, meetingId);
+        Long projectDbId = requireProjectMember(projectId);
+        Long meetingDbId = parseLongOrNull(meetingId);
+        if (meetingDbId == null) return null;
+        Meeting meeting = meetingRepository.findByIdAndProjectIdForUpdate(meetingDbId, projectDbId).orElse(null);
         if (meeting == null) return null;
         requireUploader(meeting);
 
-        Long meetingDbId = parseLongOrNull(meetingId);
-        if (meetingDbId == null) return null;
         String filePath = meeting.getFilePath();
+        List<Task> linkedTasks = deleteLinkedTasks
+            ? taskRepository.findBySourceMeetingId(meetingDbId)
+            : List.of();
+        List<MeetingActionItem> linkedActionItems = deleteLinkedTasks
+            ? meetingActionItemRepository.findByMeetingId(meetingDbId)
+            : List.of();
+        ragIngestService.recordDeleteSourceIntent(meeting.getProjectId(), "meeting", meetingDbId);
+        linkedTasks.forEach(task ->
+            ragIngestService.recordDeleteSourceIntent(task.getProjectId(), "task", task.getId())
+        );
+        linkedActionItems.forEach(item ->
+            ragIngestService.recordDeleteSourceIntent(meeting.getProjectId(), "action_item", item.getId())
+        );
         meetingAttendeeRepository.deleteByMeetingId(meetingDbId);
         if (meetingAnalysisRepository.existsById(meetingDbId)) {
             meetingAnalysisRepository.deleteById(meetingDbId);
@@ -390,6 +411,19 @@ public class MeetingAnalysisService {
             taskRepository.clearSourceMeetingId(meetingDbId);
         }
         meetingRepository.delete(meeting);
+        runAfterCommit(() ->
+            ragIngestService.deleteSourceBestEffort(meeting.getProjectId(), "meeting", meetingDbId)
+        );
+        linkedTasks.forEach(task ->
+            runAfterCommit(() ->
+                ragIngestService.deleteSourceBestEffort(task.getProjectId(), "task", task.getId())
+            )
+        );
+        linkedActionItems.forEach(item ->
+            runAfterCommit(() ->
+                ragIngestService.deleteSourceBestEffort(meeting.getProjectId(), "action_item", item.getId())
+            )
+        );
         deleteUploadedFile(filePath);
 
         return new MeetingDeleteResponse(meetingId, "DELETED");
@@ -452,7 +486,23 @@ public class MeetingAnalysisService {
             createdBy,
             position
         ));
-        ragIngestService.ingestBestEffort(task.getProjectId(), "task", task.getId(), buildTaskIngestContent(task), task.getAssigneeId());
+        String taskRagContent = buildTaskIngestContent(task);
+        ragIngestService.recordIngestIntent(
+            task.getProjectId(),
+            "task",
+            task.getId(),
+            taskRagContent,
+            task.getAssigneeId()
+        );
+        runAfterCommit(() ->
+            ragIngestService.ingestBestEffort(
+                task.getProjectId(),
+                "task",
+                task.getId(),
+                taskRagContent,
+                task.getAssigneeId()
+            )
+        );
 
         MeetingActionItem item = existingItem.orElseGet(() -> new MeetingActionItem(
             meetingId, todo.title(), todo.description(), todo.category(),
@@ -627,17 +677,46 @@ public class MeetingAnalysisService {
         }
     }
 
-    private void runAnalysisAfterCommit(Long meetingId, AiAnalyzeRequest request) {
+    private void runAnalysisAfterCommit(Long meetingId, AiAnalyzeRequest request, UUID jobId) {
+        runAfterCommit(() -> enqueueSafely(meetingId, request, jobId));
+    }
+
+    private void runAfterCommit(Runnable operation) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            meetingAnalysisRunner.runAnalysis(meetingId, request);
+            runAfterCommitOperationSafely(operation);
             return;
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                meetingAnalysisRunner.runAnalysis(meetingId, request);
+                runAfterCommitOperationSafely(operation);
             }
         });
+    }
+
+    private void runAfterCommitOperationSafely(Runnable operation) {
+        try {
+            operation.run();
+        } catch (RuntimeException exception) {
+            log.warn("after-commit 작업 제출 실패. errorType={}", exception.getClass().getSimpleName());
+        }
+    }
+
+    private void enqueueSafely(Long meetingId, AiAnalyzeRequest request, UUID jobId) {
+        try {
+            meetingAnalysisJobPublisher.enqueue(meetingId, request, jobId);
+        } catch (RuntimeException exception) {
+            log.warn(
+                "Failed to enqueue meeting analysis job: meetingId={}, cause={}",
+                meetingId,
+                exception.getClass().getSimpleName()
+            );
+            meetingAnalysisPersistence.saveAnalysisFailureInNewTransaction(
+                meetingId,
+                MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE,
+                jobId
+            );
+        }
     }
 
     private String toResponseProjectId(Long projectDbId) {

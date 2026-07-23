@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import patch
 
 import pytest
@@ -8,7 +9,10 @@ from fastapi.testclient import TestClient
 
 from app.main import (
     AnalyzeRequest,
+    MeetingAnalysisResult,
+    _analyze_json_uncached,
     analyze_meeting,
+    analyze_json,
     analyze_meeting_with_huggingface,
     analyze_meeting_with_ollama,
     app,
@@ -16,6 +20,244 @@ from app.main import (
     clean_todo_title,
     parse_ollama_analysis_response,
 )
+
+
+class FakeMeetingCache:
+    def __init__(
+        self,
+        *,
+        get_error: Exception | None = None,
+        set_error: Exception | None = None,
+        delete_error: Exception | None = None,
+    ):
+        self.values: dict[str, str] = {}
+        self.set_calls: list[tuple[str, str, int | None]] = []
+        self.deleted_keys: list[str] = []
+        self.get_error = get_error
+        self.set_error = set_error
+        self.delete_error = delete_error
+
+    def get(self, key: str) -> str | None:
+        if self.get_error:
+            raise self.get_error
+        return self.values.get(key)
+
+    def set(self, key: str, value: str, ex: int | None = None) -> None:
+        if self.set_error:
+            raise self.set_error
+        self.values[key] = value
+        self.set_calls.append((key, value, ex))
+
+    def delete(self, key: str) -> None:
+        if self.delete_error:
+            raise self.delete_error
+        self.deleted_keys.append(key)
+        self.values.pop(key, None)
+
+
+def _cache_test_result(request: AnalyzeRequest) -> MeetingAnalysisResult:
+    return analyze_meeting(request)
+
+
+def test_analyze_json_caches_by_every_result_determining_input(monkeypatch):
+    monkeypatch.setenv("MEETING_ANALYSIS_PROVIDER", "ollama")
+    monkeypatch.setenv("MEETING_ANALYSIS_MODEL", "model-a")
+    cache = FakeMeetingCache()
+    monkeypatch.setattr("app.main.get_redis_client", lambda: cache)
+
+    calls: list[AnalyzeRequest] = []
+
+    def analyze_uncached(request: AnalyzeRequest) -> MeetingAnalysisResult:
+        calls.append(request)
+        return _cache_test_result(request)
+
+    monkeypatch.setattr("app.main._analyze_json_uncached", analyze_uncached)
+    base = AnalyzeRequest(
+        project_id="project-a",
+        title="캐시 회의",
+        meeting_date="2026-07-23",
+        text="김민준: 캐시를 구현한다.",
+        participants=["김민준"],
+        meeting_kind="정기회의",
+        source_type="document",
+    )
+
+    assert analyze_json(base) == analyze_json(base)
+    assert len(calls) == 1
+    assert cache.set_calls[0][2] == 86400
+
+    changed_requests = [
+        base.model_copy(update={"project_id": "project-b"}),
+        base.model_copy(update={"title": "다른 회의"}),
+        base.model_copy(update={"meeting_date": "2026-07-24"}),
+        base.model_copy(update={"text": "김민준: 다른 캐시를 구현한다."}),
+        base.model_copy(update={"participants": ["이서연"]}),
+        base.model_copy(update={"meeting_kind": "회고"}),
+        base.model_copy(update={"source_type": "audio"}),
+    ]
+    for changed in changed_requests:
+        analyze_json(changed)
+
+    monkeypatch.setenv("MEETING_ANALYSIS_PROVIDER", "rule")
+    analyze_json(base)
+    monkeypatch.setenv("MEETING_ANALYSIS_PROVIDER", "ollama")
+    monkeypatch.setenv("MEETING_ANALYSIS_MODEL", "model-b")
+    analyze_json(base)
+
+    assert len(calls) == 10
+    assert len({key for key, _, _ in cache.set_calls}) == 10
+    assert all(key.startswith("meeting_analysis:") for key, _, _ in cache.set_calls)
+
+
+def test_analyze_json_cache_key_sorts_participant_copy_without_mutating_request(monkeypatch):
+    monkeypatch.setenv("MEETING_ANALYSIS_PROVIDER", "rule")
+    cache = FakeMeetingCache()
+    monkeypatch.setattr("app.main.get_redis_client", lambda: cache)
+    analyzed_requests: list[AnalyzeRequest] = []
+
+    def analyze_uncached(request: AnalyzeRequest) -> MeetingAnalysisResult:
+        analyzed_requests.append(request)
+        return _cache_test_result(request)
+
+    monkeypatch.setattr("app.main._analyze_json_uncached", analyze_uncached)
+    first = AnalyzeRequest(text="회의", participants=["이서연", "김민준"])
+    reordered = first.model_copy(update={"participants": ["김민준", "이서연"]})
+
+    miss_result = analyze_json(first)
+    hit_result = analyze_json(reordered)
+
+    assert len(analyzed_requests) == 1
+    assert analyzed_requests[0].participants == ["김민준", "이서연"]
+    assert miss_result.meeting_meta.participants == ["김민준", "이서연"]
+    assert hit_result.meeting_meta.participants == ["김민준", "이서연"]
+    assert first.participants == ["이서연", "김민준"]
+    assert reordered.participants == ["김민준", "이서연"]
+
+
+@pytest.mark.parametrize(
+    ("setting", "first_value", "second_value"),
+    [
+        ("OLLAMA_HOST", "http://ollama-a:11434", "http://ollama-b:11434"),
+        ("MEETING_ANALYSIS_MODEL", "model-a", "model-b"),
+        ("MEETING_ANALYSIS_TIMEOUT_SECONDS", "20", "21"),
+        ("MEETING_ANALYSIS_MAX_CHARS", "6000", "5000"),
+        ("MEETING_ANALYSIS_NUM_PREDICT", "650", "700"),
+        ("MEETING_ANALYSIS_KEEP_ALIVE", "5m", "10m"),
+        ("OLLAMA_ANALYSIS_TEMPERATURE", "0.1", "0.2"),
+        ("HF_MEETING_ANALYSIS_ENDPOINT", "https://hf-a.example/v1", "https://hf-b.example/v1"),
+        ("HF_MEETING_ANALYSIS_MODEL", "hf-model-a", "hf-model-b"),
+        ("HF_MEETING_ANALYSIS_TIMEOUT_SECONDS", "35", "36"),
+        ("HF_MEETING_ANALYSIS_MAX_TOKENS", "900", "901"),
+        ("HF_MEETING_ANALYSIS_TEMPERATURE", "0.1", "0.2"),
+        ("HF_TOKEN", "", "configured-test-token"),
+    ],
+)
+def test_analyze_json_cache_misses_when_analysis_setting_changes(
+    monkeypatch,
+    setting,
+    first_value,
+    second_value,
+):
+    monkeypatch.setenv("MEETING_ANALYSIS_PROVIDER", "rule")
+    cache = FakeMeetingCache()
+    monkeypatch.setattr("app.main.get_redis_client", lambda: cache)
+    calls = 0
+
+    def analyze_uncached(request: AnalyzeRequest) -> MeetingAnalysisResult:
+        nonlocal calls
+        calls += 1
+        return _cache_test_result(request)
+
+    monkeypatch.setattr("app.main._analyze_json_uncached", analyze_uncached)
+    request = AnalyzeRequest(text="설정별 캐시 키 검증", participants=["김민준"])
+
+    if setting == "HF_TOKEN":
+        monkeypatch.delenv("HUGGINGFACEHUB_API_TOKEN", raising=False)
+    monkeypatch.setenv(setting, first_value)
+    analyze_json(request)
+    monkeypatch.setenv(setting, second_value)
+    analyze_json(request)
+
+    assert calls == 2
+
+
+@pytest.mark.parametrize("operation", ["client", "get", "set"])
+def test_analyze_json_cache_errors_fail_open_with_safe_warning(monkeypatch, caplog, operation):
+    monkeypatch.setenv("MEETING_ANALYSIS_PROVIDER", "rule")
+    request = AnalyzeRequest(
+        title="캐시 장애 회의",
+        meeting_date="2026-07-23",
+        text="LOG-ME-NOT 회의 원문",
+        participants=["김민준"],
+    )
+    expected = _cache_test_result(request)
+    analyze_calls = 0
+
+    def analyze_uncached(_: AnalyzeRequest) -> MeetingAnalysisResult:
+        nonlocal analyze_calls
+        analyze_calls += 1
+        return expected
+
+    monkeypatch.setattr("app.main._analyze_json_uncached", analyze_uncached)
+    if operation == "client":
+        monkeypatch.setattr("app.main.get_redis_client", lambda: (_ for _ in ()).throw(RuntimeError("client down")))
+    else:
+        cache = FakeMeetingCache(
+            get_error=RuntimeError("get down") if operation == "get" else None,
+            set_error=RuntimeError("set down") if operation == "set" else None,
+        )
+        monkeypatch.setattr("app.main.get_redis_client", lambda: cache)
+
+    with caplog.at_level(logging.WARNING):
+        result = analyze_json(request)
+
+    assert result == expected
+    assert analyze_calls == 1
+    assert "LOG-ME-NOT" not in caplog.text
+    assert "회의 원문" not in caplog.text
+    assert caplog.records
+
+
+def test_analyze_json_deletes_corrupt_cache_entry_and_replaces_it(monkeypatch, caplog):
+    monkeypatch.setenv("MEETING_ANALYSIS_PROVIDER", "rule")
+    request = AnalyzeRequest(
+        title="손상 캐시 회의",
+        meeting_date="2026-07-23",
+        text="CACHE-VALUE-MUST-NOT-BE-LOGGED",
+        participants=["김민준"],
+    )
+    cache = FakeMeetingCache()
+    monkeypatch.setattr("app.main.get_redis_client", lambda: cache)
+    expected = _cache_test_result(request)
+    monkeypatch.setattr("app.main._analyze_json_uncached", lambda _: expected)
+
+    with patch("app.main._meeting_analysis_cache_key", return_value="meeting-analysis:test"):
+        cache.values["meeting-analysis:test"] = "{CACHE-VALUE-MUST-NOT-BE-LOGGED"
+        with caplog.at_level(logging.WARNING):
+            result = analyze_json(request)
+
+    assert result == expected
+    assert cache.deleted_keys == ["meeting-analysis:test"]
+    assert cache.set_calls[0][2] == 86400
+    assert "CACHE-VALUE-MUST-NOT-BE-LOGGED" not in caplog.text
+
+
+def test_analyze_json_continues_when_corrupt_cache_delete_fails(monkeypatch, caplog):
+    monkeypatch.setenv("MEETING_ANALYSIS_PROVIDER", "rule")
+    request = AnalyzeRequest(text="DELETE-FAILURE-MUST-NOT-BE-LOGGED", participants=["김민준"])
+    cache = FakeMeetingCache(delete_error=RuntimeError("delete down"))
+    cache.values["meeting_analysis:test"] = "{invalid"
+    monkeypatch.setattr("app.main.get_redis_client", lambda: cache)
+    expected = _cache_test_result(request)
+    monkeypatch.setattr("app.main._analyze_json_uncached", lambda _: expected)
+
+    with patch("app.main._meeting_analysis_cache_key", return_value="meeting_analysis:test"):
+        with caplog.at_level(logging.WARNING):
+            result = analyze_json(request)
+
+    assert result == expected
+    assert cache.set_calls == [("meeting_analysis:test", expected.model_dump_json(), 86400)]
+    assert "DELETE-FAILURE-MUST-NOT-BE-LOGGED" not in caplog.text
 
 
 def test_extracts_assignee_candidate_from_meeting_text_instead_of_rotating_attendees():
@@ -461,6 +703,31 @@ def test_analyze_json_falls_back_to_ollama_when_huggingface_fails(monkeypatch):
 
     assert response.status_code == 200
     mock_ollama.assert_called_once()
+
+
+def test_analyze_json_fallback_warnings_do_not_expose_exception_details(monkeypatch, caplog):
+    monkeypatch.setenv("MEETING_ANALYSIS_PROVIDER", "huggingface")
+    monkeypatch.setenv("HF_TOKEN", "configured-test-token")
+    request = AnalyzeRequest(
+        title="보안 로그 회의",
+        meeting_date="2026-07-23",
+        text="민감한 회의 원문",
+        participants=["김민준"],
+    )
+    sentinel = "https://admin:credential-sentinel@private.example/model"
+
+    with (
+        patch("app.main.analyze_meeting_with_huggingface", side_effect=RuntimeError(sentinel)),
+        patch("app.main.analyze_meeting_with_ollama", side_effect=RuntimeError(sentinel)),
+        caplog.at_level(logging.WARNING),
+    ):
+        result = _analyze_json_uncached(request)
+
+    assert result.summary
+    assert "errorType=RuntimeError" in caplog.text
+    assert "credential-sentinel" not in caplog.text
+    assert "private.example" not in caplog.text
+    assert "민감한 회의 원문" not in caplog.text
 
 
 def test_analyze_meeting_with_ollama_uses_fast_default_model_and_bounded_options(monkeypatch):

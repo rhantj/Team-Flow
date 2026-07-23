@@ -19,8 +19,23 @@ services:
 
   redis:
     restart: unless-stopped
-    ports: !override
-      - '127.0.0.1:6379:6379'
+    ports: !override []
+    environment:
+      REDIS_ADMIN_PASSWORD: ${REDIS_ADMIN_PASSWORD:?REDIS_ADMIN_PASSWORD is required}
+      REDIS_SPRING_PASSWORD: ${REDIS_SPRING_PASSWORD:?REDIS_SPRING_PASSWORD is required}
+      REDIS_FASTAPI_PASSWORD: ${REDIS_FASTAPI_PASSWORD:?REDIS_FASTAPI_PASSWORD is required}
+    entrypoint:
+      - /usr/local/bin/workflow-redis-entrypoint.sh
+    volumes:
+      - ./redis/redis-entrypoint.sh:/usr/local/bin/workflow-redis-entrypoint.sh:ro
+      - ./redis/users.acl.template:/usr/local/etc/redis/users.acl.template:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - REDISCLI_AUTH="$${REDIS_ADMIN_PASSWORD}" redis-cli --user admin ping | grep -qx PONG
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   kafka:
     restart: unless-stopped
@@ -29,6 +44,7 @@ services:
 
   backend-spring:
     restart: unless-stopped
+    stop_grace_period: 60s
     environment:
       # application-prod.yml을 활성화한다. 이게 없으면 dev 프로필로 떠서
       # /api/v1/auth/dev-login/{1~4}와 Swagger가 인터넷에 열린다.
@@ -36,11 +52,16 @@ services:
       # nginx가 TLS를 종료하므로 Spring은 평문으로 받는다. 이 설정이 있어야
       # X-Forwarded-Proto를 보고 리다이렉트 URL을 https로 만든다.
       SERVER_FORWARD_HEADERS_STRATEGY: framework
+      REDIS_USERNAME: spring
+      REDIS_PASSWORD: ${REDIS_SPRING_PASSWORD:?REDIS_SPRING_PASSWORD is required}
     ports: !override
       - '127.0.0.1:8080:8080'
 
   backend-fastapi:
     restart: unless-stopped
+    environment:
+      REDIS_USERNAME: fastapi
+      REDIS_PASSWORD: ${REDIS_FASTAPI_PASSWORD:?REDIS_FASTAPI_PASSWORD is required}
     # Ollama는 이번 배포 범위에서 제외한다. OLLAMA_HOST가 도달 불가여도
     # chat_router가 ConnectError를 잡아 에러 응답을 내므로 앱은 죽지 않는다.
     ports: !override

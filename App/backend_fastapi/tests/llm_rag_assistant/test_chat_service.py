@@ -1,10 +1,39 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+import logging
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from llm_rag_assistant.app.services.chat_service import _is_personal_intent, answer_question
+from llm_rag_assistant.app.schema.chat_schema import RagQueryResponse, RagSource
+from llm_rag_assistant.app.services.chat_service import _answer_cache_key, _is_personal_intent, answer_question
+
+
+class _FakeAsyncRedis:
+    def __init__(self, initial: dict[str, str] | None = None) -> None:
+        self.store = dict(initial or {})
+        self.set_calls: list[tuple[str, str, int | None]] = []
+        self.deleted_keys: list[str] = []
+
+    async def get(self, key: str) -> str | None:
+        return self.store.get(key)
+
+    async def set(self, key: str, value: str, ex: int | None = None) -> None:
+        self.store[key] = value
+        self.set_calls.append((key, value, ex))
+
+    async def delete(self, key: str) -> None:
+        self.store.pop(key, None)
+        self.deleted_keys.append(key)
+
+
+@pytest.fixture(autouse=True)
+def default_cache_miss() -> object:
+    with patch(
+        "llm_rag_assistant.app.services.chat_service.get_async_redis_client",
+        return_value=_FakeAsyncRedis(),
+    ):
+        yield
 
 
 @pytest.mark.asyncio
@@ -247,3 +276,264 @@ def test_is_personal_intent_detects_curly_quoted_compact_forms(question: str) ->
     forms should still be recognized as personal intent. Regression test for missing
     curly quote support in _COMPACT_PERSONAL_TASK_PATTERN leading boundary."""
     assert _is_personal_intent(question) is True
+
+
+def test_answer_cache_key_scopes_schema_project_assignee_and_exact_question() -> None:
+    baseline = _answer_cache_key(project_id=5, assignee_id=None, question="동일 질문")
+
+    assert baseline == _answer_cache_key(project_id=5, assignee_id=None, question="동일 질문")
+    assert baseline != _answer_cache_key(project_id=6, assignee_id=None, question="동일 질문")
+    assert baseline != _answer_cache_key(project_id=5, assignee_id=42, question="동일 질문")
+    assert baseline != _answer_cache_key(project_id=5, assignee_id=None, question="동일 질문 ")
+
+    with patch("llm_rag_assistant.app.services.chat_service._ANSWER_CACHE_SCHEMA_VERSION", "v2"):
+        assert baseline != _answer_cache_key(project_id=5, assignee_id=None, question="동일 질문")
+
+    assert baseline != _answer_cache_key(
+        project_id=5,
+        assignee_id=None,
+        question="동일 질문",
+        cache_epoch="1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_answer_question_cache_hit_skips_embedding_search_and_generation() -> None:
+    cached = RagQueryResponse(
+        answer="캐시 답변",
+        sources=[RagSource(source_type="task", source_id=3, content_snippet="근거", similarity=0.9)],
+    )
+    cache = _FakeAsyncRedis({_answer_cache_key(5, None, "질문"): cached.model_dump_json()})
+
+    with (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.get_async_redis_client",
+            return_value=cache,
+        ),
+        patch("llm_rag_assistant.app.services.chat_service.embed_text", new=AsyncMock()) as embed,
+        patch("llm_rag_assistant.app.services.chat_service.search_similar_chunks", new=AsyncMock()) as search,
+        patch("llm_rag_assistant.app.services.chat_service.generate_answer", new=AsyncMock()) as generate,
+    ):
+        result = await answer_question(object(), project_id=5, question="질문")
+
+    assert result == cached
+    embed.assert_not_awaited()
+    search.assert_not_awaited()
+    generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_answer_question_project_epoch_change_bypasses_stale_cached_answer() -> None:
+    stale = RagQueryResponse(answer="삭제 전 답변", sources=[])
+    cache = _FakeAsyncRedis(
+        {
+            "rag_epoch:5": "2",
+            _answer_cache_key(5, None, "질문", cache_epoch="1"): stale.model_dump_json(),
+        }
+    )
+
+    with (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.get_async_redis_client",
+            return_value=cache,
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="삭제 후 답변"),
+        ),
+    ):
+        result = await answer_question(object(), project_id=5, question="질문")
+
+    assert result.answer == "삭제 후 답변"
+    assert cache.set_calls[0][0] == _answer_cache_key(5, None, "질문", cache_epoch="2")
+
+
+@pytest.mark.asyncio
+async def test_answer_question_rechecks_epoch_before_returning_cache_hit() -> None:
+    stale = RagQueryResponse(answer="권한 변경 전 답변", sources=[])
+    cache = _FakeAsyncRedis(
+        {_answer_cache_key(5, None, "질문", cache_epoch="1"): stale.model_dump_json()}
+    )
+    epoch_reads = iter(("1", "2", "2"))
+    original_get = cache.get
+
+    async def get_with_epoch_change(key: str) -> str | None:
+        if key == "rag_epoch:5":
+            return next(epoch_reads)
+        return await original_get(key)
+
+    cache.get = get_with_epoch_change
+    with (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.get_async_redis_client",
+            return_value=cache,
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="권한 변경 후 답변"),
+        ),
+    ):
+        result = await answer_question(object(), project_id=5, question="질문")
+
+    assert result.answer == "권한 변경 후 답변"
+
+
+@pytest.mark.asyncio
+async def test_answer_question_cache_miss_is_stored_for_1800_seconds_and_reused() -> None:
+    cache = _FakeAsyncRedis()
+
+    with (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.get_async_redis_client",
+            return_value=cache,
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ) as embed,
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=[]),
+        ) as search,
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="새 답변"),
+        ) as generate,
+    ):
+        first = await answer_question(object(), project_id=5, question="질문")
+        second = await answer_question(object(), project_id=5, question="질문")
+
+    assert first == second
+    assert cache.set_calls[0][2] == 1800
+    embed.assert_awaited_once()
+    search.assert_awaited_once()
+    generate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_answer_question_uses_effective_personal_assignee_in_cache_scope() -> None:
+    cache = _FakeAsyncRedis()
+
+    with (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.get_async_redis_client",
+            return_value=cache,
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=[]),
+        ) as search,
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="답변"),
+        ),
+    ):
+        await answer_question(object(), 5, "내가 담당한 업무 알려줘", user_id=42)
+        await answer_question(object(), 5, "프로젝트 전체 업무 현황 알려줘", user_id=42)
+
+    assert {call[0] for call in cache.set_calls} == {
+        _answer_cache_key(5, 42, "내가 담당한 업무 알려줘"),
+        _answer_cache_key(5, None, "프로젝트 전체 업무 현황 알려줘"),
+    }
+    assert search.await_args_list[0].kwargs["assignee_id"] == 42
+    assert search.await_args_list[1].kwargs["assignee_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_answer_question_deletes_corrupt_cache_and_recomputes(caplog: pytest.LogCaptureFixture) -> None:
+    key = _answer_cache_key(5, None, "민감한 질문 원문")
+    cache = _FakeAsyncRedis({key: '{"answer": "민감한 캐시 값"}'})
+
+    with (
+        caplog.at_level(logging.WARNING),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.get_async_redis_client",
+            return_value=cache,
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="복구 답변"),
+        ),
+    ):
+        result = await answer_question(object(), 5, "민감한 질문 원문")
+
+    assert result.answer == "복구 답변"
+    assert cache.deleted_keys == [key]
+    assert "RAG 답변 캐시 역직렬화 실패" in caplog.text
+    assert "민감한 질문 원문" not in caplog.text
+    assert "민감한 캐시 값" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_point", ["client", "get", "set", "delete"])
+async def test_answer_question_cache_failures_warn_and_fail_open(
+    failure_point: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    connection_detail_sentinel = "redis://fastapi:secret-password@private-redis:6379/0"
+    cache = _FakeAsyncRedis()
+    key = _answer_cache_key(5, None, "로그 금지 질문")
+    if failure_point == "delete":
+        cache.store[key] = "invalid-json"
+
+    if failure_point != "client":
+        failing_method = AsyncMock(side_effect=ConnectionError(connection_detail_sentinel))
+        setattr(cache, failure_point, failing_method)
+
+    client = (
+        Mock(side_effect=ConnectionError(connection_detail_sentinel))
+        if failure_point == "client"
+        else Mock(return_value=cache)
+    )
+
+    with (
+        caplog.at_level(logging.WARNING),
+        patch("llm_rag_assistant.app.services.chat_service.get_async_redis_client", client),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="정상 답변"),
+        ),
+    ):
+        result = await answer_question(object(), 5, "로그 금지 질문")
+
+    assert result.answer == "정상 답변"
+    assert "RAG 답변 캐시" in caplog.text
+    assert "로그 금지 질문" not in caplog.text
+    assert "정상 답변" not in caplog.text
+    assert connection_detail_sentinel not in caplog.text

@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import re
 
+from core.cache import get_async_redis_client
 from llm_rag_assistant.app.schema.chat_schema import RagQueryResponse, RagSource
 from llm_rag_assistant.app.services.embedding_service import embed_text
 from llm_rag_assistant.app.services.generation_service import generate_answer
 from llm_rag_assistant.app.services.retrieval_service import search_similar_chunks
 
+logger = logging.getLogger(__name__)
+
 _SNIPPET_MAX_LEN = 200
+_ANSWER_CACHE_SCHEMA_VERSION = "v1"
+_ANSWER_CACHE_TTL_SECONDS = 1800
 
 # "내 할 일 알려줘" 류 개인화 질문 판별용. 순수 벡터 유사도만으로는 "내"가 누구인지 구분할
 # 수 없어 (일반 문구라 특정 담당자 청크와 유사도가 두드러지지 않음) 키워드로 의도를 감지해
@@ -43,9 +51,98 @@ def _is_personal_intent(question: str) -> bool:
     return bool(_COMPACT_PERSONAL_TASK_PATTERN.search(question))
 
 
+def _answer_cache_key(
+    project_id: int,
+    assignee_id: int | None,
+    question: str,
+    cache_epoch: str = "0",
+) -> str:
+    canonical_basis = json.dumps(
+        {
+            "schema_version": _ANSWER_CACHE_SCHEMA_VERSION,
+            "project_id": project_id,
+            "assignee_id": assignee_id,
+            "question": question,
+            "cache_epoch": cache_epoch,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(canonical_basis.encode("utf-8")).hexdigest()
+    assignee_scope = str(assignee_id) if assignee_id is not None else "none"
+    return f"rag_answer:{project_id}:{assignee_scope}:{digest}"
+
+
+async def _read_project_cache_epoch(redis_client, project_id: int) -> str | None:
+    try:
+        epoch = await redis_client.get(f"rag_epoch:{project_id}")
+    except Exception:
+        logger.warning("RAG 답변 캐시 버전 조회 실패, 캐시 없이 진행합니다.")
+        return None
+    return epoch if epoch is not None else "0"
+
+
+async def _read_cached_response(redis_client, cache_key: str) -> RagQueryResponse | None:
+    try:
+        cached = await redis_client.get(cache_key)
+    except Exception:
+        logger.warning("RAG 답변 캐시 조회 실패, 캐시 없이 진행합니다.")
+        return None
+    if cached is None:
+        return None
+
+    try:
+        return RagQueryResponse.model_validate_json(cached)
+    except Exception:
+        logger.warning("RAG 답변 캐시 역직렬화 실패, 손상 값을 삭제합니다.")
+
+    try:
+        await redis_client.delete(cache_key)
+    except Exception:
+        logger.warning("RAG 답변 손상 캐시 삭제 실패, 캐시 없이 진행합니다.")
+    return None
+
+
+async def _write_cached_response(redis_client, cache_key: str, response: RagQueryResponse) -> None:
+    try:
+        await redis_client.set(
+            cache_key,
+            response.model_dump_json(),
+            ex=_ANSWER_CACHE_TTL_SECONDS,
+        )
+    except Exception:
+        logger.warning("RAG 답변 캐시 저장 실패, 결과는 정상 반환합니다.")
+
+
 async def answer_question(pool, project_id: int, question: str, user_id: int | None = None) -> RagQueryResponse:
-    query_embedding = await embed_text(question)
     assignee_id = user_id if user_id is not None and _is_personal_intent(question) else None
+    cache_key = None
+    cache_epoch = None
+
+    try:
+        redis_client = get_async_redis_client()
+    except Exception:
+        logger.warning("RAG 답변 캐시 클라이언트 생성 실패, 캐시 없이 진행합니다.")
+        redis_client = None
+
+    if redis_client is not None:
+        cache_epoch = await _read_project_cache_epoch(redis_client, project_id)
+        if cache_epoch is not None:
+            cache_key = _answer_cache_key(project_id, assignee_id, question, cache_epoch)
+            cached_response = await _read_cached_response(redis_client, cache_key)
+            if cached_response is not None:
+                latest_epoch = await _read_project_cache_epoch(redis_client, project_id)
+                if latest_epoch == cache_epoch:
+                    return cached_response
+                cache_epoch = latest_epoch
+                cache_key = (
+                    _answer_cache_key(project_id, assignee_id, question, cache_epoch)
+                    if cache_epoch is not None
+                    else None
+                )
+
+    query_embedding = await embed_text(question)
     rows = await search_similar_chunks(pool, project_id, query_embedding, top_k=5, assignee_id=assignee_id)
     answer = await generate_answer(question, rows)
 
@@ -58,7 +155,12 @@ async def answer_question(pool, project_id: int, question: str, user_id: int | N
         )
         for row in rows
     ]
-    return RagQueryResponse(answer=answer, sources=sources)
+    response = RagQueryResponse(answer=answer, sources=sources)
+    if redis_client is not None and cache_key is not None and cache_epoch is not None:
+        latest_epoch = await _read_project_cache_epoch(redis_client, project_id)
+        if latest_epoch == cache_epoch:
+            await _write_cached_response(redis_client, cache_key, response)
+    return response
 
 
 def _shorten(value: str, max_len: int) -> str:

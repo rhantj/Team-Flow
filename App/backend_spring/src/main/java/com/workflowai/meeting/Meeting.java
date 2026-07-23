@@ -8,6 +8,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Entity
 @Table(name = "meetings")
@@ -30,6 +31,9 @@ public class Meeting {
 
     @Column(name = "analysis_status", nullable = false)
     private String analysisStatus;
+
+    @Column(name = "analysis_job_id")
+    private UUID analysisJobId;
 
     @Column(name = "meeting_date")
     private LocalDate meetingDate;
@@ -95,6 +99,14 @@ public class Meeting {
 
     public void setAnalysisStatus(String analysisStatus) {
         this.analysisStatus = analysisStatus;
+    }
+
+    public UUID getAnalysisJobId() {
+        return analysisJobId;
+    }
+
+    public void setAnalysisJobId(UUID analysisJobId) {
+        this.analysisJobId = analysisJobId;
     }
 
     public String getFilePath() {
