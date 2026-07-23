@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.LongConsumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.dao.DataAccessException;
@@ -89,6 +90,8 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
     private volatile Thread workerThread;
     private long nextBackoffMillis = INITIAL_BACKOFF_MILLIS;
 
+    // 테스트용 오버로드가 있어 생성자가 여러 개다. 표시가 없으면 Spring이 기본 생성자를 찾다 기동에 실패한다.
+    @Autowired
     public MeetingAnalysisQueueWorker(
         StringRedisTemplate redisTemplate,
         ObjectMapper objectMapper,
