@@ -43,7 +43,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class MeetingAnalysisService {
     private static final Logger log = LoggerFactory.getLogger(MeetingAnalysisService.class);
 
-    private final MeetingAnalysisRunner meetingAnalysisRunner;
+    private final MeetingAnalysisJobPublisher meetingAnalysisJobPublisher;
     private final DemoDataService demoDataService;
     private final MeetingRepository meetingRepository;
     private final MeetingAttendeeRepository meetingAttendeeRepository;
@@ -58,7 +58,7 @@ public class MeetingAnalysisService {
     private final String uploadsDir;
 
     public MeetingAnalysisService(
-        MeetingAnalysisRunner meetingAnalysisRunner,
+        MeetingAnalysisJobPublisher meetingAnalysisJobPublisher,
         DemoDataService demoDataService,
         MeetingRepository meetingRepository,
         MeetingAttendeeRepository meetingAttendeeRepository,
@@ -72,7 +72,7 @@ public class MeetingAnalysisService {
         MeetingAnalysisPersistence meetingAnalysisPersistence,
         @Value("${workflow.uploads.dir}") String uploadsDir
     ) {
-        this.meetingAnalysisRunner = meetingAnalysisRunner;
+        this.meetingAnalysisJobPublisher = meetingAnalysisJobPublisher;
         this.demoDataService = demoDataService;
         this.meetingRepository = meetingRepository;
         this.meetingAttendeeRepository = meetingAttendeeRepository;
@@ -283,7 +283,7 @@ public class MeetingAnalysisService {
         meeting.setAnalysisStatus("processing");
         meetingRepository.save(meeting);
 
-        meetingAnalysisRunner.runAnalysis(id, request);
+        enqueueSafely(id, request);
 
         return new MeetingAnalysisResponse(
             meetingId,
@@ -629,15 +629,31 @@ public class MeetingAnalysisService {
 
     private void runAnalysisAfterCommit(Long meetingId, AiAnalyzeRequest request) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            meetingAnalysisRunner.runAnalysis(meetingId, request);
+            enqueueSafely(meetingId, request);
             return;
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                meetingAnalysisRunner.runAnalysis(meetingId, request);
+                enqueueSafely(meetingId, request);
             }
         });
+    }
+
+    private void enqueueSafely(Long meetingId, AiAnalyzeRequest request) {
+        try {
+            meetingAnalysisJobPublisher.enqueue(meetingId, request);
+        } catch (RuntimeException exception) {
+            log.warn(
+                "Failed to enqueue meeting analysis job: meetingId={}, cause={}",
+                meetingId,
+                exception.getClass().getSimpleName()
+            );
+            meetingAnalysisPersistence.saveAnalysisFailure(
+                meetingId,
+                MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE
+            );
+        }
     }
 
     private String toResponseProjectId(Long projectDbId) {

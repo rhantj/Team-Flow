@@ -3,7 +3,9 @@ package com.workflowai.meeting;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -42,13 +44,15 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 class MeetingAnalysisServiceTest {
 
     private static final Long CURRENT_USER_ID = 1L;
 
-    @Mock private MeetingAnalysisRunner meetingAnalysisRunner;
+    @Mock private MeetingAnalysisJobPublisher meetingAnalysisJobPublisher;
     @Mock private DemoDataService demoDataService;
     @Mock private MeetingRepository meetingRepository;
     @Mock private MeetingAttendeeRepository meetingAttendeeRepository;
@@ -72,11 +76,14 @@ class MeetingAnalysisServiceTest {
     @AfterEach
     void clearSecurityContext() {
         SecurityContextHolder.clearContext();
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     private MeetingAnalysisService newService() {
         return new MeetingAnalysisService(
-            meetingAnalysisRunner, demoDataService, meetingRepository, meetingAttendeeRepository,
+            meetingAnalysisJobPublisher, demoDataService, meetingRepository, meetingAttendeeRepository,
             meetingAnalysisRepository, meetingActionItemRepository, taskRepository, notificationRepository,
             userRepository, projectMemberRepository, ragIngestService, meetingAnalysisPersistence, "/tmp/workflow-uploads"
         );
@@ -103,7 +110,7 @@ class MeetingAnalysisServiceTest {
         ArgumentCaptor<Meeting> meetingCaptor = ArgumentCaptor.forClass(Meeting.class);
         verify(meetingRepository, atLeastOnce()).save(meetingCaptor.capture());
         assertThat(meetingCaptor.getAllValues().get(0).getAnalysisStatus()).isEqualTo("processing");
-        verify(meetingAnalysisRunner).runAnalysis(any(), any(AiAnalyzeRequest.class));
+        verify(meetingAnalysisJobPublisher).enqueue(any(), any(AiAnalyzeRequest.class));
     }
 
     @Test
@@ -124,9 +131,78 @@ class MeetingAnalysisServiceTest {
         );
 
         ArgumentCaptor<AiAnalyzeRequest> requestCaptor = ArgumentCaptor.forClass(AiAnalyzeRequest.class);
-        verify(meetingAnalysisRunner).runAnalysis(any(), requestCaptor.capture());
+        verify(meetingAnalysisJobPublisher).enqueue(any(), requestCaptor.capture());
         assertThat(requestCaptor.getValue().text()).contains("Meeting minutes body");
         assertThat(requestCaptor.getValue().text()).doesNotContain("텍스트 추출 예정");
+    }
+
+    @Test
+    void analyzeEnqueuesOnlyAfterTransactionCommitWhenSynchronizationIsActive() {
+        mockMember(1L);
+        MeetingAnalysisService service = newService();
+        when(meetingRepository.save(any(Meeting.class))).thenAnswer(invocation -> {
+            Meeting meeting = invocation.getArgument(0);
+            ReflectionTestUtils.setField(meeting, "id", 12L);
+            return meeting;
+        });
+        TransactionSynchronizationManager.initSynchronization();
+
+        MockMultipartFile file = new MockMultipartFile("file", "notes.txt", "text/plain", "회의 내용".getBytes());
+        service.analyze(
+            "demo-project", file, "7차 정기회의", "2026-07-15", "정기회의", "document", List.of("김민준"), null
+        );
+
+        verify(meetingAnalysisJobPublisher, never()).enqueue(any(), any());
+        TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
+        verify(meetingAnalysisJobPublisher).enqueue(eq(12L), any(AiAnalyzeRequest.class));
+    }
+
+    @Test
+    void analyzeMarksMeetingFailedWhenImmediateEnqueueFails() {
+        mockMember(1L);
+        MeetingAnalysisService service = newService();
+        when(meetingRepository.save(any(Meeting.class))).thenAnswer(invocation -> {
+            Meeting meeting = invocation.getArgument(0);
+            ReflectionTestUtils.setField(meeting, "id", 13L);
+            return meeting;
+        });
+        doThrow(new IllegalStateException("redis unavailable"))
+            .when(meetingAnalysisJobPublisher).enqueue(any(), any());
+
+        MockMultipartFile file = new MockMultipartFile("file", "notes.txt", "text/plain", "회의 내용".getBytes());
+        service.analyze(
+            "demo-project", file, "7차 정기회의", "2026-07-15", "정기회의", "document", List.of("김민준"), null
+        );
+
+        verify(meetingAnalysisPersistence).saveAnalysisFailure(
+            13L,
+            MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE
+        );
+    }
+
+    @Test
+    void analyzeMarksMeetingFailedWhenAfterCommitEnqueueFails() {
+        mockMember(1L);
+        MeetingAnalysisService service = newService();
+        when(meetingRepository.save(any(Meeting.class))).thenAnswer(invocation -> {
+            Meeting meeting = invocation.getArgument(0);
+            ReflectionTestUtils.setField(meeting, "id", 14L);
+            return meeting;
+        });
+        doThrow(new IllegalStateException("redis unavailable"))
+            .when(meetingAnalysisJobPublisher).enqueue(any(), any());
+        TransactionSynchronizationManager.initSynchronization();
+
+        MockMultipartFile file = new MockMultipartFile("file", "notes.txt", "text/plain", "회의 내용".getBytes());
+        service.analyze(
+            "demo-project", file, "7차 정기회의", "2026-07-15", "정기회의", "document", List.of("김민준"), null
+        );
+
+        TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
+        verify(meetingAnalysisPersistence).saveAnalysisFailure(
+            14L,
+            MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE
+        );
     }
 
     @Test
@@ -302,6 +378,7 @@ class MeetingAnalysisServiceTest {
         MeetingAnalysisService service = newService();
 
         assertThatThrownBy(() -> service.retry("demo-project", "3")).isInstanceOf(IllegalStateException.class);
+        verify(meetingAnalysisJobPublisher, never()).enqueue(any(), any());
     }
 
     @Test
@@ -344,9 +421,30 @@ class MeetingAnalysisServiceTest {
 
         assertThat(response.status()).isEqualTo("PROCESSING");
         assertThat(meeting.getAnalysisStatus()).isEqualTo("processing");
-        verify(meetingAnalysisRunner).runAnalysis(4L, new AiAnalyzeRequest(
+        verify(meetingAnalysisJobPublisher).enqueue(4L, new AiAnalyzeRequest(
             "demo-project", "정기회의", meeting.getMeetingDate().toString(), "정기회의", "document", "x.txt", "재분석할 회의 내용", List.of()
         ));
+        Files.deleteIfExists(textFile);
+    }
+
+    @Test
+    void retryMarksMeetingFailedWhenEnqueueFails() throws Exception {
+        mockMember(1L);
+        Path textFile = Files.createTempFile("meeting-notes", ".txt");
+        Files.writeString(textFile, "재분석할 회의 내용");
+        Meeting meeting = new Meeting(1L, "정기회의", "document", textFile.toString(), "failed", LocalDate.now(), "정기회의", "x.txt", null, 5L);
+        when(meetingRepository.findByIdAndProjectId(8L, 1L)).thenReturn(Optional.of(meeting));
+        when(meetingAttendeeRepository.findByMeetingId(8L)).thenReturn(List.of());
+        doThrow(new IllegalStateException("redis unavailable"))
+            .when(meetingAnalysisJobPublisher).enqueue(any(), any());
+        MeetingAnalysisService service = newService();
+
+        service.retry("demo-project", "8");
+
+        verify(meetingAnalysisPersistence).saveAnalysisFailure(
+            8L,
+            MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE
+        );
         Files.deleteIfExists(textFile);
     }
 
@@ -367,7 +465,7 @@ class MeetingAnalysisServiceTest {
         assertThat(response.errorMessage()).isEqualTo(MeetingAnalysisPersistence.REUPLOAD_REQUIRED_ERROR_MESSAGE);
         verify(meetingAnalysisPersistence).saveAnalysisFailure(6L, MeetingAnalysisPersistence.REUPLOAD_REQUIRED_ERROR_MESSAGE);
         verify(meetingAnalysisRepository, never()).save(any());
-        verify(meetingAnalysisRunner, never()).runAnalysis(any(), any());
+        verify(meetingAnalysisJobPublisher, never()).enqueue(any(), any());
         Files.deleteIfExists(audioFile);
     }
 
@@ -387,7 +485,7 @@ class MeetingAnalysisServiceTest {
         assertThat(response.errorMessage()).isEqualTo(MeetingAnalysisPersistence.REUPLOAD_READ_ERROR_MESSAGE);
         verify(meetingAnalysisPersistence).saveAnalysisFailure(7L, MeetingAnalysisPersistence.REUPLOAD_READ_ERROR_MESSAGE);
         verify(meetingAnalysisRepository, never()).save(any());
-        verify(meetingAnalysisRunner, never()).runAnalysis(any(), any());
+        verify(meetingAnalysisJobPublisher, never()).enqueue(any(), any());
         Files.deleteIfExists(emptyFile);
     }
 
