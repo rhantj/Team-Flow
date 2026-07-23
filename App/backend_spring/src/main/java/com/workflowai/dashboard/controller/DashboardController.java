@@ -8,6 +8,7 @@ import com.workflowai.dashboard.DTO.DashboardSummaryResponse;
 import com.workflowai.dashboard.DTO.DelayRiskDto;
 import com.workflowai.dashboard.DTO.MilestoneProgressDto;
 import com.workflowai.dashboard.DTO.ProgressDetailResponse;
+import com.workflowai.dashboard.DTO.WorkloadScoreResponseDto;
 import com.workflowai.dashboard.service.DashboardService;
 import com.workflowai.security.CurrentUser;
 import jakarta.validation.Valid;
@@ -15,6 +16,8 @@ import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -75,6 +78,24 @@ public class DashboardController {
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId
     ) {
         return ApiResponse.ok(dashboardService.getMyDelayRisks(projectId, CurrentUser.id()));
+    }
+
+    @Operation(
+        summary = "팀원별 업무 편중 점수",
+        description = "ML 업무 편중 점수 모델(ml_workload_score)로 팀원별 과부하/저활동 탐지 결과를 반환한다. "
+            + "결과는 저장되지 않고 호출 시점에 매번 새로 계산된다(FastAPI 라이브 조회)."
+    )
+    @GetMapping("/workload-score")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
+    public ResponseEntity<ApiResponse<WorkloadScoreResponseDto>> getWorkloadScore(
+        @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId
+    ) {
+        try {
+            return ResponseEntity.ok(ApiResponse.ok(dashboardService.getWorkloadScore(projectId)));
+        } catch (Exception ex) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(ApiResponse.fail("WORKLOAD_SCORE_UNAVAILABLE", "업무 편중 점수를 조회하지 못했습니다."));
+        }
     }
 
     @Operation(summary = "마일스톤 생성", description = "프로젝트에 새 마일스톤을 추가한다.")
