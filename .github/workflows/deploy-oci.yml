@@ -29,7 +29,32 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             cd App
+            test -f .env
+            # Compose가 dotenv를 직접 파싱하게 하며, required Redis ACL 변수 누락 시 기동 전에 실패한다.
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+            internal_ready=0
+            for attempt in $(seq 1 30); do
+              if docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
+                   sh -c "REDISCLI_AUTH=\"\$REDIS_ADMIN_PASSWORD\" redis-cli --raw --user admin ping" \
+                   2>/dev/null | grep -qx PONG \
+                && curl -fsS -m 10 http://127.0.0.1:8000/api/v1/health >/dev/null \
+                && curl -fsS -m 10 http://127.0.0.1:8080/api/v1/health >/dev/null \
+                && docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
+                   sh -c "REDISCLI_AUTH=\"\$REDIS_ADMIN_PASSWORD\" redis-cli --raw --user admin XINFO GROUPS meeting-analysis" \
+                   2>/dev/null | grep -qx meeting-analysis-workers; then
+                echo "OCI internal Redis/FastAPI/Spring/queue readiness passed (attempt ${attempt})"
+                internal_ready=1
+                break
+              fi
+              echo "OCI internal readiness pending (attempt ${attempt})"
+              sleep 5
+            done
+            if [ "$internal_ready" -ne 1 ]; then
+              echo "OCI internal readiness failed"
+              exit 1
+            fi
           '
 
       - name: Health check
@@ -62,7 +87,21 @@ jobs:
         run: |
           ssh -i ~/.ssh/oci_deploy_key "${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }}" '
             set -e
-            cd /home/ubuntu/work-flow
+            cd /home/ubuntu/work-flow/App
+            queue_length=unavailable
+            queue_pending=unavailable
+            queue_length=$(docker exec workflow-redis \
+              sh -c "REDISCLI_AUTH=\"\$REDIS_ADMIN_PASSWORD\" redis-cli --raw --user admin XLEN meeting-analysis" \
+              2>/dev/null || printf unavailable)
+            queue_pending=$(docker exec workflow-redis \
+              sh -c "REDISCLI_AUTH=\"\$REDIS_ADMIN_PASSWORD\" redis-cli --raw --user admin XPENDING meeting-analysis meeting-analysis-workers" \
+              2>/dev/null | sed -n "1p" || printf unavailable)
+            [ -n "$queue_length" ] || queue_length=unavailable
+            [ -n "$queue_pending" ] || queue_pending=unavailable
+            echo "Redis queue before rollback: length=${queue_length}, pending=${queue_pending}"
+            echo "WARNING: 이전 코드는 Redis Stream을 drain할 수 없습니다. 처리 중 작업은 운영자가 확인해야 합니다."
+
+            cd ..
             echo "rolling back to $(git rev-parse deploy-previous)"
             git reset --hard deploy-previous
             cd App

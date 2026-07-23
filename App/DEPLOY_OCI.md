@@ -45,7 +45,7 @@ sudo netfilter-persistent save     # 재부팅 후에도 유지
 
 > Docker가 publish한 포트는 nat/FORWARD 체인으로 처리돼 **INPUT 규칙을 우회한다.**
 > 그래서 위 규칙은 nginx 노출용일 뿐, DB 보호 수단이 아니다. DB·Redis·Kafka는
-> `docker-compose.prod.yml`이 `127.0.0.1`에만 바인딩해서 막는다.
+> `docker-compose.prod.yml`이 외부 게시를 제거하거나 `127.0.0.1`에만 바인딩해서 막는다.
 
 ## 4. Docker 설치
 
@@ -79,6 +79,9 @@ cp .env.example .env
 ```bash
 POSTGRES_PASSWORD=<길고 무작위한 값>          # 기본값 root 절대 금지
 JWT_SECRET=<32바이트 이상 무작위 문자열>
+REDIS_ADMIN_PASSWORD=<32~128자 영숫자·밑줄·하이픈>
+REDIS_SPRING_PASSWORD=<위와 다른 32~128자 값>
+REDIS_FASTAPI_PASSWORD=<위 두 값과 다른 32~128자 값>
 GOOGLE_CLIENT_ID=<구글 콘솔 값>
 GOOGLE_CLIENT_SECRET=<구글 콘솔 값>
 GOOGLE_REDIRECT_URI=https://<도메인>/api/v1/auth/google/callback
@@ -91,6 +94,25 @@ WORKFLOW_CORS_ORIGINS=https://<도메인>
 ```bash
 openssl rand -base64 36
 ```
+
+Redis ACL 비밀번호는 특수문자 제한이 있으므로 각각 `openssl rand -hex 32`로 생성한다.
+세 값 중 하나라도 비어 있으면 운영 Compose와 배포 workflow가 즉시 실패한다.
+
+### 이전에 노출된 자격 증명 회전
+
+이 저장소나 CI 로그, 채팅, 보고서에 한 번이라도 값이 노출됐던 자격 증명은 배포 전에
+**모두 폐기하고 새 값으로 회전해야 한다.** 기존 값을 재사용하거나 이 문서에 실제 값을 기록하지 않는다.
+
+- Hugging Face: `HF_TOKEN`, `HUGGINGFACEHUB_API_TOKEN`
+- LangSmith: `LANGSMITH_API_KEY`
+- Google OAuth: `GOOGLE_CLIENT_SECRET`
+- 내부 API: `RAG_INTERNAL_API_KEY`
+- DB: `POSTGRES_PASSWORD`, `SPRING_DATASOURCE_PASSWORD`, `DATABASE_URL`에 포함된 비밀번호
+- 애플리케이션 서명: `JWT_SECRET`
+- Redis ACL: `REDIS_ADMIN_PASSWORD`, `REDIS_SPRING_PASSWORD`, `REDIS_FASTAPI_PASSWORD`
+
+각 공급자 콘솔에서 기존 토큰을 먼저 revoke한 뒤 OCI의 `.env`만 갱신한다. `.env`의 값,
+토큰 일부, 해시를 터미널 출력이나 작업 기록에 붙여 넣지 않는다.
 
 ## 6. 구글 콘솔에 리디렉션 URI 등록
 
@@ -177,12 +199,155 @@ curl -fsS https://<도메인>/api/v1/health        # 200
 curl -o /dev/null -w '%{http_code}\n' https://<도메인>/api/v1/auth/dev-login/1
 curl -o /dev/null -w '%{http_code}\n' https://<도메인>/swagger-ui/index.html
 
-# 외부에서 내부 포트가 안 보여야 정상 (전부 타임아웃/거부)
-nc -zv <도메인> 5432
-nc -zv <도메인> 8080
+# 외부에서 내부 포트가 안 보여야 정상 (모두 타임아웃/거부)
+for port in 5432 6379 9092 8000 8080; do
+  nc -zvw3 <도메인> "$port" && echo "UNEXPECTED OPEN: $port" && exit 1
+done
 ```
 
 브라우저에서 구글 로그인 → 보드 진입까지 확인한다.
+
+### Redis AOF·ACL·queue readiness
+
+OCI의 `App` 디렉터리에서 실행한다. 실제 비밀번호를 출력하지 않으며 `set -x`를 사용하지 않는다.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
+  sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin ping'
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
+  sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin CONFIG GET appendonly appendfsync maxmemory-policy'
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
+  sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin XINFO GROUPS meeting-analysis' \
+  | grep -qx meeting-analysis-workers
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis sh -ec '
+  spring() { REDISCLI_AUTH="$REDIS_SPRING_PASSWORD" redis-cli --raw --user spring "$@"; }
+  fastapi() { REDISCLI_AUTH="$REDIS_FASTAPI_PASSWORD" redis-cli --raw --user fastapi "$@"; }
+  default_denied=$(redis-cli --raw ping 2>&1 || true)
+  case "$default_denied" in *NOAUTH*) ;; *) exit 1 ;; esac
+  spring ping >/dev/null
+  spring_denied=$(spring get meeting_analysis:acl-runbook 2>&1 || true)
+  case "$spring_denied" in *NOPERM*) ;; *) exit 1 ;; esac
+  fastapi set meeting_analysis:acl-runbook fixture >/dev/null
+  fastapi del meeting_analysis:acl-runbook >/dev/null
+  fastapi_denied=$(fastapi xlen meeting-analysis 2>&1 || true)
+  case "$fastapi_denied" in *NOPERM*) ;; *) exit 1 ;; esac
+'
+curl -fsS http://127.0.0.1:8000/api/v1/health >/dev/null
+curl -fsS http://127.0.0.1:8080/api/v1/health >/dev/null
+```
+
+`appendonly=yes`, `appendfsync=everysec`, `maxmemory-policy=noeviction`이어야 한다. `ACL LIST`은
+비밀번호 해시를 포함할 수 있으므로 배포 로그나 보고서에 출력하지 않는다.
+
+### Spring 강제 종료 후 pending 복구
+
+1. UI에서 테스트 회의록을 업로드하고 반환된 ID를 `MEETING_ID`로 기록한다.
+2. 아래 명령의 `XPENDING` 첫 줄이 1 이상일 때 Spring 컨테이너를 강제 종료한다. 명령은
+   메시지 ID·payload를 출력하지 않고 pending 개수만 출력한다.
+3. Spring을 다시 시작한 뒤 상태가 `completed` 또는 `failed`가 되고 pending 개수가 0인지 확인한다.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
+  sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin XPENDING meeting-analysis meeting-analysis-workers' \
+  | sed -n '1p'
+docker kill workflow-backend-spring
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d backend-spring
+spring_ready=0
+for attempt in $(seq 1 30); do
+  if curl -fsS http://127.0.0.1:8080/api/v1/health >/dev/null; then
+    spring_ready=1
+    break
+  fi
+  sleep 5
+done
+test "$spring_ready" = 1
+pending_after=$(docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
+  sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin XPENDING meeting-analysis meeting-analysis-workers' \
+  | sed -n '1p')
+test "$pending_after" = 0
+curl -fsS -H "Authorization: Bearer $ACCESS_TOKEN" \
+  "https://<도메인>/api/v1/projects/$PROJECT_ID/meetings/$MEETING_ID/status"
+```
+
+### Redis 컨테이너 재생성 후 AOF persistence
+
+실행 전후 `XLEN`과 `XPENDING` 첫 줄만 별도 메모하고 payload는 조회하지 않는다. 두 값이 유지되어야 한다.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml stop backend-spring
+before_length=$(docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
+  sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin XLEN meeting-analysis')
+before_pending=$(docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
+  sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin XPENDING meeting-analysis meeting-analysis-workers' \
+  | sed -n '1p')
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate redis
+redis_ready=0
+for attempt in $(seq 1 30); do
+  if docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
+      sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin ping' \
+      2>/dev/null | grep -qx PONG; then
+    redis_ready=1
+    break
+  fi
+  sleep 2
+done
+test "$redis_ready" = 1
+after_length=$(docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
+  sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin XLEN meeting-analysis')
+after_pending=$(docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T redis \
+  sh -c 'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --raw --user admin XPENDING meeting-analysis meeting-analysis-workers' \
+  | sed -n '1p')
+test "$after_length" = "$before_length"
+test "$after_pending" = "$before_pending"
+docker compose -f docker-compose.yml -f docker-compose.prod.yml restart backend-spring
+```
+
+재생성 후 Redis PING, `XLEN`, `XPENDING` 비교가 모두 통과해야 한다. named volume의 AOF가 유지되지 않으면
+추가 업로드를 중단하고 복구한다.
+
+### Redis enqueue 실패가 FAILED로 전환되는지 확인
+
+테스트 회의만 사용한다. Redis를 멈춘 상태에서 UI로 회의록을 한 건 업로드하고, 응답으로 받은 회의가
+`FAILED` 상태인지 확인한 뒤 Redis와 Spring을 복구한다. `PROCESSING`에 남으면 배포를 중단한다.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml stop redis
+# UI에서 테스트 회의 1건 업로드 후 MEETING_ID 기록
+curl -fsS -H "Authorization: Bearer $ACCESS_TOKEN" \
+  "https://<도메인>/api/v1/projects/$PROJECT_ID/meetings/$MEETING_ID/status"
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d redis
+docker compose -f docker-compose.yml -f docker-compose.prod.yml restart backend-spring
+```
+
+### 회의 분석·RAG cache hit
+
+- 회의 분석: 민감하지 않은 fixture를 동일 입력으로 두 번 분석한다. 두 응답이 같고 두 번째 응답 시간이
+  짧아지며 admin 계정으로 key 이름만 조회했을 때 `meeting_analysis:` key가 생성되는지 확인한다.
+- RAG: 같은 프로젝트·사용자 범위에서 완전히 같은 질문을 두 번 요청한다. 응답과 source가 같고 두 번째
+  시간이 짧아지며 `rag_answer:` key가 생성되는지 확인한다.
+- 브라우저 Network timing이나 `curl -w '%{time_total}'`만 기록한다. 질문, 회의 원문, 응답 payload는
+  CI 로그나 보고서에 남기지 않는다.
+
+### payload 로그 유출 검사
+
+테스트 fixture에 민감하지 않은 고유 sentinel을 넣고 요청한 뒤, 일치 여부만 검사한다. `grep` 결과 자체를
+출력하면 원문이 함께 노출될 수 있으므로 반드시 `-q`와 출력 리다이렉션을 사용한다.
+
+```bash
+if docker compose -f docker-compose.yml -f docker-compose.prod.yml logs backend-spring backend-fastapi 2>&1 \
+  | grep -Fq 'OCI_PAYLOAD_SENTINEL_DO_NOT_LOG'; then
+  echo "WARNING: payload marker found in logs"
+  exit 1
+fi
+echo "payload marker absent from logs"
+```
+
+### rollback 전 queue 주의
+
+이전 코드는 Redis Stream을 drain할 수 없습니다. rollback 전에 반드시 `XLEN meeting-analysis`와
+`XPENDING meeting-analysis meeting-analysis-workers`의 개수만 기록한다. 0이 아니라면 신규 업로드를
+막고 현재 버전에서 drain하거나, DB 상태를 확인해 운영자가 복구 결정을 내린 뒤 rollback한다.
 
 ## 문제 해결
 
