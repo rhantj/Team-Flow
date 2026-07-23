@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from app.main import (
     AnalyzeRequest,
     MeetingAnalysisResult,
+    _analyze_json_uncached,
     analyze_meeting,
     analyze_json,
     analyze_meeting_with_huggingface,
@@ -702,6 +703,31 @@ def test_analyze_json_falls_back_to_ollama_when_huggingface_fails(monkeypatch):
 
     assert response.status_code == 200
     mock_ollama.assert_called_once()
+
+
+def test_analyze_json_fallback_warnings_do_not_expose_exception_details(monkeypatch, caplog):
+    monkeypatch.setenv("MEETING_ANALYSIS_PROVIDER", "huggingface")
+    monkeypatch.setenv("HF_TOKEN", "configured-test-token")
+    request = AnalyzeRequest(
+        title="보안 로그 회의",
+        meeting_date="2026-07-23",
+        text="민감한 회의 원문",
+        participants=["김민준"],
+    )
+    sentinel = "https://admin:credential-sentinel@private.example/model"
+
+    with (
+        patch("app.main.analyze_meeting_with_huggingface", side_effect=RuntimeError(sentinel)),
+        patch("app.main.analyze_meeting_with_ollama", side_effect=RuntimeError(sentinel)),
+        caplog.at_level(logging.WARNING),
+    ):
+        result = _analyze_json_uncached(request)
+
+    assert result.summary
+    assert "errorType=RuntimeError" in caplog.text
+    assert "credential-sentinel" not in caplog.text
+    assert "private.example" not in caplog.text
+    assert "민감한 회의 원문" not in caplog.text
 
 
 def test_analyze_meeting_with_ollama_uses_fast_default_model_and_bounded_options(monkeypatch):

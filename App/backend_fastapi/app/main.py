@@ -236,16 +236,22 @@ def _analyze_json_uncached(request: AnalyzeRequest) -> MeetingAnalysisResult:
     if provider in {"auto", "huggingface", "hf"} and _huggingface_configured():
         try:
             return analyze_meeting_with_huggingface(request)
-        except Exception:
-            logger.exception("Hugging Face 회의록 분석 실패, Ollama/규칙 기반 분석으로 대체합니다.")
+        except Exception as exception:
+            logger.warning(
+                "Hugging Face 회의록 분석 실패, Ollama/규칙 기반 분석으로 대체합니다. errorType=%s",
+                type(exception).__name__,
+            )
     elif provider in {"huggingface", "hf"}:
         logger.warning("MEETING_ANALYSIS_PROVIDER=%s 이지만 HF_TOKEN이 없어 Ollama/규칙 기반 분석으로 대체합니다.", provider)
 
     if provider in {"auto", "huggingface", "hf", "ollama"}:
         try:
             return analyze_meeting_with_ollama(request)
-        except Exception:
-            logger.exception("Ollama 회의록 분석 실패, 규칙 기반 분석으로 대체합니다.")
+        except Exception as exception:
+            logger.warning(
+                "Ollama 회의록 분석 실패, 규칙 기반 분석으로 대체합니다. errorType=%s",
+                type(exception).__name__,
+            )
     return analyze_meeting(request)
 
 
