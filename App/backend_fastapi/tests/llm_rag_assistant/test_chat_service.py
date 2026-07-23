@@ -419,16 +419,21 @@ async def test_answer_question_cache_failures_warn_and_fail_open(
     failure_point: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    connection_detail_sentinel = "redis://fastapi:secret-password@private-redis:6379/0"
     cache = _FakeAsyncRedis()
     key = _answer_cache_key(5, None, "로그 금지 질문")
     if failure_point == "delete":
         cache.store[key] = "invalid-json"
 
     if failure_point != "client":
-        failing_method = AsyncMock(side_effect=ConnectionError(f"{failure_point} failed"))
+        failing_method = AsyncMock(side_effect=ConnectionError(connection_detail_sentinel))
         setattr(cache, failure_point, failing_method)
 
-    client = Mock(side_effect=ConnectionError("client failed")) if failure_point == "client" else Mock(return_value=cache)
+    client = (
+        Mock(side_effect=ConnectionError(connection_detail_sentinel))
+        if failure_point == "client"
+        else Mock(return_value=cache)
+    )
 
     with (
         caplog.at_level(logging.WARNING),
@@ -452,3 +457,4 @@ async def test_answer_question_cache_failures_warn_and_fail_open(
     assert "RAG 답변 캐시" in caplog.text
     assert "로그 금지 질문" not in caplog.text
     assert "정상 답변" not in caplog.text
+    assert connection_detail_sentinel not in caplog.text

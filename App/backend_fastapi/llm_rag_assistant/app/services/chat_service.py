@@ -72,7 +72,7 @@ async def _read_cached_response(redis_client, cache_key: str) -> RagQueryRespons
     try:
         cached = await redis_client.get(cache_key)
     except Exception:
-        logger.warning("RAG 답변 캐시 조회 실패, 캐시 없이 진행합니다.", exc_info=True)
+        logger.warning("RAG 답변 캐시 조회 실패, 캐시 없이 진행합니다.")
         return None
     if cached is None:
         return None
@@ -85,7 +85,7 @@ async def _read_cached_response(redis_client, cache_key: str) -> RagQueryRespons
     try:
         await redis_client.delete(cache_key)
     except Exception:
-        logger.warning("RAG 답변 손상 캐시 삭제 실패, 캐시 없이 진행합니다.", exc_info=True)
+        logger.warning("RAG 답변 손상 캐시 삭제 실패, 캐시 없이 진행합니다.")
     return None
 
 
@@ -97,7 +97,7 @@ async def _write_cached_response(redis_client, cache_key: str, response: RagQuer
             ex=_ANSWER_CACHE_TTL_SECONDS,
         )
     except Exception:
-        logger.warning("RAG 답변 캐시 저장 실패, 결과는 정상 반환합니다.", exc_info=True)
+        logger.warning("RAG 답변 캐시 저장 실패, 결과는 정상 반환합니다.")
 
 
 async def answer_question(pool, project_id: int, question: str, user_id: int | None = None) -> RagQueryResponse:
@@ -107,7 +107,7 @@ async def answer_question(pool, project_id: int, question: str, user_id: int | N
     try:
         redis_client = get_async_redis_client()
     except Exception:
-        logger.warning("RAG 답변 캐시 클라이언트 생성 실패, 캐시 없이 진행합니다.", exc_info=True)
+        logger.warning("RAG 답변 캐시 클라이언트 생성 실패, 캐시 없이 진행합니다.")
         redis_client = None
 
     if redis_client is not None:
