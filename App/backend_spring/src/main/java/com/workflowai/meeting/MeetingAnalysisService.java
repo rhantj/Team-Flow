@@ -414,6 +414,13 @@ public class MeetingAnalysisService {
                 registeredCount++;
             }
         }
+        notificationService.notifyActorAndCounterpart(
+            registeredBy, "MEETING_TASKS_REGISTERED", "역할분배 및 업무등록이 완료되었습니다",
+            "'" + meeting.getTitle() + "' 회의록의 역할분배 및 업무등록이 완료되었습니다.",
+            meeting.getUploadedBy(), "MEETING_TASKS_REGISTERED_NOTIFY_MEMBER", "역할분배가 완료되었습니다",
+            "'" + meeting.getTitle() + "' 회의록의 역할분배가 완료되었습니다. 확인해주세요.",
+            "meeting", meetingDbId
+        );
         return new TaskRegisterResponse(meetingId, registeredCount, "REGISTERED");
     }
 

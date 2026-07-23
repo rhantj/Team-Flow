@@ -521,6 +521,32 @@ class MeetingAnalysisServiceTest {
     }
 
     @Test
+    void registerTasksNotifiesLeaderAndUploaderWhenDifferent() {
+        UserPrincipal leader = new UserPrincipal(99L, "leader@example.com", "김팀장");
+        SecurityContextHolder.getContext().setAuthentication(
+            new UsernamePasswordAuthenticationToken(leader, null, List.of())
+        );
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(projectMemberRepository.existsByProjectIdAndUserId(1L, 99L)).thenReturn(true);
+        Meeting meeting = new Meeting(1L, "정기회의", "document", null, "completed", LocalDate.now(), "정기회의", "a.txt", 10L, 10L);
+        when(meetingRepository.findByIdAndProjectId(5L, 1L)).thenReturn(Optional.of(meeting));
+        when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(taskRepository.findTopByProjectIdAndStatusOrderByPositionDesc(any(), any())).thenReturn(Optional.empty());
+        MeetingAnalysisService service = newService();
+
+        TaskRegisterRequest request = new TaskRegisterRequest(List.of(
+            new MeetingTodo("업무1", "설명", null, null, null, "MEDIUM", "ETC", true, "")
+        ));
+        service.registerTasks("demo-project", "5", request);
+
+        verify(notificationService).notifyActorAndCounterpart(
+            eq(99L), eq("MEETING_TASKS_REGISTERED"), any(), any(),
+            eq(10L), eq("MEETING_TASKS_REGISTERED_NOTIFY_MEMBER"), any(), any(),
+            eq("meeting"), eq(5L)
+        );
+    }
+
+    @Test
     void confirmSaveMarksSavedAtAndNotifiesActorAndLeader() {
         UserPrincipal uploader = new UserPrincipal(10L, "uploader@example.com", "박지수");
         SecurityContextHolder.getContext().setAuthentication(
