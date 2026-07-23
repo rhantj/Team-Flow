@@ -16,7 +16,33 @@ _SYSTEM_PROMPT = (
 # 담당 청크만 넘긴다. 그런데 청크 본문은 업무 제목뿐이라 담당자가 누구인지 드러나지 않아,
 # 이 사실을 알려주지 않으면 모델이 "질문자 본인 것인지 알 수 없다"고 판단해 담당 업무가
 # 있는데도 '근거 없음'으로 답한다(실측: 청크 41개 보유 사용자도 근거 없음).
-_PERSONAL_CONTEXT_NOTICE = "아래 자료는 모두 질문자 본인이 담당자로 지정된 항목입니다."
+#
+# "담당자로 지정된 항목입니다" 수준의 서술로는 부족했다. 모델이 이를 단정으로 받아들이지 않고
+# "컨텍스트만으로는 누구 업무인지 불명확하다"며 계속 거부했다(운영 데이터 실측 1/4).
+# 필터링이 이미 끝났다는 점과 본문에 담당자 이름이 없어도 무방하다는 점을 명시하자 4/4가 됐다.
+_PERSONAL_CONTEXT_NOTICE = (
+    "아래 자료는 시스템이 질문자 본인의 담당자 ID로 필터링해 가져온 것입니다. "
+    "따라서 아래 항목은 전부 질문자 본인의 담당 업무임이 이미 확정되어 있습니다. "
+    "본문에 담당자 이름이 없더라도 본인 업무로 간주하고 답하세요."
+)
+
+# 기본값(미지정)으로 두면 같은 질문에 답변 형식이 매번 달라진다. 사실 조회형 응답이라
+# 창의성이 필요 없고, 캐시된 답변과 재생성된 답변이 크게 달라지지 않는 편이 낫다.
+# 낮추는 것만으로는 거부 응답을 고치지 못한다 - 그건 위 안내문이 담당한다.
+_GENERATION_TEMPERATURE = 0.1
+
+
+# 청크 본문에는 제목·설명만 있어 마감일 질문에 답할 수 없다. task_facts_service가 붙인
+# 사실값을 출처 줄 끝에 덧붙인다. 값이 없는 항목은 표시하지 않는다 - "상태: None"처럼 나가면
+# 모델이 None을 상태값 자체로 읽는다.
+_FACT_LABELS = (("due_date", "마감"), ("status", "상태"), ("priority", "우선순위"))
+
+
+def _format_facts(facts: dict | None) -> str:
+    if not facts:
+        return ""
+    parts = [f"{label}: {facts[key]}" for key, label in _FACT_LABELS if facts.get(key) is not None]
+    return f" ({', '.join(parts)})" if parts else ""
 
 
 class RagConfigurationError(RuntimeError):
@@ -38,6 +64,7 @@ async def generate_answer(question: str, sources: list[dict], is_personal: bool 
     else:
         context = "\n\n".join(
             f"[출처 {i + 1} - {s['source_type']}#{s['source_id']}] {s['content']}"
+            f"{_format_facts(s.get('facts'))}"
             for i, s in enumerate(sources)
         )
 
@@ -47,7 +74,9 @@ async def generate_answer(question: str, sources: list[dict], is_personal: bool 
         context = f"{_PERSONAL_CONTEXT_NOTICE}\n\n{context}"
 
     llm = HuggingFaceEndpoint(
-        repo_id=settings.hf_rag_generation_model, huggingfacehub_api_token=settings.hf_token
+        repo_id=settings.hf_rag_generation_model,
+        huggingfacehub_api_token=settings.hf_token,
+        temperature=_GENERATION_TEMPERATURE,
     )
     chat_model = ChatHuggingFace(llm=llm)
     response = await chat_model.ainvoke(

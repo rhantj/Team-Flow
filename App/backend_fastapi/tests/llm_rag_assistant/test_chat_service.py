@@ -6,7 +6,12 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from llm_rag_assistant.app.schema.chat_schema import RagQueryResponse, RagSource
-from llm_rag_assistant.app.services.chat_service import _answer_cache_key, _is_personal_intent, answer_question
+from llm_rag_assistant.app.services.chat_service import (
+    _ANSWER_CACHE_SCHEMA_VERSION,
+    _answer_cache_key,
+    _is_personal_intent,
+    answer_question,
+)
 
 
 class _FakeAsyncRedis:
@@ -543,3 +548,76 @@ async def test_answer_question_cache_failures_warn_and_fail_open(
     assert "로그 금지 질문" not in caplog.text
     assert "정상 답변" not in caplog.text
     assert connection_detail_sentinel not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_answer_question_enriches_search_results_with_facts() -> None:
+    """검색 결과를 사실 조회로 보강한 뒤 생성에 넘겨야 마감일 질문에 답할 수 있다."""
+    pool = object()
+    rows = [{"source_type": "task", "source_id": 12, "content": "로그인 API 구현", "similarity": 0.9}]
+    enriched = [{**rows[0], "facts": {"due_date": "2026-08-01", "status": "진행중", "priority": "high"}}]
+
+    with (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=rows),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.enrich_with_facts",
+            new=AsyncMock(return_value=enriched),
+        ) as mock_enrich,
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="2026-08-01 마감입니다"),
+        ) as mock_generate,
+    ):
+        result = await answer_question(pool, project_id=5, question="로그인 API 마감일은?")
+
+    mock_enrich.assert_awaited_once_with(pool, 5, rows)
+    assert mock_generate.await_args.args[1] == enriched
+    assert result.answer == "2026-08-01 마감입니다"
+
+
+@pytest.mark.asyncio
+async def test_answer_question_snippet_uses_original_content_not_facts() -> None:
+    """출처 스니펫은 청크 원문 기준이어야 한다. 사실 문자열이 섞이면 출처 표시가 오염된다."""
+    enriched = [
+        {
+            "source_type": "task",
+            "source_id": 12,
+            "content": "로그인 API 구현",
+            "similarity": 0.9,
+            "facts": {"due_date": "2026-08-01", "status": "진행중", "priority": "high"},
+        }
+    ]
+
+    with (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=enriched),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.enrich_with_facts",
+            new=AsyncMock(return_value=enriched),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="답변"),
+        ),
+    ):
+        result = await answer_question(object(), project_id=5, question="질문")
+
+    assert result.sources[0].content_snippet == "로그인 API 구현"
+
+
+def test_answer_cache_schema_version_bumped_for_facts_in_prompt() -> None:
+    """프롬프트 구성이 바뀌었으므로 버전을 올리지 않으면 배포 후 30분간 이전 답변이 반환된다."""
+    assert _ANSWER_CACHE_SCHEMA_VERSION == "v4"
