@@ -123,11 +123,11 @@ public class MeetingAnalysisQueueWorker implements ApplicationRunner {
         }
     }
 
-    boolean isReady() {
+    public boolean isReady() {
         return groupInitialized && running && isWorkerAlive();
     }
 
-    boolean isWorkerAlive() {
+    public boolean isWorkerAlive() {
         Thread thread = workerThread;
         return thread != null && thread.isAlive();
     }
