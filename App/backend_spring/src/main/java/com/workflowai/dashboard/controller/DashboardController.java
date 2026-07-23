@@ -2,12 +2,15 @@ package com.workflowai.dashboard.controller;
 
 import com.workflowai.common.ApiResponse;
 import com.workflowai.dashboard.DTO.ActivityItemDto;
+import com.workflowai.dashboard.DTO.CreateMilestoneRequest;
 import com.workflowai.dashboard.DTO.DashboardTaskDto;
 import com.workflowai.dashboard.DTO.DashboardSummaryResponse;
 import com.workflowai.dashboard.DTO.DelayRiskDto;
+import com.workflowai.dashboard.DTO.MilestoneProgressDto;
 import com.workflowai.dashboard.DTO.ProgressDetailResponse;
 import com.workflowai.dashboard.service.DashboardService;
 import com.workflowai.security.CurrentUser;
+import jakarta.validation.Valid;
 import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -16,6 +19,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -71,6 +75,16 @@ public class DashboardController {
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId
     ) {
         return ApiResponse.ok(dashboardService.getMyDelayRisks(projectId, CurrentUser.id()));
+    }
+
+    @Operation(summary = "마일스톤 생성", description = "프로젝트에 새 마일스톤을 추가한다.")
+    @PostMapping("/milestones")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
+    public ApiResponse<MilestoneProgressDto> createMilestone(
+        @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
+        @Valid @RequestBody CreateMilestoneRequest request
+    ) {
+        return ApiResponse.ok(dashboardService.createMilestone(projectId, request.title(), request.dueDate()));
     }
 
     @Operation(

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { AlertTriangle, Check, CheckCircle2, Clock, Layers, MessageSquare, Plus, RefreshCw, Search } from "lucide-react";
+import { AiInsightBox } from "../../../ai/components/AiInsightBox";
 import { BackBtn } from "../../../global/component/BackBtn";
 import { DetailStatCard } from "../../../global/component/DetailStatCard";
 import { PriorityBadge } from "../../../board/components/PriorityBadge";
@@ -9,15 +10,20 @@ import { useAuth } from "../../../global/hooks/useAuth";
 import { useDashboardProgress } from "../../libs/hooks/useDashboardProgress";
 import { useDashboardTasks } from "../../libs/hooks/useDashboardTasks";
 import {
+  daysSince,
   daysUntilDue,
   formatDashboardDueDate,
+  isDangerDelayRisk,
   normalizePriority,
   normalizeTaskStatus,
   sourceLabel,
   taskAssignee,
   taskSearchText,
 } from "../../libs/utils/dashboardTaskUtils";
+import type { DashboardTaskDto } from "../../libs/types/dashboard";
 import type { TaskStatus } from "../../../board/libs/types/task";
+import { TaskDetailPopup } from "../../components/TaskDetailPopup";
+import { TaskStatusPopup } from "../../components/TaskStatusPopup";
 
 const DELAY_RISK_BADGE_CLASS: Record<string, string> = {
   위험: "bg-red-100 text-red-700",
@@ -36,27 +42,38 @@ const STATUS_FILTERS: Array<{ label: string; value: TaskStatus | "all" }> = [
 export function AllTasksPage() {
   const navigate = useNavigate();
   const onBack = () => navigate("/dashboard");
-  const { currentProjectId } = useAuth();
+  const { user, currentProjectId } = useAuth();
   const { data: tasks, loading, error, refetch } = useDashboardTasks(currentProjectId);
-  const { data: progress } = useDashboardProgress(currentProjectId);
+  const { data: progress, loading: progressLoading } = useDashboardProgress(currentProjectId);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState<TaskStatus | "all">("all");
   const [sortBy, setSortBy] = useState("dueDate");
   const [selected, setSelected] = useState<string[]>([]);
+  const [showMeetingPendingOnly, setShowMeetingPendingOnly] = useState(false);
+  const [meetingBannerDismissed, setMeetingBannerDismissed] = useState(false);
+  const [detailTarget, setDetailTarget] = useState<{ task: DashboardTaskDto; focusComments: boolean } | null>(null);
+  const [statusTarget, setStatusTarget] = useState<DashboardTaskDto | null>(null);
+
+  const isMeetingGenerated = (task: DashboardTaskDto) => (task.sourceType ?? "").toUpperCase().includes("MEETING");
+  const meetingPendingTasks = useMemo(
+    () => tasks.filter(task => isMeetingGenerated(task) && normalizeTaskStatus(task.status) === "todo"),
+    [tasks]
+  );
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     const rows = tasks.filter(task => {
       const matchesStatus = filterStatus === "all" || normalizeTaskStatus(task.status) === filterStatus;
       const matchesQuery = !query || taskSearchText(task).includes(query);
-      return matchesStatus && matchesQuery;
+      const matchesMeetingPending = !showMeetingPendingOnly || (isMeetingGenerated(task) && normalizeTaskStatus(task.status) === "todo");
+      return matchesStatus && matchesQuery && matchesMeetingPending;
     });
     return [...rows].sort((a, b) => {
       if (sortBy === "status") return normalizeTaskStatus(a.status).localeCompare(normalizeTaskStatus(b.status));
       if (sortBy === "assignee") return (a.assigneeName ?? "").localeCompare(b.assigneeName ?? "");
       return (a.dueDate ?? "9999-12-31").localeCompare(b.dueDate ?? "9999-12-31");
     });
-  }, [filterStatus, search, sortBy, tasks]);
+  }, [filterStatus, search, sortBy, showMeetingPendingOnly, tasks]);
 
   const delayRiskByTaskId = useMemo(() => {
     const map = new Map<string, string>();
@@ -70,6 +87,21 @@ export function AllTasksPage() {
     if (result) return result;
     return progress?.hasPredictions ? "정상" : null;
   };
+
+  const dangerRiskTaskIds = new Set((progress?.delayRisks ?? []).filter(risk => isDangerDelayRisk(risk.result)).map(risk => risk.taskId));
+  const longestStalledDangerTask = tasks
+    .filter(task => dangerRiskTaskIds.has(task.id))
+    .reduce<{ title: string; days: number } | null>((longest, task) => {
+      const days = daysSince(task.updatedAt) ?? 0;
+      return !longest || days > longest.days ? { title: task.title, days } : longest;
+    }, null);
+  const aiInsightReady = !loading && !progressLoading;
+  const aiInsightPrompt = longestStalledDangerTask
+    ? `사용자의 지연 위험도 '위험' 업무 중, 가장 현재 상태 체류시간이 긴 업무인 '${longestStalledDangerTask.title}'에 대해 먼저 처리할 일과 다음 액션을 알려줘.`
+    : "";
+  const aiInsightFallback = longestStalledDangerTask
+    ? `${user?.name ?? "담당자"}님의 ${longestStalledDangerTask.title}이 지연 위험입니다.`
+    : "현재 지연 위험('위험') 업무가 없습니다.";
 
   const counts = {
     total: tasks.length,
@@ -89,7 +121,7 @@ export function AllTasksPage() {
         <div>
           <BackBtn onBack={onBack} />
           <h1 className="text-xl font-bold text-foreground">전체 업무 관리</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Supabase에 저장된 프로젝트 업무를 조회합니다.</p>
+          <p className="text-sm text-muted-foreground mt-0.5">프로젝트의 모든 To-Do를 확인하고 팀원에게 배정·관리합니다.</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => refetch()} className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
@@ -109,6 +141,14 @@ export function AllTasksPage() {
         <DetailStatCard label="진행 중" value={loading ? "..." : counts.inProgress} sub="활성 업무" color="#3B5BDB" icon={Clock} />
         <DetailStatCard label="블로커" value={loading ? "..." : counts.blocked} sub="즉시 해결 필요" color="#EF4444" icon={AlertTriangle} />
       </div>
+
+      <AiInsightBox
+        projectId={currentProjectId}
+        prompt={aiInsightPrompt}
+        ready={aiInsightReady && longestStalledDangerTask != null}
+        fallbackText={aiInsightFallback}
+        formatAnswer={answer => `${aiInsightFallback} ${answer}`}
+      />
 
       <div className="flex items-center gap-2 flex-wrap">
         <div className="relative">
@@ -135,6 +175,20 @@ export function AllTasksPage() {
           </div>
         )}
       </div>
+
+      {!meetingBannerDismissed && meetingPendingTasks.length > 0 && (
+        <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-lg border border-amber-200 bg-amber-50">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+          <span className="text-xs text-amber-800 flex-1">회의록 AI가 생성한 업무 {meetingPendingTasks.length}개가 대기중입니다.</span>
+          <button onClick={() => setShowMeetingPendingOnly(true)} className="text-xs font-semibold text-amber-700 underline hover:text-amber-800">승인 검토</button>
+          <button onClick={() => setMeetingBannerDismissed(true)} className="text-xs font-medium text-muted-foreground hover:text-foreground">반려</button>
+        </div>
+      )}
+      {showMeetingPendingOnly && (
+        <button onClick={() => setShowMeetingPendingOnly(false)} className="text-[11px] font-medium text-blue-600 hover:text-blue-700">
+          ← 회의록 AI 대기 업무 필터 해제
+        </button>
+      )}
 
       <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
         <table className="w-full text-sm min-w-[1000px]">
@@ -168,7 +222,9 @@ export function AllTasksPage() {
                   <td className="px-3 py-3 font-mono text-[10px] text-muted-foreground whitespace-nowrap">{task.id}</td>
                   <td className="px-3 py-3 max-w-[240px]">
                     <div className="text-xs font-medium text-foreground truncate">{task.title}</div>
-                    {task.description && <div className="text-[10px] text-muted-foreground truncate mt-0.5">{task.description}</div>}
+                    {isMeetingGenerated(task) && status === "todo" && (
+                      <div className="text-[10px] text-purple-600 mt-0.5">AI 생성 · 승인 대기</div>
+                    )}
                   </td>
                   <td className="px-3 py-3">
                     <div className="flex items-center gap-1.5">
@@ -200,8 +256,9 @@ export function AllTasksPage() {
                   </td>
                   <td className="px-3 py-3">
                     <div className="flex items-center gap-2 whitespace-nowrap">
-                      <button onClick={() => navigate("/board")} className="text-[11px] font-medium text-blue-600 hover:text-blue-700">보드에서 보기</button>
-                      <button className="p-1 rounded hover:bg-muted transition-colors">
+                      <button onClick={() => setDetailTarget({ task, focusComments: false })} className="text-[11px] font-medium text-blue-600 hover:text-blue-700">상세</button>
+                      <button onClick={() => setStatusTarget(task)} className="text-[11px] font-medium text-blue-600 hover:text-blue-700">상태 변경</button>
+                      <button onClick={() => setDetailTarget({ task, focusComments: true })} className="p-1 rounded hover:bg-muted transition-colors">
                         <MessageSquare className="w-3 h-3 text-muted-foreground" />
                       </button>
                     </div>
@@ -221,6 +278,24 @@ export function AllTasksPage() {
           <span className="text-xs text-muted-foreground">Supabase 실시간 조회 결과</span>
         </div>
       </div>
+
+      {detailTarget && currentProjectId != null && (
+        <TaskDetailPopup
+          task={detailTarget.task}
+          projectId={currentProjectId}
+          focusComments={detailTarget.focusComments}
+          onClose={() => setDetailTarget(null)}
+        />
+      )}
+      {statusTarget && currentProjectId != null && (
+        <TaskStatusPopup
+          task={statusTarget}
+          tasks={tasks}
+          projectId={currentProjectId}
+          onClose={() => setStatusTarget(null)}
+          onChanged={() => { setStatusTarget(null); refetch(); }}
+        />
+      )}
     </div>
   );
 }

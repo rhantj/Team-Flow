@@ -59,3 +59,35 @@ def test_assignee_sync_endpoint_calls_sync_assignee_with_request_fields() -> Non
     assert response.status_code == 204
     _, called_args, _ = mock_sync.mock_calls[0]
     assert called_args[1:] == (1, "task", 7, 99)
+
+
+def test_delete_source_endpoint_removes_matching_rag_source() -> None:
+    _override_pool()
+
+    with patch(
+        "llm_rag_assistant.app.routers.chat_router.delete_source",
+        new=AsyncMock(return_value=None),
+    ) as mock_delete:
+        client = TestClient(app)
+        response = client.delete("/ai/rag/projects/1/sources/task/7")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 204
+    _, called_args, _ = mock_delete.mock_calls[0]
+    assert called_args[1:] == (1, "task", 7)
+
+
+def test_delete_project_sources_endpoint_removes_all_project_rag_data() -> None:
+    _override_pool()
+
+    with patch(
+        "llm_rag_assistant.app.routers.chat_router.delete_project_sources",
+        new=AsyncMock(return_value=None),
+    ) as mock_delete:
+        client = TestClient(app)
+        response = client.delete("/ai/rag/projects/1/sources")
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 204
+    _, called_args, _ = mock_delete.mock_calls[0]
+    assert called_args[1:] == (1,)

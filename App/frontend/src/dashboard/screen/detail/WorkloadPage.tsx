@@ -29,6 +29,8 @@ export function WorkloadPage() {
   const memberCount = workload.length;
   const assignedTotal = workload.reduce((sum, member) => sum + member.total, 0);
   const averageTasks = memberCount === 0 ? 0 : Math.round((assignedTotal / memberCount) * 10) / 10;
+  const assignedInProgressTotal = workload.reduce((sum, member) => sum + member.inProgress, 0);
+  const averageInProgressTasks = memberCount === 0 ? 0 : Math.round((assignedInProgressTotal / memberCount) * 10) / 10;
   const maxWorkload = workload.reduce((max, member) => Math.max(max, member.total), 0);
   const overloaded = workload.filter(member => member.blocked > 0 || member.total >= Math.max(averageTasks * 1.5, averageTasks + 2));
   const balanceLabel = overloaded.length === 0 ? "양호" : "점검 필요";
@@ -50,7 +52,7 @@ export function WorkloadPage() {
         <div>
           <BackBtn onBack={onBack} />
           <h1 className="text-xl font-bold text-foreground">팀원별 업무량</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Supabase 프로젝트 멤버와 업무 배정 현황을 기준으로 집계합니다.</p>
+          <p className="text-sm text-muted-foreground mt-0.5">팀원별 업무 분배 현황을 파악하고 과부하 위험을 확인합니다.</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => refetch()} className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><RefreshCw className="w-3.5 h-3.5" />새로고침</button>
@@ -62,7 +64,7 @@ export function WorkloadPage() {
 
       <div className="grid grid-cols-4 gap-3">
         <DetailStatCard label="팀원 수" value={summaryLoading ? "..." : `${memberCount}명`} sub="프로젝트 멤버" color="#3B5BDB" icon={Users} />
-        <DetailStatCard label="1인 평균 업무" value={summaryLoading ? "..." : `${averageTasks}개`} sub="전체 배정 기준" color="#7048E8" icon={Layers} />
+        <DetailStatCard label="1인 평균 업무" value={summaryLoading ? "..." : `${averageInProgressTasks}개`} sub="진행 중 배정 기준" color="#7048E8" icon={Layers} />
         <DetailStatCard label="점검 필요" value={summaryLoading ? "..." : `${overloaded.length}명`} sub="블로커 또는 과부하" color="#EF4444" icon={AlertTriangle} />
         <DetailStatCard label="업무 균형" value={summaryLoading ? "..." : balanceLabel} sub="실제 배정 기준" color="#F59E0B" icon={BarChart3} />
       </div>

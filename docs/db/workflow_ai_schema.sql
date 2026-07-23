@@ -251,6 +251,7 @@ CREATE TABLE meetings (
     file_path           VARCHAR(500),
     transcript          TEXT,
     analysis_status     VARCHAR(20) NOT NULL DEFAULT 'pending',
+    analysis_job_id     UUID,
     created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     meeting_date        DATE,
     meeting_type        VARCHAR(50),
@@ -263,6 +264,7 @@ CREATE TABLE meetings (
 COMMENT ON TABLE meetings IS '회의록/녹음 업로드';
 COMMENT ON COLUMN meetings.file_type IS 'document/audio/video';
 COMMENT ON COLUMN meetings.analysis_status IS '비동기 분석 상태';
+COMMENT ON COLUMN meetings.analysis_job_id IS '현재 Redis Stream 분석 작업의 세대 식별자';
 
 CREATE INDEX idx_meetings_project_id ON meetings (project_id);
 

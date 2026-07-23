@@ -3,6 +3,7 @@ from __future__ import annotations
 import aiohttp
 from fastapi import APIRouter, Depends, HTTPException
 from requests.exceptions import HTTPError as RequestsHTTPError
+from typing import Literal
 
 from core.db import get_pool
 from llm_rag_assistant.app.schema.chat_schema import (
@@ -15,7 +16,12 @@ from llm_rag_assistant.app.schema.chat_schema import (
 from llm_rag_assistant.app.security import verify_internal_api_key
 from llm_rag_assistant.app.services.chat_service import answer_question
 from llm_rag_assistant.app.services.generation_service import RagConfigurationError
-from llm_rag_assistant.app.services.ingestion_service import ingest_content, sync_assignee
+from llm_rag_assistant.app.services.ingestion_service import (
+    delete_project_sources,
+    delete_source,
+    ingest_content,
+    sync_assignee,
+)
 
 router = APIRouter(prefix="/ai/rag", tags=["rag"], dependencies=[Depends(verify_internal_api_key)])
 
@@ -32,6 +38,21 @@ async def assignee_sync(request: RagAssigneeSyncRequest, pool=Depends(get_pool))
     # 담당자가 재배정된 뒤 기존 청크의 assignee_id가 낡은 채로 남아 개인화 검색이
     # 옛 담당자에게 계속 걸리지 않도록, 콘텐츠/임베딩 재계산 없이 메타데이터만 갱신한다.
     await sync_assignee(pool, request.project_id, request.source_type, request.source_id, request.assignee_id)
+
+
+@router.delete("/projects/{project_id}/sources/{source_type}/{source_id}", status_code=204)
+async def remove_source(
+    project_id: int,
+    source_type: Literal["meeting", "task", "action_item"],
+    source_id: int,
+    pool=Depends(get_pool),
+) -> None:
+    await delete_source(pool, project_id, source_type, source_id)
+
+
+@router.delete("/projects/{project_id}/sources", status_code=204)
+async def remove_project_sources(project_id: int, pool=Depends(get_pool)) -> None:
+    await delete_project_sources(pool, project_id)
 
 
 @router.post("/query", response_model=RagQueryResponse)

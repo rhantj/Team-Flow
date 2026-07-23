@@ -3,7 +3,6 @@ package com.workflowai.task;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -183,10 +182,8 @@ class TaskControllerUpdateTest {
                 .content("{\"assigneeId\":\"5\"}"))
             .andExpect(status().isOk());
 
-        // existingTask()는 id를 명시적으로 설정하지 않는 픽스처라 getId()가 null이다
-        // (Task 생성자의 첫 인자는 projectId). 이 테스트는 task.getId() 값 자체가 아니라
-        // syncAssigneeBestEffort가 새 담당자(5L)와 함께 실제로 호출되는지만 검증한다.
-        verify(ragIngestService).syncAssigneeBestEffort(eq(1L), eq("task"), isNull(), eq(5L));
+        verify(ragIngestService).recordAssigneeSyncIntent(1L, "task", 42L, 5L);
+        verify(ragIngestService).syncAssigneeBestEffort(1L, "task", 42L, 5L);
     }
 
     @Test
@@ -202,6 +199,7 @@ class TaskControllerUpdateTest {
 
         // existingTask()의 담당자는 3L
         verify(notificationService).notify(eq(3L), eq("TASK_UPDATED"), any(), any(), eq("task"), any());
+        verify(ragIngestService).ingestBestEffort(1L, "task", null, "새 제목 - 원래 설명", 3L);
     }
 
     @Test

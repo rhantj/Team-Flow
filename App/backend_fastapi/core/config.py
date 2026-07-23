@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     database_url: str
+    redis_url: str = "redis://localhost:6379/0"
+    redis_username: str | None = None
+    redis_password: str | None = None
     ollama_host: str = "http://localhost:11434"
     embedding_model: str = "nomic-embed-text"
     generation_model: str = "gemma4:e2b"

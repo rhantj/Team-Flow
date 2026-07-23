@@ -93,5 +93,7 @@ class TaskControllerDeleteTest {
 
         // existingTask()의 담당자는 3L, currentActorId()는 mock "1" -> 1L 이라 서로 다르므로 알림 발생
         verify(notificationService).notify(eq(3L), eq("TASK_DELETED"), any(), any(), eq("task"), any());
+        verify(ragIngestService).recordDeleteSourceIntent(1L, "task", 42L);
+        verify(ragIngestService).deleteSourceBestEffort(1L, "task", 42L);
     }
 }

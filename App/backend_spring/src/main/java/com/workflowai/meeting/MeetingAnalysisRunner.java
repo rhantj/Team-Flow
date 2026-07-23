@@ -1,8 +1,8 @@
 package com.workflowai.meeting;
 
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -23,8 +23,11 @@ public class MeetingAnalysisRunner {
         this.meetingAnalysisPersistence = meetingAnalysisPersistence;
     }
 
-    @Async("meetingAnalysisExecutor")
-    public void runAnalysis(Long meetingId, AiAnalyzeRequest request) {
+    public void runAnalysis(Long meetingId, AiAnalyzeRequest request, UUID jobId) {
+        if (!meetingAnalysisPersistence.claimJob(meetingId, jobId)) {
+            log.info("Skipping stale meeting analysis job. meetingId={}", meetingId);
+            return;
+        }
         MeetingAnalysisResult result;
         String analysisSource;
         try {
@@ -44,15 +47,23 @@ public class MeetingAnalysisRunner {
             }
         } catch (Exception e) {
             log.warn("Meeting analysis failed after FastAPI/fallback attempts. meetingId={}", meetingId, e);
-            meetingAnalysisPersistence.saveAnalysisFailure(meetingId, MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE);
+            meetingAnalysisPersistence.saveAnalysisFailureForJob(
+                meetingId,
+                MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE,
+                jobId
+            );
             return;
         }
 
         try {
-            meetingAnalysisPersistence.saveAnalysisSuccess(meetingId, result, analysisSource);
+            meetingAnalysisPersistence.saveAnalysisSuccessForJob(meetingId, result, analysisSource, jobId);
         } catch (Exception e) {
             log.warn("Meeting analysis persistence failed. meetingId={}", meetingId, e);
-            meetingAnalysisPersistence.saveAnalysisFailure(meetingId, MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE);
+            meetingAnalysisPersistence.saveAnalysisFailureForJob(
+                meetingId,
+                MeetingAnalysisPersistence.DEFAULT_ANALYSIS_ERROR_MESSAGE,
+                jobId
+            );
         }
     }
 }

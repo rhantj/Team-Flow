@@ -6,6 +6,7 @@ python-multipart>=0.0.20
 pydantic==2.13.4
 pydantic-settings==2.14.2
 asyncpg==0.30.0
+redis==8.0.1
 pytest==8.3.4
 pytest-asyncio==0.25.2
 httpx==0.28.1
@@ -26,7 +27,7 @@ matplotlib==3.10.0
 # HF Inference API가 서빙하지 않아 컨테이너 내부에서 직접 로드/추론). torch는 CPU 전용 휠로
 # Dockerfile에서 별도 인덱스로 먼저 설치한다(GPU 빌드가 딸려오면 이미지가 수 GB 커짐) - 여기 명시하면
 # 기본 PyPI 인덱스에서 재설치되어 그 목적이 무효화되므로 sentence-transformers만 적는다.
-sentence-transformers==3.4.1
+sentence-transformers==5.6.0
 
 # LLM (6.6, RAG 챗봇은 LangChain으로 전환됨. 회의록 분석/기여도 보고서는 아직 직접 호출)
 openai==1.59.7

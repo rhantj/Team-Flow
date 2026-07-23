@@ -18,6 +18,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -69,7 +70,7 @@ class MeetingAnalysisPersistenceTest {
     void saveAnalysisSuccessMarksMeetingCompletedAndStoresTodos() {
         MeetingAnalysisPersistence persistence = newPersistence();
         Meeting meeting = newMeeting();
-        when(meetingRepository.findById(5L)).thenReturn(Optional.of(meeting));
+        when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(meeting));
         when(meetingAttendeeRepository.findByMeetingId(5L)).thenReturn(List.of());
         stubSaves();
 
@@ -115,7 +116,7 @@ class MeetingAnalysisPersistenceTest {
         // 알림 발송은 부가 기능이라 실패해도 분석 결과 저장(@Transactional) 자체는 롤백되면 안 된다.
         MeetingAnalysisPersistence persistence = newPersistence();
         Meeting meeting = new Meeting(1L, "정기회의", "document", null, "processing", LocalDate.now(), "정기회의", "a.txt", 10L, null);
-        when(meetingRepository.findById(5L)).thenReturn(Optional.of(meeting));
+        when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(meeting));
         when(meetingAttendeeRepository.findByMeetingId(5L)).thenReturn(List.of());
         when(meetingAnalysisRepository.save(any(MeetingAnalysis.class))).thenAnswer(invocation -> invocation.getArgument(0));
         doThrow(new RuntimeException("notification service down"))
@@ -138,7 +139,7 @@ class MeetingAnalysisPersistenceTest {
         // @Transactional 호출 경로를 흉내내기 위해 트랜잭션 동기화를 직접 활성화한다.
         MeetingAnalysisPersistence persistence = newPersistence();
         Meeting meeting = new Meeting(1L, "정기회의", "document", null, "processing", LocalDate.now(), "정기회의", "a.txt", 10L, null);
-        when(meetingRepository.findById(5L)).thenReturn(Optional.of(meeting));
+        when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(meeting));
         when(meetingAttendeeRepository.findByMeetingId(5L)).thenReturn(List.of());
         when(meetingAnalysisRepository.save(any(MeetingAnalysis.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -152,11 +153,13 @@ class MeetingAnalysisPersistenceTest {
             persistence.saveAnalysisSuccess(5L, result, "FASTAPI");
 
             verify(notificationService, never()).notify(any(), any(), any(), any(), any(), any());
+            verify(ragIngestService, never()).ingestBestEffort(any(), any(), any(), any());
 
             List<TransactionSynchronization> synchronizations = TransactionSynchronizationManager.getSynchronizations();
-            assertThat(synchronizations).hasSize(1);
+            assertThat(synchronizations).hasSize(2);
             synchronizations.forEach(TransactionSynchronization::afterCommit);
 
+            verify(ragIngestService).ingestBestEffort(1L, "meeting", 5L, "요약");
             verify(notificationService).notify(10L, "MEETING_ANALYSIS_COMPLETED", "회의 분석이 완료되었습니다.",
                 "'정기회의' 회의록 분석이 완료되었습니다.", "meeting", 5L);
         } finally {
@@ -169,7 +172,7 @@ class MeetingAnalysisPersistenceTest {
         // afterCommit 콜백이 한 번도 호출되지 않는 롤백 상황을 흉내낸다.
         MeetingAnalysisPersistence persistence = newPersistence();
         Meeting meeting = new Meeting(1L, "정기회의", "document", null, "processing", LocalDate.now(), "정기회의", "a.txt", 10L, null);
-        when(meetingRepository.findById(5L)).thenReturn(Optional.of(meeting));
+        when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(meeting));
         when(meetingAttendeeRepository.findByMeetingId(5L)).thenReturn(List.of());
         when(meetingAnalysisRepository.save(any(MeetingAnalysis.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -192,7 +195,7 @@ class MeetingAnalysisPersistenceTest {
     void assignsTodoWhenCandidateIsProjectMemberAndMeetingAttendee() {
         MeetingAnalysisPersistence persistence = newPersistence();
         Meeting meeting = newMeeting();
-        when(meetingRepository.findById(5L)).thenReturn(Optional.of(meeting));
+        when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(meeting));
         stubSaves();
         stubMember("박지수", 3L);
         when(meetingAttendeeRepository.findByMeetingId(5L)).thenReturn(List.of(new MeetingAttendee(5L, 3L)));
@@ -217,7 +220,7 @@ class MeetingAnalysisPersistenceTest {
     void leavesTodoUnassignedWhenCandidateIsProjectMemberButNotMeetingAttendee() {
         MeetingAnalysisPersistence persistence = newPersistence();
         Meeting meeting = newMeeting();
-        when(meetingRepository.findById(5L)).thenReturn(Optional.of(meeting));
+        when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(meeting));
         stubSaves();
         // 유소은은 프로젝트 멤버지만 이번 회의의 참석자로 체크되지 않았다.
         // 참석자 여부를 먼저 검사하므로 프로젝트 멤버십 조회 자체가 호출되지 않는다.
@@ -249,7 +252,7 @@ class MeetingAnalysisPersistenceTest {
     void leavesTodoUnassignedWhenCandidateIsNotProjectMemberOrSystemUser() {
         MeetingAnalysisPersistence persistence = newPersistence();
         Meeting meeting = newMeeting();
-        when(meetingRepository.findById(5L)).thenReturn(Optional.of(meeting));
+        when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(meeting));
         stubSaves();
         when(userRepository.findFirstByName("고무서")).thenReturn(Optional.empty());
         when(meetingAttendeeRepository.findByMeetingId(5L)).thenReturn(
@@ -280,7 +283,7 @@ class MeetingAnalysisPersistenceTest {
         // 참석자이자 프로젝트 멤버인 박지수만 자동 배정되고 나머지는 모두 미배정이어야 한다.
         MeetingAnalysisPersistence persistence = newPersistence();
         Meeting meeting = newMeeting();
-        when(meetingRepository.findById(5L)).thenReturn(Optional.of(meeting));
+        when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(meeting));
         stubSaves();
 
         Map<String, Long> outsiderIds = Map.of(
@@ -355,7 +358,7 @@ class MeetingAnalysisPersistenceTest {
 
         MeetingAnalysisPersistence persistence = newPersistence();
         Meeting meeting = newMeeting();
-        when(meetingRepository.findById(5L)).thenReturn(Optional.of(meeting));
+        when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(meeting));
         stubSaves();
         // 참석자로 체크된 4명 중 프로젝트 멤버이자 회의 참석자로 저장된 사람은 박지수(3L)뿐이다.
         stubMember("박지수", 3L);
@@ -390,7 +393,7 @@ class MeetingAnalysisPersistenceTest {
     void saveAnalysisFailureMarksMeetingFailedWithMessage() {
         MeetingAnalysisPersistence persistence = newPersistence();
         Meeting meeting = newMeeting();
-        when(meetingRepository.findById(7L)).thenReturn(Optional.of(meeting));
+        when(meetingRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(meeting));
 
         persistence.saveAnalysisFailure(7L, "FastAPI 연결 실패");
 
@@ -401,10 +404,111 @@ class MeetingAnalysisPersistenceTest {
     }
 
     @Test
+    void duplicateSuccessDoesNotOverwriteTerminalMeeting() {
+        MeetingAnalysisPersistence persistence = newPersistence();
+        Meeting completed = newMeeting();
+        completed.setAnalysisStatus("completed");
+        when(meetingRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(completed));
+
+        persistence.saveAnalysisSuccess(
+            7L,
+            new MeetingAnalysisResult(
+                "요약", List.of(), List.of(), List.of(), List.of(),
+                new MeetingMeta("정기회의", "2026-07-15", List.of())
+            ),
+            "FASTAPI"
+        );
+
+        verify(meetingAnalysisRepository, never()).save(any());
+        verify(meetingActionItemRepository, never()).save(any());
+        verify(meetingRepository, never()).save(any());
+    }
+
+    @Test
+    void lateFailureDoesNotOverwriteCompletedMeeting() {
+        MeetingAnalysisPersistence persistence = newPersistence();
+        Meeting completed = newMeeting();
+        completed.setAnalysisStatus("completed");
+        when(meetingRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(completed));
+
+        persistence.saveAnalysisFailure(7L, "late failure");
+
+        verify(meetingRepository, never()).save(any());
+        assertThat(completed.getAnalysisStatus()).isEqualTo("completed");
+    }
+
+    @Test
+    void staleJobCannotPersistAfterRetryGenerationChanges() {
+        MeetingAnalysisPersistence persistence = newPersistence();
+        UUID currentJobId = UUID.randomUUID();
+        Meeting processing = newMeeting();
+        processing.setAnalysisJobId(currentJobId);
+        when(meetingRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(processing));
+
+        persistence.saveAnalysisFailureForJob(7L, "late failure", UUID.randomUUID());
+
+        verify(meetingRepository, never()).save(any());
+        assertThat(processing.getAnalysisStatus()).isEqualTo("processing");
+    }
+
+    @Test
+    void legacyQueuedJobClaimsNullGenerationBeforeAnalysis() {
+        MeetingAnalysisPersistence persistence = newPersistence();
+        UUID jobId = UUID.randomUUID();
+        Meeting processing = newMeeting();
+        when(meetingRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(processing));
+
+        boolean claimed = persistence.claimJob(7L, jobId);
+
+        assertThat(claimed).isTrue();
+        assertThat(processing.getAnalysisJobId()).isEqualTo(jobId);
+        verify(meetingRepository).save(processing);
+    }
+
+    @Test
+    void staleQueuedJobCannotClaimDifferentGeneration() {
+        MeetingAnalysisPersistence persistence = newPersistence();
+        Meeting processing = newMeeting();
+        processing.setAnalysisJobId(UUID.randomUUID());
+        when(meetingRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(processing));
+
+        boolean claimed = persistence.claimJob(7L, UUID.randomUUID());
+
+        assertThat(claimed).isFalse();
+        verify(meetingRepository, never()).save(any());
+    }
+
+    @Test
+    void currentJobSuccessCanPromoteEarlierDuplicateFailure() {
+        MeetingAnalysisPersistence persistence = newPersistence();
+        UUID jobId = UUID.randomUUID();
+        Meeting failed = newMeeting();
+        failed.setAnalysisStatus("failed");
+        failed.setAnalysisJobId(jobId);
+        when(meetingRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(failed));
+        when(meetingAnalysisRepository.save(any(MeetingAnalysis.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+        when(meetingAttendeeRepository.findByMeetingId(7L)).thenReturn(List.of());
+
+        persistence.saveAnalysisSuccessForJob(
+            7L,
+            new MeetingAnalysisResult(
+                "요약", List.of(), List.of(), List.of(), List.of(),
+                new MeetingMeta("정기회의", "2026-07-15", List.of())
+            ),
+            "FASTAPI",
+            jobId
+        );
+
+        verify(meetingAnalysisRepository).save(any(MeetingAnalysis.class));
+        assertThat(failed.getAnalysisStatus()).isEqualTo("completed");
+    }
+
+    @Test
     void failureNotificationIsDeferredUntilAfterCommitWhenTransactionSynchronizationIsActive() {
         MeetingAnalysisPersistence persistence = newPersistence();
         Meeting meeting = new Meeting(1L, "정기회의", "document", null, "processing", LocalDate.now(), "정기회의", "a.txt", 10L, null);
-        when(meetingRepository.findById(7L)).thenReturn(Optional.of(meeting));
+        when(meetingRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(meeting));
 
         TransactionSynchronizationManager.initSynchronization();
         try {
@@ -427,7 +531,7 @@ class MeetingAnalysisPersistenceTest {
     void failureNotificationIsNeverSentWhenTransactionRollsBackWithoutCommit() {
         MeetingAnalysisPersistence persistence = newPersistence();
         Meeting meeting = new Meeting(1L, "정기회의", "document", null, "processing", LocalDate.now(), "정기회의", "a.txt", 10L, null);
-        when(meetingRepository.findById(7L)).thenReturn(Optional.of(meeting));
+        when(meetingRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(meeting));
 
         TransactionSynchronizationManager.initSynchronization();
         try {

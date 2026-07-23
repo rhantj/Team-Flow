@@ -3,12 +3,15 @@ package com.workflowai.dashboard.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
 
 import com.workflowai.activity.ActivityRepository;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.dashboard.DTO.DashboardTaskDto;
 import com.workflowai.dashboard.DTO.DelayRiskDto;
+import com.workflowai.dashboard.DTO.MilestoneProgressDto;
 import com.workflowai.dashboard.DTO.ProgressDetailResponse;
+import com.workflowai.dashboard.entity.Milestone;
 import com.workflowai.dashboard.entity.MlPrediction;
 import com.workflowai.dashboard.repository.MilestoneRepository;
 import com.workflowai.dashboard.repository.MlPredictionRepository;
@@ -170,5 +173,21 @@ class DashboardServiceTest {
 
         assertThat(result.projectDeadline()).isNull();
         assertThat(result.projectCreatedAt()).isNull();
+    }
+
+    @Test
+    void createMilestoneSavesAndReturnsZeroProgress() {
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        Milestone saved = new Milestone(1L, "MVP 발표", LocalDate.of(2026, 8, 15));
+        ReflectionTestUtils.setField(saved, "id", 42L);
+        when(milestoneRepository.save(any(Milestone.class))).thenReturn(saved);
+
+        MilestoneProgressDto result = newService().createMilestone("demo-project", "MVP 발표", LocalDate.of(2026, 8, 15));
+
+        assertThat(result.id()).isEqualTo("42");
+        assertThat(result.title()).isEqualTo("MVP 발표");
+        assertThat(result.dueDate()).isEqualTo("2026-08-15");
+        assertThat(result.taskCount()).isEqualTo(0);
+        assertThat(result.progressPercent()).isEqualTo(0);
     }
 }

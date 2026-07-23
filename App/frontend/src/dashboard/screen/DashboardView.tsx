@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   AlertTriangle,
   BarChart3,
@@ -23,11 +23,12 @@ import { useAuth } from "../../global/hooks/useAuth";
 import type { DetailPage } from "../../board/libs/types/task";
 import { useDashboardProgress } from "../libs/hooks/useDashboardProgress";
 import { useDashboardSummary } from "../libs/hooks/useDashboardSummary";
+import { useDashboardTasks } from "../libs/hooks/useDashboardTasks";
 import { activityMessage, activityTypeLabel, formatRelativeTime } from "../libs/utils/activityDisplay";
-import { formatDashboardDueDate, normalizeTaskStatus } from "../libs/utils/dashboardTaskUtils";
+import { daysSince, daysUntilDue, formatDashboardDueDate, isDangerDelayRisk, normalizeTaskStatus } from "../libs/utils/dashboardTaskUtils";
 import { resolveMemberDisplay } from "../libs/utils/memberDisplay";
-
-const OPEN_AI_ASSISTANT_EVENT = "workflow-ai:open-ai-assistant";
+import { AiInsightBox } from "../../ai/components/AiInsightBox";
+import { openAIAssistant } from "../../ai/libs/utils/openAIAssistant";
 
 function EmptyState({ children }: { children: string }) {
   return <div className="py-8 text-center text-xs text-muted-foreground">{children}</div>;
@@ -36,9 +37,10 @@ function EmptyState({ children }: { children: string }) {
 export function DashboardView() {
   const navigate = useNavigate();
   const onCardClick = (p: DetailPage) => navigate(`/dashboard/${p}`);
-  const { currentProjectId } = useAuth();
+  const { user, currentProjectId } = useAuth();
   const { data: summary, loading: summaryLoading, error: summaryError } = useDashboardSummary(currentProjectId);
   const { data: progress, loading: progressLoading, error: progressError } = useDashboardProgress(currentProjectId);
+  const { data: tasks, loading: tasksLoading } = useDashboardTasks(currentProjectId);
 
   const deliverablesActive = NAV_ITEMS.find((item) => item.id === "deliverables")?.activate !== false;
   const isSummaryPending = summaryLoading && !summary;
@@ -51,17 +53,37 @@ export function DashboardView() {
   const workload = summary?.workload ?? [];
   const upcomingDeadlines = summary?.upcomingDeadlines ?? [];
   const recentActivity = summary?.recentActivity ?? [];
-  const categoryChart = progress?.categoryBreakdown.map((item) => ({
-    category: item.category,
-    done: item.done,
-    remaining: Math.max(item.total - item.done, 0),
-  })) ?? [];
+  const memberWorkloadChart = workload.map((entry, index) => ({
+    name: resolveMemberDisplay(entry.assigneeName, index, entry.assigneeId).name,
+    전체: entry.total,
+    완료: entry.done,
+  }));
+
+  const projectStart = progress?.projectCreatedAt ?? null;
+  const progressTrend = projectStart
+    ? [
+        { label: formatDashboardDueDate(projectStart), value: 0 },
+        { label: "오늘", value: progressPct },
+      ]
+    : [];
+
+  const dangerRiskTaskIds = new Set((progress?.delayRisks ?? []).filter(risk => isDangerDelayRisk(risk.result)).map(risk => risk.taskId));
+  const longestStalledDangerTask = tasks
+    .filter(task => dangerRiskTaskIds.has(task.id))
+    .reduce<{ title: string; days: number } | null>((longest, task) => {
+      const days = daysSince(task.updatedAt) ?? 0;
+      return !longest || days > longest.days ? { title: task.title, days } : longest;
+    }, null);
+  const aiInsightReady = !summaryLoading && !progressLoading && !tasksLoading;
+  const aiInsightPrompt = longestStalledDangerTask
+    ? `사용자의 지연 위험도 '위험' 업무 중, 가장 현재 상태 체류시간이 긴 업무인 '${longestStalledDangerTask.title}'에 대해 먼저 처리할 일과 다음 액션을 알려줘.`
+    : "";
 
   const quickActions = [
     { label: "업무 추가", icon: Plus, color: "#3B5BDB", onClick: () => navigate("/board?openAdd=1") },
     { label: "회의록 업로드", icon: Upload, color: "#7048E8", onClick: () => navigate("/meetings?upload=1") },
     ...(deliverablesActive ? [{ label: "산출물", icon: Package, color: "#0F766E", onClick: () => navigate("/deliverables") }] : []),
-    { label: "AI 어시스턴트", icon: Sparkles, color: "#F59E0B", onClick: () => window.dispatchEvent(new Event(OPEN_AI_ASSISTANT_EVENT)) },
+    { label: "AI 어시스턴트", icon: Sparkles, color: "#F59E0B", onClick: () => openAIAssistant() },
     { label: "업무 보드", icon: Columns3, color: "#0EA5E9", onClick: () => navigate("/board") },
     { label: "전체 업무", icon: Users, color: "#EC4899", onClick: () => navigate("/dashboard/all-tasks") },
     { label: "마감 임박", icon: Clock, color: "#EF4444", onClick: () => navigate("/dashboard/urgent") },
@@ -83,15 +105,32 @@ export function DashboardView() {
         </div>
       )}
 
-      <div className="rounded-xl p-4 flex items-start gap-3 border border-border bg-card shadow-sm">
-        <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: "rgba(112,72,232,0.12)" }}>
-          <Sparkles className="w-4 h-4" style={{ color: "#7048E8" }} />
+      {longestStalledDangerTask ? (
+        <AiInsightBox
+          projectId={currentProjectId}
+          prompt={aiInsightPrompt}
+          ready={aiInsightReady}
+          fallbackText={`${user?.name ?? "담당자"}님의 ${longestStalledDangerTask.title}이 지연 위험입니다.`}
+          formatAnswer={answer => `${user?.name ?? "담당자"}님의 ${longestStalledDangerTask.title}이 지연 위험입니다. ${answer}`}
+          actionLabel="자세히"
+          variant="banner"
+        />
+      ) : (
+        <div className="rounded-xl p-4 flex items-center gap-3 text-white" style={{ background: "linear-gradient(135deg,#7048E8,#4F6EF7)" }}>
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-white/20">
+            <Sparkles className="w-4 h-4" />
+          </div>
+          <div className="flex-1">
+            <div className="text-sm font-semibold">AI 추천 액션</div>
+            <div className="text-xs text-white/85 mt-0.5">
+              {aiInsightReady ? "현재 지연 위험('위험') 업무가 없습니다." : "데이터를 불러오는 중입니다..."}
+            </div>
+          </div>
+          <button onClick={() => openAIAssistant()} className="text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0 bg-white/20 hover:bg-white/30 transition-colors">
+            자세히
+          </button>
         </div>
-        <div className="flex-1">
-          <div className="text-sm font-semibold text-foreground">AI 추천 액션</div>
-          <div className="text-xs text-muted-foreground mt-0.5">미구현된 기능입니다.</div>
-        </div>
-      </div>
+      )}
 
       <div className="bg-card rounded-xl p-4 shadow-sm border border-border">
         <div className="text-sm font-semibold text-foreground mb-3">빠른 액션</div>
@@ -121,8 +160,8 @@ export function DashboardView() {
         <div onClick={() => onCardClick("dash-progress")} className="lg:col-span-2 bg-card rounded-xl p-5 shadow-sm border border-border cursor-pointer hover:shadow-md hover:border-blue-300 transition-all">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <div className="text-sm font-semibold text-foreground">카테고리별 진행</div>
-              <div className="text-xs text-muted-foreground mt-0.5">업무 카테고리 기준</div>
+              <div className="text-sm font-semibold text-foreground">전체 진행률</div>
+              <div className="text-xs text-muted-foreground mt-0.5">실제 업무 완료 기준</div>
             </div>
             <div className="text-2xl font-bold" style={{ color: "var(--primary)" }}>{summaryLoading ? "..." : progressPct}%</div>
           </div>
@@ -132,19 +171,18 @@ export function DashboardView() {
           <div className="h-40">
             {isProgressPending ? (
               <EmptyState>데이터를 불러오는 중입니다</EmptyState>
-            ) : categoryChart.length ? (
+            ) : progressTrend.length ? (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={categoryChart} margin={{ top: 0, right: 0, left: -30, bottom: 0 }}>
+                <LineChart data={progressTrend} margin={{ top: 4, right: 4, left: -30, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.05)" />
-                  <XAxis dataKey="category" tick={{ fontSize: 10, fill: "#8892A4" }} />
-                  <YAxis tick={{ fontSize: 10, fill: "#8892A4" }} />
+                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#8892A4" }} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "#8892A4" }} />
                   <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }} />
-                  <Bar dataKey="done" stackId="tasks" name="완료" fill="#10B981" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="remaining" stackId="tasks" name="미완료" fill="#C1C9D9" radius={[3, 3, 0, 0]} />
-                </BarChart>
+                  <Line type="monotone" dataKey="value" name="진행률" stroke="#7048E8" strokeWidth={2} dot={{ r: 3 }} />
+                </LineChart>
               </ResponsiveContainer>
             ) : (
-              <EmptyState>표시할 카테고리 데이터가 없습니다.</EmptyState>
+              <EmptyState>표시할 진행률 데이터가 없습니다.</EmptyState>
             )}
           </div>
         </div>
@@ -159,9 +197,14 @@ export function DashboardView() {
               <EmptyState>데이터를 불러오는 중입니다</EmptyState>
             ) : upcomingDeadlines.length ? upcomingDeadlines.map((task, index) => {
               const member = resolveMemberDisplay(task.assigneeName, index);
+              const dueSoon = (daysUntilDue(task.dueDate) ?? Infinity) <= 3;
               return (
                 <div key={task.id} className="flex items-center gap-2.5">
-                  <StatusIcon status={normalizeTaskStatus(task.status)} />
+                  {dueSoon ? (
+                    <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                  ) : (
+                    <StatusIcon status={normalizeTaskStatus(task.status)} />
+                  )}
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-medium text-foreground truncate">{task.title}</div>
                     <div className="text-[10px] text-muted-foreground">마감 {formatDashboardDueDate(task.dueDate)}</div>
@@ -199,6 +242,20 @@ export function DashboardView() {
               );
             }) : <EmptyState>팀원별 업무 데이터가 없습니다.</EmptyState>}
           </div>
+          {memberWorkloadChart.length > 0 && (
+            <div className="h-32 mt-4 pt-3 border-t border-border">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={memberWorkloadChart} margin={{ top: 4, right: 4, left: -30, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.05)" />
+                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#8892A4" }} />
+                  <YAxis tick={{ fontSize: 10, fill: "#8892A4" }} allowDecimals={false} />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }} />
+                  <Bar dataKey="전체" fill="#C1C9D9" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="완료" fill="#3B5BDB" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
         </div>
 
         <div onClick={() => onCardClick("activity")} className="bg-card rounded-xl p-5 shadow-sm border border-border cursor-pointer hover:shadow-md hover:border-blue-300 transition-all">

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Sparkles, X, Send } from "lucide-react";
 import { buildChatInit, QUICK_QUESTIONS } from "../libs/mock/chat";
 import { useRagQuery } from "../libs/hooks/useRagQuery";
 import { useAuth } from "../../global/hooks/useAuth";
 import type { ChatMsg, RagSource } from "../libs/types/chat";
+import type { OpenAIAssistantEventDetail } from "../libs/utils/openAIAssistant";
 
 const NO_PROJECT_MESSAGE = "아직 연결된 프로젝트가 없습니다. 프로젝트를 만들고 회의록을 업로드한 뒤 다시 질문해주세요.";
 
@@ -81,7 +82,12 @@ function saveSession(key: string, messages: ChatMsg[]): void {
   }
 }
 
-export function AIAssistant({ onClose }: { onClose: () => void }) {
+interface AIAssistantProps {
+  onClose: () => void;
+  pendingQuestion?: OpenAIAssistantEventDetail | null;
+}
+
+export function AIAssistant({ onClose, pendingQuestion }: AIAssistantProps) {
   const { user, currentProjectId } = useAuth();
   const sessionKey = useMemo(() => buildSessionKey(user?.id, currentProjectId), [user?.id, currentProjectId]);
   const sessionKeyRef = useRef(sessionKey);
@@ -97,6 +103,7 @@ export function AIAssistant({ onClose }: { onClose: () => void }) {
   // 응답을 요청한 시점의 세션 키. 응답이 도착했을 때 이 값이 현재 세션 키와 다르면
   // (그사이 계정/프로젝트가 전환됨) 다른 세션의 대화창에 답변이 섞이지 않도록 무시한다.
   const askedForKeyRef = useRef<string | null>(null);
+  const handledRequestIdRef = useRef<number | null>(null);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
@@ -128,7 +135,7 @@ export function AIAssistant({ onClose }: { onClose: () => void }) {
     }
   }, [status, answer, error, sessionKey]);
 
-  const send = (text: string) => {
+  const send = useCallback((text: string) => {
     if (!text.trim() || loading) return;
     setMessages(prev => [...prev, { role: "user", content: text }]);
     if (currentProjectId == null) {
@@ -141,7 +148,14 @@ export function AIAssistant({ onClose }: { onClose: () => void }) {
     // 한글 등 IME 조합 완료 이벤트가 keydown 이후 뒤늦게 들어와 입력창을 다시 채우는 것을 피하기 위해
     // 조합 이벤트가 먼저 처리되도록 한 틱 미뤄서 비운다.
     setTimeout(() => setInput(""), 0);
-  };
+  }, [ask, currentProjectId, loading, sessionKey]);
+
+  useEffect(() => {
+    const question = pendingQuestion?.question?.trim();
+    if (!question || loading || handledRequestIdRef.current === pendingQuestion.requestId) return;
+    handledRequestIdRef.current = pendingQuestion.requestId;
+    send(question);
+  }, [loading, pendingQuestion, send]);
 
   return (
     <div className="fixed right-0 top-0 h-full w-[380px] shadow-2xl flex flex-col z-50" style={{ background: "#FFFFFF", fontFamily: "'Inter', 'Noto Sans KR', sans-serif", borderLeft: "1px solid var(--border)" }}>

@@ -1,5 +1,6 @@
 package com.workflowai.project;
 
+import com.workflowai.rag.RagIngestService;
 import com.workflowai.task.Task;
 import com.workflowai.task.TaskRepository;
 import com.workflowai.user.User;
@@ -9,13 +10,18 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionOperations;
 
 @Service
 public class ProjectService {
+    private static final Logger log = LoggerFactory.getLogger(ProjectService.class);
     private static final String INVITE_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     private static final int INVITE_CODE_LENGTH = 8;
     private static final int INVITE_CODE_MAX_ATTEMPTS = 20;
@@ -27,19 +33,22 @@ public class ProjectService {
     private final UserRepository userRepository;
     private final TaskRepository taskRepository;
     private final TransactionOperations transactionOperations;
+    private final RagIngestService ragIngestService;
 
     public ProjectService(
         ProjectRepository projectRepository,
         ProjectMemberRepository projectMemberRepository,
         UserRepository userRepository,
         TaskRepository taskRepository,
-        TransactionOperations transactionOperations
+        TransactionOperations transactionOperations,
+        RagIngestService ragIngestService
     ) {
         this.projectRepository = projectRepository;
         this.projectMemberRepository = projectMemberRepository;
         this.userRepository = userRepository;
         this.taskRepository = taskRepository;
         this.transactionOperations = transactionOperations;
+        this.ragIngestService = ragIngestService;
     }
 
     public ProjectResponse create(Long creatorUserId, CreateProjectRequest request) {
@@ -178,7 +187,30 @@ public class ProjectService {
 
     @Transactional
     public void delete(Long projectId) {
+        ragIngestService.recordDeleteProjectIntent(projectId);
         projectRepository.deleteById(projectId);
+        runAfterCommit(() -> ragIngestService.deleteProjectSourcesBestEffort(projectId));
+    }
+
+    private void runAfterCommit(Runnable operation) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    runAfterCommitOperationSafely(operation);
+                }
+            });
+            return;
+        }
+        runAfterCommitOperationSafely(operation);
+    }
+
+    private void runAfterCommitOperationSafely(Runnable operation) {
+        try {
+            operation.run();
+        } catch (RuntimeException exception) {
+            log.warn("RAG after-commit 작업 제출 실패. errorType={}", exception.getClass().getSimpleName());
+        }
     }
 
     public List<MemberResponse> members(Long projectId) {
