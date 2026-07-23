@@ -179,11 +179,18 @@ python -m llm_rag_assistant.scripts.reembed_document_chunks
 > 높아서 "아직 미적용"으로 간주돼 baseline 직후 실제로 실행된다 — 그 SQL 자체는
 > `ADD COLUMN IF NOT EXISTS` 등으로 idempotent하게 짜여 있지만, 검증되지 않은 운영 DB의 실제
 > 상태와 우연히 충돌하면(예: 같은 이름의 컬럼이 다른 타입/제약으로 이미 있는 경우) 기동
-> 실패로 이어질 수 있다. 그래서 `application.yml`에 `spring.flyway.baseline-version`을 저장소에
-> 이미 존재하는 가장 높은 마이그레이션 버전(`20260721_1`)으로 명시적으로 고정해뒀다 — 이
-> 값 이하 버전은 전부 "이미 처리된 이력"으로 취급되어 baseline 시점에 실행되지 않는다. 새
-> 마이그레이션을 추가할 때마다 `SPRING_FLYWAY_BASELINE_VERSION`(또는 코드의 기본값)을 그
-> 새 버전으로 올려야 이 baseline 의미가 계속 유지된다.
+> 실패로 이어질 수 있다. 그래서 `application.yml`에 `spring.flyway.baseline-version`을 Flyway
+> 도입 시점에 저장소에 있던 마이그레이션 버전(`20260721_1`)으로 명시적으로 고정해뒀다 — 이
+> 값 이하 버전은 전부 "이미 처리된 이력"으로 취급되어 baseline 시점에 실행되지 않는다.
+>
+> **이 값은 한 번 정하면 영구 고정이며, 새 마이그레이션을 추가할 때마다 따라 올리면 안
+> 된다.** 새 마이그레이션은 이 고정값보다 버전이 높기만 하면 되고, 그러면 Flyway를 오늘 막
+> 켠 DB든 예전부터 켜져 있던 DB든 상관없이 정상적으로 한 번 적용된다. 만약 baseline-version을
+> 실수로 새 마이그레이션의 버전으로 올려버리면, 그 마이그레이션이 "baseline 이하 = 이미
+> 적용됨"으로 오분류돼 조용히 건너뛰어지고, 결과적으로 스키마 누락과 애플리케이션 기동
+> 실패(JPA `ddl-auto=validate` 불일치)로 이어진다 — `FlywayBaselineStrategyTest`가 이 두
+> 시나리오(고정 baseline은 새 마이그레이션을 정상 적용 / baseline을 새 버전으로 올리면 그
+> 마이그레이션이 스킵됨)를 직접 재현해 검증한다.
 
 **운영(OCI) DB에서 최초로 켜기 전 검증 절차 (필수):** `docker-compose.prod.yml`은
 `SPRING_FLYWAY_ENABLED`를 다시 기본 `false`로 되돌려서, 로컬에서 기본으로 켜지는 것과 달리
@@ -202,7 +209,7 @@ python -m llm_rag_assistant.scripts.reembed_document_chunks
    재배포한다.
 
 새 스키마 변경이 필요하면 `docs/db/migrations`에 번호를 추가하지 말고 `db/migration/`에
-`V20260723_1__description.sql` 형식으로 추가할 것 (그리고 위 baseline-version도 함께 올릴 것).
+`V20260723_1__description.sql` 형식으로 추가할 것 — `baseline-version`은 건드리지 않는다.
 
 ## 8-1. (선택, 1회) 레거시 users.field 정리
 
