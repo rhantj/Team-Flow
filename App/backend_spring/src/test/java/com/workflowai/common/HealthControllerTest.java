@@ -45,9 +45,9 @@ class HealthControllerTest {
             .andExpect(jsonPath("$.data.service").value("workflow-ai-backend"))
             .andExpect(jsonPath("$.data.status").value("UP"))
             .andExpect(jsonPath("$.data.checkedAt").isString())
-            .andExpect(jsonPath("$.data.redisStatus").value("UP"))
-            .andExpect(jsonPath("$.data.workerReady").value(true))
-            .andExpect(jsonPath("$.data.workerAlive").value(true));
+            .andExpect(jsonPath("$.data.redisStatus").doesNotExist())
+            .andExpect(jsonPath("$.data.workerReady").doesNotExist())
+            .andExpect(jsonPath("$.data.workerAlive").doesNotExist());
     }
 
     @Test
@@ -59,7 +59,9 @@ class HealthControllerTest {
         mockMvc.perform(get("/api/v1/health"))
             .andExpect(status().isServiceUnavailable())
             .andExpect(jsonPath("$.data.status").value("DOWN"))
-            .andExpect(jsonPath("$.data.redisStatus").value("DOWN"))
+            .andExpect(jsonPath("$.data.redisStatus").doesNotExist())
+            .andExpect(jsonPath("$.data.workerReady").doesNotExist())
+            .andExpect(jsonPath("$.data.workerAlive").doesNotExist())
             .andExpect(content().string(org.hamcrest.Matchers.not(
                 org.hamcrest.Matchers.containsString("admin:secret")
             )));
@@ -72,8 +74,9 @@ class HealthControllerTest {
         mockMvc.perform(get("/api/v1/health"))
             .andExpect(status().isServiceUnavailable())
             .andExpect(jsonPath("$.data.status").value("DOWN"))
-            .andExpect(jsonPath("$.data.workerReady").value(false))
-            .andExpect(jsonPath("$.data.workerAlive").value(true));
+            .andExpect(jsonPath("$.data.redisStatus").doesNotExist())
+            .andExpect(jsonPath("$.data.workerReady").doesNotExist())
+            .andExpect(jsonPath("$.data.workerAlive").doesNotExist());
     }
 
     @Test
@@ -84,7 +87,8 @@ class HealthControllerTest {
         mockMvc.perform(get("/api/v1/health"))
             .andExpect(status().isServiceUnavailable())
             .andExpect(jsonPath("$.data.status").value("DOWN"))
-            .andExpect(jsonPath("$.data.workerReady").value(false))
-            .andExpect(jsonPath("$.data.workerAlive").value(false));
+            .andExpect(jsonPath("$.data.redisStatus").doesNotExist())
+            .andExpect(jsonPath("$.data.workerReady").doesNotExist())
+            .andExpect(jsonPath("$.data.workerAlive").doesNotExist());
     }
 }

@@ -45,6 +45,7 @@ class MeetingAnalysisJobPublisherTest {
     void enqueuesSerializedJobAndReturnsRedisRecordId() throws Exception {
         RecordId recordId = RecordId.of("1753257600000-0");
         when(redisTemplate.opsForStream()).thenReturn(streamOperations);
+        when(streamOperations.size(MeetingAnalysisJobPublisher.STREAM_KEY)).thenReturn(999L);
         when(streamOperations.add(any())).thenReturn(recordId);
         MeetingAnalysisJobPublisher publisher = new MeetingAnalysisJobPublisher(redisTemplate, objectMapper);
 
@@ -86,6 +87,7 @@ class MeetingAnalysisJobPublisherTest {
     void throwsIllegalStateExceptionWhenRedisAddFails() {
         RuntimeException failure = new RuntimeException("redis unavailable");
         when(redisTemplate.opsForStream()).thenReturn(streamOperations);
+        when(streamOperations.size(MeetingAnalysisJobPublisher.STREAM_KEY)).thenReturn(0L);
         when(streamOperations.add(any())).thenThrow(failure);
         MeetingAnalysisJobPublisher publisher = new MeetingAnalysisJobPublisher(redisTemplate, objectMapper);
 
@@ -94,5 +96,56 @@ class MeetingAnalysisJobPublisherTest {
             .hasMessage("Failed to enqueue meeting analysis job")
             .hasCause(failure)
             .hasMessageNotContaining(RAW_TEXT);
+    }
+
+    @Test
+    void rejectsOversizedUtf8PayloadWithoutAddingToRedis() {
+        AiAnalyzeRequest oversizedRequest = new AiAnalyzeRequest(
+            "project-1",
+            "대용량 회의",
+            "2026-07-23",
+            "planning",
+            "document",
+            "meeting.txt",
+            "가".repeat(MeetingAnalysisJobPublisher.MAX_PAYLOAD_BYTES),
+            List.of("김민준")
+        );
+        MeetingAnalysisJobPublisher publisher = new MeetingAnalysisJobPublisher(redisTemplate, objectMapper);
+
+        assertThatThrownBy(() -> publisher.enqueue(42L, oversizedRequest))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Failed to enqueue meeting analysis job")
+            .hasMessageNotContaining("가");
+        verify(streamOperations, never()).add(any());
+    }
+
+    @Test
+    void rejectsJobWhenOutstandingQueueLimitIsReached() {
+        when(redisTemplate.opsForStream()).thenReturn(streamOperations);
+        when(streamOperations.size(MeetingAnalysisJobPublisher.STREAM_KEY))
+            .thenReturn((long) MeetingAnalysisJobPublisher.MAX_OUTSTANDING_JOBS);
+        MeetingAnalysisJobPublisher publisher = new MeetingAnalysisJobPublisher(redisTemplate, objectMapper);
+
+        assertThatThrownBy(() -> publisher.enqueue(42L, request))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Failed to enqueue meeting analysis job")
+            .hasMessageNotContaining(RAW_TEXT);
+        verify(streamOperations, never()).add(any());
+    }
+
+    @Test
+    void rejectsJobSafelyWhenOutstandingQueueSizeCannotBeRead() {
+        RuntimeException failure = new RuntimeException("redis://admin:secret@internal:6379");
+        when(redisTemplate.opsForStream()).thenReturn(streamOperations);
+        when(streamOperations.size(MeetingAnalysisJobPublisher.STREAM_KEY)).thenThrow(failure);
+        MeetingAnalysisJobPublisher publisher = new MeetingAnalysisJobPublisher(redisTemplate, objectMapper);
+
+        assertThatThrownBy(() -> publisher.enqueue(42L, request))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Failed to enqueue meeting analysis job")
+            .hasNoCause()
+            .hasMessageNotContaining("admin:secret")
+            .hasMessageNotContaining(RAW_TEXT);
+        verify(streamOperations, never()).add(any());
     }
 }

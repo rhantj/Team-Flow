@@ -42,10 +42,7 @@ public class HealthController {
         HealthResponse health = new HealthResponse(
             "workflow-ai-backend",
             healthy ? "UP" : "DOWN",
-            Instant.now().toString(),
-            redisUp ? "UP" : "DOWN",
-            workerReady,
-            workerAlive
+            Instant.now().toString()
         );
         HttpStatus status = healthy ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE;
         return ResponseEntity.status(status).body(ApiResponse.ok(health));
