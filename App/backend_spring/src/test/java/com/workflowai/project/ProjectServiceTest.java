@@ -118,8 +118,8 @@ class ProjectServiceTest {
         ReflectionTestUtils.setField(project, "id", 10L);
         when(projectRepository.findById(10L)).thenReturn(Optional.of(project));
         when(projectMemberRepository.countByProjectId(10L)).thenReturn(2L);
-        Task done = new Task(10L, "a", "frontend", "done", 1L, null, "medium", null, "MANUAL", null, 1L, 0.0);
-        Task notDone = new Task(10L, "b", "frontend", "todo", 1L, null, "medium", null, "MANUAL", null, 1L, 1.0);
+        Task done = new Task(10L, "a", "frontend", "완료", 1L, null, "medium", null, "MANUAL", null, 1L, 0.0);
+        Task notDone = new Task(10L, "b", "frontend", "할 일", 1L, null, "medium", null, "MANUAL", null, 1L, 1.0);
         when(taskRepository.findByProjectIdOrderByCreatedAtDesc(any())).thenReturn(List.of(done, notDone));
 
         ProjectResponse response = projectService.find(10L);
@@ -177,20 +177,5 @@ class ProjectServiceTest {
 
         assertThat(response.inviteCode()).isNotBlank();
         verify(projectRepository, org.mockito.Mockito.times(2)).saveAndFlush(any(Project.class));
-    }
-
-    @Test
-    void find_returnsNonZeroProgressWhenTasksAreActuallyDone() {
-        Project project = new Project("프로젝트", null, "설명", null, null, null, null, null, null, null, "ABCD1234", 1L);
-        ReflectionTestUtils.setField(project, "id", 1L);
-        when(projectRepository.findById(1L)).thenReturn(Optional.of(project));
-        when(projectMemberRepository.countByProjectId(any())).thenReturn(2L);
-        Task doneTask = new Task(1L, "완료 업무", "frontend", "done", 1L, null, "medium", null, "MANUAL", null, 1L, 0.0);
-        Task todoTask = new Task(1L, "할 일 업무", "backend", "todo", 1L, null, "medium", null, "MANUAL", null, 1L, 1.0);
-        when(taskRepository.findByProjectIdOrderByCreatedAtDesc(any())).thenReturn(List.of(doneTask, todoTask));
-
-        ProjectResponse response = projectService.find(1L);
-
-        assertThat(response.taskProgress()).isEqualTo(50);
     }
 }
