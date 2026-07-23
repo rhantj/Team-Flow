@@ -150,7 +150,7 @@ describe("ContributorsView drilldown panels", () => {
     expect(fetchContributionScore).toHaveBeenCalledTimes(1);
   });
 
-  it("공개 배지를 클릭하면 upsertEvaluationScore를 호출해 서버에 공개 여부를 저장한다", async () => {
+  it("공개 배지를 클릭하면 upsertEvaluationScore를 호출해 서버에 공개 여부를 저장한다 (score는 보내지 않는다)", async () => {
     renderView();
     const user = userEvent.setup();
 
@@ -159,7 +159,8 @@ describe("ContributorsView drilldown panels", () => {
     const toggleButton = await within(row).findByRole("button", { name: /비공개/ });
     await user.click(toggleButton);
 
-    await waitFor(() => expect(upsertEvaluationScore).toHaveBeenCalledWith(1, 1, 60, true));
+    // score를 undefined로 보내야 학점 계산기가 저장한 총점을 덮어쓰지 않는다 (회귀 테스트).
+    await waitFor(() => expect(upsertEvaluationScore).toHaveBeenCalledWith(1, 1, undefined, true));
     expect(await within(row).findByRole("button", { name: /^공개$/ })).toBeInTheDocument();
   });
 
@@ -246,6 +247,37 @@ describe("ContributorsView 학점 계산기", () => {
 
     await waitFor(() =>
       expect(upsertEvaluationScore).toHaveBeenCalledWith(1, 1, 78, false, 90, "A+"),
+    );
+  });
+
+  it("학점 계산기로 저장한 뒤 메인 테이블의 공개 토글을 눌러도 총점을 덮어쓰지 않는다 (회귀 테스트)", async () => {
+    // 과거 버그: 공개 토글이 기여 점수(report.score)를 그대로 score로 재전송해,
+    // 학점 계산기에서 저장한 최종 총점(78.00)이 기여 점수(60)로 되돌아갔다.
+    renderView();
+    const user = userEvent.setup();
+
+    const heading = await screen.findByText("학점 계산기");
+    const aside = heading.closest("aside") as HTMLElement;
+    const reviewerScoreInput = within(aside).getByPlaceholderText("-");
+    await user.type(reviewerScoreInput, "90");
+    await waitFor(() => expect(within(aside).getByText("78.00")).toBeInTheDocument());
+
+    const saveButton = within(aside).getByRole("button", { name: "저장" });
+    await user.click(saveButton);
+    await waitFor(() =>
+      expect(upsertEvaluationScore).toHaveBeenCalledWith(1, 1, 78, false, 90, undefined),
+    );
+
+    vi.mocked(upsertEvaluationScore).mockClear();
+
+    const nameCell = await screen.findByText("김민준", { selector: ".text-sm:not(.calculator-row-name)" });
+    const row = nameCell.closest('[role="button"]') as HTMLElement;
+    const toggleButton = await within(row).findByRole("button", { name: /비공개/ });
+    await user.click(toggleButton);
+
+    // score 자리에 undefined가 전달되어야 서버가 기존 총점(78.00)을 그대로 유지한다.
+    await waitFor(() =>
+      expect(upsertEvaluationScore).toHaveBeenCalledWith(1, 1, undefined, true),
     );
   });
 

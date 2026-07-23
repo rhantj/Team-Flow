@@ -237,7 +237,7 @@ export function ContributorsView() {
       });
   }, [currentProjectId, members]);
 
-  const togglePublic = async (memberId: string, nextScore: number) => {
+  const togglePublic = async (memberId: string) => {
     if (currentProjectId == null) return;
     const wasPublic = publicFlags[memberId] ?? false;
     const nextIsPublic = !wasPublic;
@@ -245,7 +245,8 @@ export function ContributorsView() {
     setPublicFlags((prev) => ({ ...prev, [memberId]: nextIsPublic }));
     setPublicFlagError(null);
     try {
-      await upsertEvaluationScore(currentProjectId, Number(memberId), nextScore, nextIsPublic);
+      // score를 보내지 않는다(undefined) — 학점 계산기가 저장해 둔 총점을 여기서 덮어쓰면 안 된다.
+      await upsertEvaluationScore(currentProjectId, Number(memberId), undefined, nextIsPublic);
     } catch {
       setPublicFlags((prev) => ({ ...prev, [memberId]: wasPublic }));
       setPublicFlagError("공개 여부를 저장하지 못했습니다.");
@@ -623,7 +624,7 @@ export function ContributorsView() {
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
-                                togglePublic(report.memberId, report.score);
+                                togglePublic(report.memberId);
                               }}
                               className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full cursor-pointer transition-colors ${
                                 publicFlags[report.memberId]

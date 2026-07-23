@@ -1,11 +1,15 @@
 package com.workflowai.evaluation;
 
 import com.workflowai.common.ApiResponse;
+import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.security.CurrentUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import java.math.BigDecimal;
 import java.util.List;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,9 +24,14 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1")
 public class EvaluationScoreController {
     private final EvaluationScoreRepository evaluationScoreRepository;
+    private final ProjectMemberRepository projectMemberRepository;
 
-    public EvaluationScoreController(EvaluationScoreRepository evaluationScoreRepository) {
+    public EvaluationScoreController(
+        EvaluationScoreRepository evaluationScoreRepository,
+        ProjectMemberRepository projectMemberRepository
+    ) {
         this.evaluationScoreRepository = evaluationScoreRepository;
+        this.projectMemberRepository = projectMemberRepository;
     }
 
     @Operation(
@@ -33,16 +42,22 @@ public class EvaluationScoreController {
     @PostMapping("/projects/{projectId}/evaluations")
     @PreAuthorize("@projectAccess.hasRole(#projectId, 'REVIEWER')")
     @Transactional
-    public ApiResponse<EvaluationScoreResponse> upsert(
+    public ResponseEntity<ApiResponse<EvaluationScoreResponse>> upsert(
         @PathVariable Long projectId,
-        @RequestBody EvaluationScoreRequest request
+        @Valid @RequestBody EvaluationScoreRequest request
     ) {
+        if (!projectMemberRepository.existsByProjectIdAndUserId(projectId, request.userId())) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.fail("USER_NOT_PROJECT_MEMBER", "해당 사용자는 이 프로젝트의 멤버가 아닙니다."));
+        }
         EvaluationScore entity = evaluationScoreRepository.findByProjectIdAndUserId(projectId, request.userId())
             .orElseGet(() -> new EvaluationScore(projectId, request.userId(), BigDecimal.ZERO, false));
-        entity.setScore(request.score());
         entity.setPublic(request.isPublic());
-        // 공개 여부만 토글하는 호출(학점 계산기 미경유)은 reviewerScore/grade를 보내지 않는다 —
-        // null이면 기존 값을 그대로 유지해 덮어쓰지 않는다.
+        // score/reviewerScore/grade는 모두 null이면 기존 값을 그대로 유지한다 — 공개/비공개만
+        // 토글하는 호출(학점 계산기 미경유)이 score를 보내지 않아도 기존에 저장된 총점을 덮어쓰지 않는다.
+        if (request.score() != null) {
+            entity.setScore(request.score());
+        }
         if (request.reviewerScore() != null) {
             entity.setReviewerScore(request.reviewerScore());
         }
@@ -50,7 +65,7 @@ public class EvaluationScoreController {
             entity.setGrade(request.grade());
         }
         EvaluationScore saved = evaluationScoreRepository.save(entity);
-        return ApiResponse.ok(EvaluationScoreResponse.from(saved));
+        return ResponseEntity.ok(ApiResponse.ok(EvaluationScoreResponse.from(saved)));
     }
 
     @Operation(

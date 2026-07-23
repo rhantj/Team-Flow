@@ -3,6 +3,7 @@ package com.workflowai.evaluation;
 import com.workflowai.common.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -44,7 +45,7 @@ public class EvaluationSettingController {
     @Transactional
     public ApiResponse<EvaluationSettingResponse> upsert(
         @PathVariable Long projectId,
-        @RequestBody EvaluationSettingRequest request
+        @Valid @RequestBody EvaluationSettingRequest request
     ) {
         EvaluationSetting entity = evaluationSettingRepository.findById(projectId)
             .orElseGet(() -> new EvaluationSetting(projectId, request.contributionRatio()));

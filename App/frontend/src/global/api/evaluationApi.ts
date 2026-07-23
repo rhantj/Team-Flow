@@ -11,13 +11,13 @@ export interface EvaluationScoreDto {
 
 /**
  * 심사자가 팀원 최종 평가 점수를 확정하거나 공개 여부를 토글할 때 호출한다. 심사자만 호출 가능.
- * reviewerScore/grade는 학점 계산기에서 저장할 때만 채워 보낸다 — 공개/비공개만 토글할 때는
- * 생략하면 서버가 기존 값을 그대로 유지한다.
+ * score/reviewerScore/grade는 모두 생략(undefined)하면 서버가 기존 값을 그대로 유지한다 —
+ * 공개/비공개만 토글할 때는 score를 반드시 생략해야 학점 계산기가 저장한 총점을 덮어쓰지 않는다.
  */
 export function upsertEvaluationScore(
   projectId: number,
   userId: number,
-  score: number,
+  score: number | undefined,
   isPublic: boolean,
   reviewerScore?: number,
   grade?: string,
@@ -27,7 +27,7 @@ export function upsertEvaluationScore(
     body: JSON.stringify({
       projectId,
       userId,
-      score,
+      score: score ?? null,
       isPublic,
       reviewerScore: reviewerScore ?? null,
       grade: grade ?? null,
