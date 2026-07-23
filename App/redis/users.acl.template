@@ -1,0 +1,4 @@
+user default off resetkeys resetchannels -@all
+user admin on >__ADMIN_PASSWORD__ ~* &* +@all
+user spring on >__SPRING_PASSWORD__ resetkeys ~meeting-analysis* -@all +ping +hello +client|setinfo +client|setname +select +xadd +xgroup +xreadgroup +xack +xdel +eval +evalsha
+user fastapi on >__FASTAPI_PASSWORD__ resetkeys ~meeting_analysis:* ~rag_answer:* -@all +ping +hello +client|setinfo +client|setname +select +get +set +del

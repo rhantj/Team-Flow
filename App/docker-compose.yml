@@ -28,8 +28,18 @@ services:
   redis:
     image: redis:7-alpine
     container_name: workflow-redis
+    command:
+      - redis-server
+      - --appendonly
+      - 'yes'
+      - --appendfsync
+      - everysec
+      - --maxmemory-policy
+      - noeviction
     ports:
       - '6379:6379'
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
@@ -161,3 +171,4 @@ services:
 
 volumes:
   db-data:
+  redis-data:
