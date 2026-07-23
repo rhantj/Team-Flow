@@ -128,7 +128,8 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ## 8. DB 마이그레이션 적용 (첫 기동 후 1회)
 
 compose는 `backend_spring/src/main/resources/db/init`만 자동 실행한다.
-`docs/db/migrations/001~011`은 **수동으로 적용해야 한다.**
+`docs/db/migrations/001~010`은 **수동으로 적용해야 한다.** `011`(레거시 `users.field` 정리)은
+파괴적 변경이라 이 루프에 일부러 포함하지 않는다 — 8-1절을 볼 것.
 
 init 스크립트는 `document_chunks.embedding`을 JSONB로 만들고, 마이그레이션 001이 이걸
 `VECTOR(768)`로, 007이 다시 `VECTOR(1024)`로 바꾼다(RAG 챗봇 임베딩 모델이
@@ -138,6 +139,9 @@ Ollama/nomic-embed-text(768차원)에서 Hugging Face/BAAI/bge-m3(1024차원)로
 ```bash
 cd work-flow
 for f in docs/db/migrations/0*.sql; do
+  case "$f" in
+    *011_drop_legacy_field.sql) continue ;;  # 8-1절에서 별도로, 수동으로만 실행한다
+  esac
   echo "적용: $f"
   docker exec -i workflow-db psql -U postgres -d workflow < "$f"
 done
@@ -167,21 +171,35 @@ cd work-flow/App/backend_fastapi
 python -m llm_rag_assistant.scripts.reembed_document_chunks
 ```
 
-> ⚠️ **011 최초 적용 시 배포 순서 주의:** 011은 `users.field`를 `field_legacy_removed`로
-> 이름만 바꿔 보관한다(진짜 `DROP` 아님, 문제 생기면 `RENAME COLUMN field_legacy_removed TO
-> field`로 즉시 원복 가능). 006/010처럼 재배포 때마다 다시 실행돼도 안전하도록 idempotent하게
-> 작성돼 있지만, **처음으로 실제 rename이 일어나는 그 배포 순간만큼은** 옛 컬럼명 `field`를
-> 참조하는 구버전 인스턴스가 아직 떠 있으면 그 인스턴스는 즉시 오류를 낸다. 현재 OCI 배포는
-> 단일 컨테이너(`docker compose up -d --build`가 컨테이너를 통째로 교체)라 신·구 인스턴스가
-> 동시에 DB에 붙어있는 시간이 짧지만, 향후 다중 인스턴스로 확장하면 반드시 모든 인스턴스가
-> 새 코드로 교체된 뒤에 이 for 루프를 돌릴 것.
->
-> 만약 rename 이후 구버전으로 **롤백**했다가(006이 for 루프에서 재실행되며 `field` 컬럼이
-> 다시 생겨 구버전이 정상적으로 값을 기록할 수 있게 됨) 다시 신버전으로 재배포하면, 011은
-> 그 `field`를 그냥 지우지 않는다 — 값이 하나라도 남아있으면 자동으로 `field_needs_manual_review`
-> 컬럼으로 옮겨 보관하고 Postgres 로그에 `WARNING`을 남긴다. 이 컬럼이 보이면 롤백 기간에
-> 실제로 쓰인 데이터가 있다는 뜻이므로, `field_tags`로 수동 병합할지 검토한 뒤 정리할 것 —
-> 자동으로는 절대 삭제하지 않는다.
+## 8-1. (선택, 1회) 레거시 users.field 정리
+
+011은 `users.field`를 `field_legacy_removed`로 이름만 바꿔 보관한다(진짜 `DROP` 아님, 문제
+생기면 `RENAME COLUMN field_legacy_removed TO field`로 즉시 원복 가능). 위 8절의 자동 for
+루프에는 **일부러 포함하지 않았다** — 이 컬럼명을 참조하는 구버전 인스턴스가 아직 하나라도
+떠 있으면 그 인스턴스가 즉시 오류를 내는 파괴적 변경이라, "재배포할 때마다 자동으로 도는"
+경로에 얹어두면 안 되기 때문이다. 대신 아래 체크리스트를 사람이 직접 확인한 뒤 별도로,
+**딱 한 번만** 실행한다.
+
+체크리스트 (모두 확인한 뒤 실행할 것):
+
+- [ ] `field_tags` 기반 코드(현재 버전)가 배포된 지 최소 한 배포 주기 이상 지났고, 그동안
+      아바타/개인정보 관련 오류가 없었다.
+- [ ] `field`를 참조하는 구버전 인스턴스가 하나도 남아있지 않다(현재 OCI는 단일 컨테이너라
+      `docker compose up -d --build`로 컨테이너가 통째로 교체되므로 일반적으로는 문제 없지만,
+      다중 인스턴스로 확장했다면 전체 인스턴스 교체 완료를 확인할 것).
+
+```bash
+cd work-flow
+docker exec -i workflow-db psql -U postgres -d workflow < docs/db/migrations/011_drop_legacy_field.sql
+```
+
+이후 재배포에서 이 파일을 다시 실행해도(재실행 대비 idempotent) field가 이미 없으면 아무
+일도 하지 않는다. 다만 이 단계를 건너뛴 채로 구버전으로 **롤백**했다가(수동으로 006을 다시
+적용하는 등, `field` 컬럼이 재생성돼 구버전이 값을 다시 기록할 수 있는 상태) 신버전으로
+재배포한 뒤 011을 실행하면, 값이 남아있는 `field`를 그냥 지우지 않는다 — 자동으로
+`field_needs_manual_review` 컬럼으로 옮겨 보관하고 Postgres 로그에 `WARNING`을 남긴다. 이
+컬럼이 보이면 롤백 기간에 실제로 쓰인 데이터가 있다는 뜻이므로, `field_tags`로 수동 병합할지
+검토한 뒤 정리할 것 — 자동으로는 절대 삭제하지 않는다.
 
 ## 9. 검증
 

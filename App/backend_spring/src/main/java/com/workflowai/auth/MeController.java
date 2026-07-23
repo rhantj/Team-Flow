@@ -16,6 +16,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -25,6 +28,7 @@ import java.util.stream.Collectors;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
+import javax.sql.DataSource;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -50,34 +54,20 @@ public class MeController {
     private final UserRepository userRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final ProjectRepository projectRepository;
+    private final DataSource dataSource;
     private final String uploadsDir;
-
-    // 같은 유저가 아바타를 동시에 두 번 업로드하면, 두 요청이 서로 다른 oldPath(둘 다 업로드 전
-    // 상태)를 읽어 각자의 새 파일만 알고 있어 나중에 덮어써진 쪽의 파일이 고아로 남는다.
-    // 유저 단위로 read-store-save-cleanup 전체를 직렬화해 이 경쟁을 없앤다. 유저 ID를 키로 쓰는
-    // 맵 대신 고정 개수(64개) 스트라이프 락을 두어, 얼마나 많은 유저가 다녀가든 메모리가 늘지
-    // 않는다 — 서로 다른 유저가 같은 스트라이프에 걸리면 불필요하게 잠깐 직렬화될 수 있지만
-    // 안전성에는 영향이 없다. 다중 백엔드 인스턴스로 수평 확장할 경우에는 이 JVM 내부 락으로는
-    // 인스턴스 간 경쟁을 막지 못하므로 DB 어드바이저리 락 등으로 바꿔야 한다(현재는 단일 인스턴스
-    // 배포라 해당 없음).
-    private static final int AVATAR_LOCK_STRIPES = 64;
-    private final Object[] avatarUploadLocks = new Object[AVATAR_LOCK_STRIPES];
-
-    {
-        for (int i = 0; i < avatarUploadLocks.length; i++) {
-            avatarUploadLocks[i] = new Object();
-        }
-    }
 
     public MeController(
         UserRepository userRepository,
         ProjectMemberRepository projectMemberRepository,
         ProjectRepository projectRepository,
+        DataSource dataSource,
         @Value("${workflow.uploads.dir}") String uploadsDir
     ) {
         this.userRepository = userRepository;
         this.projectMemberRepository = projectMemberRepository;
         this.projectRepository = projectRepository;
+        this.dataSource = dataSource;
         this.uploadsDir = uploadsDir;
     }
 
@@ -169,7 +159,7 @@ public class MeController {
         String detectedFormat;
         try {
             detectedFormat = detectImageFormat(file);
-        } catch (IllegalArgumentException e) {
+        } catch (AvatarDimensionExceededException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("IMAGE_TOO_LARGE", e.getMessage()));
         }
         if (detectedFormat == null) {
@@ -178,37 +168,71 @@ public class MeController {
         }
 
         Long userId = CurrentUser.id();
-        Object lock = avatarUploadLocks[Math.floorMod(userId.hashCode(), AVATAR_LOCK_STRIPES)];
-        synchronized (lock) {
-            User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalStateException("사용자를 찾을 수 없습니다."));
-            String oldPath = user.getProfileImagePath();
-
-            String newPath;
+        // 같은 유저가 아바타를 동시에 두 번 업로드하면, 두 요청이 서로 다른 oldPath(둘 다 업로드 전
+        // 상태)를 읽어 각자의 새 파일만 알고 있어 나중에 덮어써진 쪽의 파일이 고아로 남는다.
+        // 유저 단위로 read-store-save-cleanup 전체를 직렬화해 이 경쟁을 없애야 하는데, JVM 내부
+        // synchronized 락은 백엔드가 여러 인스턴스로 뜨면 인스턴스마다 별도 락이라 무용지물이다.
+        // 대신 Postgres 세션 단위 advisory lock(pg_advisory_lock)을 쓴다 — DB 자체가 잠금을
+        // 중재하므로 인스턴스가 몇 개든 같은 userId에 대해서는 전역으로 직렬화된다. JPA가 쓰는
+        // 커넥션과는 별개의 커넥션을 이 락 전용으로 잡아, 이 메서드가 의도적으로 @Transactional을
+        // 쓰지 않는 것(아래 설명)과 완전히 독립적으로 동작하게 한다.
+        try (Connection lockConnection = dataSource.getConnection()) {
+            acquireAvatarLock(lockConnection, userId);
             try {
-                newPath = storeAvatar(user.getId(), file, detectedFormat);
-            } catch (IOException e) {
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(ApiResponse.fail("UPLOAD_FAILED", "이미지 업로드에 실패했습니다."));
-            }
+                User user = userRepository.findById(userId)
+                    .orElseThrow(() -> new IllegalStateException("사용자를 찾을 수 없습니다."));
+                String oldPath = user.getProfileImagePath();
 
-            try {
-                user.setProfileImagePath(newPath);
-                userRepository.saveAndFlush(user);
-            } catch (RuntimeException e) {
-                // DB 반영이 실패하면 방금 쓴 새 파일을 되돌린다 — 새 파일은 이전 파일과 이름이 겹치지
-                // 않으므로(storeAvatar 참고) 기존 사진은 그대로 남는다. DB 경로와 실제 파일이 어긋나지 않게 한다.
-                deleteAvatarFile(newPath);
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(ApiResponse.fail("UPLOAD_FAILED", "이미지 업로드에 실패했습니다."));
-            }
+                String newPath;
+                try {
+                    newPath = storeAvatar(user.getId(), file, detectedFormat);
+                } catch (IOException e) {
+                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(ApiResponse.fail("UPLOAD_FAILED", "이미지 업로드에 실패했습니다."));
+                }
 
-            // DB에 새 경로가 반영된 게 확인된 뒤에만 이전 파일을 지운다.
-            if (oldPath != null && !oldPath.equals(newPath)) {
-                deleteAvatarFile(oldPath);
-            }
+                try {
+                    user.setProfileImagePath(newPath);
+                    userRepository.saveAndFlush(user);
+                } catch (RuntimeException e) {
+                    // DB 반영이 실패하면 방금 쓴 새 파일을 되돌린다 — 새 파일은 이전 파일과 이름이 겹치지
+                    // 않으므로(storeAvatar 참고) 기존 사진은 그대로 남는다. DB 경로와 실제 파일이 어긋나지 않게 한다.
+                    deleteAvatarFile(newPath);
+                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(ApiResponse.fail("UPLOAD_FAILED", "이미지 업로드에 실패했습니다."));
+                }
 
-            return ResponseEntity.ok(ApiResponse.ok(UserSummary.from(user)));
+                // DB에 새 경로가 반영된 게 확인된 뒤에만 이전 파일을 지운다.
+                if (oldPath != null && !oldPath.equals(newPath)) {
+                    deleteAvatarFile(oldPath);
+                }
+
+                return ResponseEntity.ok(ApiResponse.ok(UserSummary.from(user)));
+            } finally {
+                releaseAvatarLock(lockConnection, userId);
+            }
+        } catch (SQLException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ApiResponse.fail("UPLOAD_FAILED", "이미지 업로드에 실패했습니다."));
+        }
+    }
+
+    private void acquireAvatarLock(Connection connection, long userId) throws SQLException {
+        try (PreparedStatement ps = connection.prepareStatement("SELECT pg_advisory_lock(?)")) {
+            ps.setLong(1, userId);
+            ps.execute();
+        }
+    }
+
+    /**
+     * 곧 이 커넥션을 닫으므로(호출부의 try-with-resources) unlock 실패는 무시해도 안전하다 —
+     * 세션이 끝나면 Postgres가 그 세션이 들고 있던 advisory lock을 전부 자동으로 해제한다.
+     */
+    private void releaseAvatarLock(Connection connection, long userId) {
+        try (PreparedStatement ps = connection.prepareStatement("SELECT pg_advisory_unlock(?)")) {
+            ps.setLong(1, userId);
+            ps.execute();
+        } catch (SQLException ignored) {
         }
     }
 
@@ -235,7 +259,7 @@ public class MeController {
      * 같은 리더로 실제 픽셀 데이터까지 끝까지 디코딩되는지도 확인한다 — 헤더만 보고 포맷을
      * 판별하는 것만으로는 본문이 잘리거나 손상된 파일을 걸러내지 못한다. Content-Type 헤더는
      * 신뢰하지 않는다. 반환값은 저장 시 그대로 확장자로 쓰인다 ("png" 또는 "jpg"), 그 외에는 null.
-     * 가로/세로가 MAX_AVATAR_DIMENSION을 넘으면 IllegalArgumentException을 던진다 — 파일 용량은
+     * 가로/세로가 MAX_AVATAR_DIMENSION을 넘으면 AvatarDimensionExceededException을 던진다 — 파일 용량은
      * 10MB 이하로 작아도 압축을 풀면 거대한 비트맵이 되는 "압축 폭탄" 이미지로 메모리가 고갈되는
      * 것을 막기 위해, 전체 디코딩(read)을 하기 전에 크기부터 먼저 확인한다. 2000x2000은 스마트폰
      * 카메라 사진 등 일반적인 프로필 사진 해상도를 정상적으로 통과시키면서도, 요청당 디코딩 버퍼를
@@ -265,14 +289,19 @@ public class MeController {
 
                 reader.setInput(iis);
                 if (reader.getWidth(0) > MAX_AVATAR_DIMENSION || reader.getHeight(0) > MAX_AVATAR_DIMENSION) {
-                    throw new IllegalArgumentException(
+                    throw new AvatarDimensionExceededException(
                         "이미지 해상도는 " + MAX_AVATAR_DIMENSION + "x" + MAX_AVATAR_DIMENSION + " 이하여야 합니다."
                     );
                 }
                 reader.read(0); // 헤더 인식과 별개로 전체 디코딩이 실제로 되는지 확인 (실패 시 IOException)
                 return extension;
-            } catch (IllegalArgumentException e) {
-                throw e; // 의도적으로 던진 해상도 초과 예외는 그대로 전파한다
+            } catch (AvatarDimensionExceededException e) {
+                // 우리가 의도적으로 던진 해상도 초과 예외만 그대로 전파한다. reader.getWidth/getHeight/read(0)
+                // 자체도 손상된 이미지에 대해 IllegalArgumentException을 던질 수 있는데, 그건 여기서
+                // 잡지 않고 아래 IOException|RuntimeException 분기로 흘려보내 INVALID_FILE_TYPE으로
+                // 처리한다 — 두 원인을 구분하지 않고 전부 해상도 초과로 뭉뚱그리면 손상된 파일에도
+                // 부정확한 오류 코드(IMAGE_TOO_LARGE)가 나간다.
+                throw e;
             } catch (IOException | RuntimeException e) {
                 return null;
             } finally {
@@ -280,6 +309,12 @@ public class MeController {
             }
         } catch (IOException e) {
             return null;
+        }
+    }
+
+    private static final class AvatarDimensionExceededException extends RuntimeException {
+        AvatarDimensionExceededException(String message) {
+            super(message);
         }
     }
 
