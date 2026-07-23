@@ -4,18 +4,20 @@ import { TaskStatusPill } from "../../board/components/TaskStatusPill";
 import type { TaskStatus } from "../../board/libs/types/task";
 import { updateTaskPosition } from "../../board/libs/utils/taskApi";
 import type { DashboardTaskDto } from "../libs/types/dashboard";
-import { normalizeTaskStatus } from "../libs/utils/dashboardTaskUtils";
+import { nextPositionForStatus, normalizeTaskStatus } from "../libs/utils/dashboardTaskUtils";
 
 const STATUS_OPTIONS: TaskStatus[] = ["todo", "inprogress", "blocked", "done"];
 
 interface TaskStatusPopupProps {
   task: DashboardTaskDto;
+  /** 대상 컬럼 끝 position을 계산하기 위한 같은 프로젝트의 전체 업무 목록. */
+  tasks: DashboardTaskDto[];
   projectId: number;
   onClose: () => void;
   onChanged: (newStatus: TaskStatus) => void;
 }
 
-export function TaskStatusPopup({ task, projectId, onClose, onChanged }: TaskStatusPopupProps) {
+export function TaskStatusPopup({ task, tasks, projectId, onClose, onChanged }: TaskStatusPopupProps) {
   const currentStatus = normalizeTaskStatus(task.status);
   const [selected, setSelected] = useState<TaskStatus>(currentStatus);
   const [submitting, setSubmitting] = useState(false);
@@ -29,7 +31,9 @@ export function TaskStatusPopup({ task, projectId, onClose, onChanged }: TaskSta
     setSubmitting(true);
     setError(null);
     try {
-      await updateTaskPosition(task.id, selected, task.position, projectId);
+      // 원래 있던 컬럼의 position을 그대로 넘기면 대상 컬럼(selected)의 기존 카드와
+      // 값이 겹칠 수 있어, 보드 드래그앤드롭과 동일한 규칙으로 대상 컬럼 끝에 이어붙인다.
+      await updateTaskPosition(task.id, selected, nextPositionForStatus(tasks, selected), projectId);
       onChanged(selected);
     } catch {
       setError("상태 변경에 실패했습니다. 잠시 후 다시 시도해주세요.");

@@ -30,6 +30,11 @@ const LEGEND = [
   { label: "정상 진행", color: "#3B5BDB" },
 ];
 
+const STATUS_CHANGE_LABEL: Record<"done" | "blocked", string> = {
+  done: "완료",
+  blocked: "블로커",
+};
+
 export function InProgressPage() {
   const { currentProjectId } = useAuth();
   const { data: tasks, loading, error, refetch } = useDashboardTasks(currentProjectId);
@@ -37,6 +42,8 @@ export function InProgressPage() {
   const navigate = useNavigate();
   const onBack = () => navigate("/dashboard");
   const [dueDateTarget, setDueDateTarget] = useState<DashboardTaskDto | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
   const inProgressTasks = tasks.filter(task => normalizeTaskStatus(task.status) === "inprogress");
   const updateNeededCount = inProgressTasks.filter(task => (daysSince(task.updatedAt) ?? 0) >= 3).length;
   const riskPredictions = progress?.delayRisks.filter(risk => isDelayRisk(risk.result)) ?? [];
@@ -46,10 +53,19 @@ export function InProgressPage() {
   const projectDDay = formatDDay(progress?.projectDeadline);
   const monitoringQuestion = `진행 중 업무 ${inProgressTasks.length}개를 점검해줘. 3일 이상 업데이트가 없는 업무는 ${updateNeededCount}개, 지연 위험 업무는 ${dangerCount}개, 프로젝트 마감은 ${projectDDay}야. 지금 확인할 업무와 권장 조치를 우선순위대로 알려줘. 출력은 3문장 이내로 해.`;
 
-  const changeStatus = async (taskId: string, status: "done" | "blocked") => {
+  const changeStatus = async (taskId: string, taskTitle: string, status: "done" | "blocked") => {
     if (currentProjectId == null) return;
-    await updateTaskPosition(taskId, status, nextPositionForStatus(tasks, status), currentProjectId);
-    refetch();
+    if (!window.confirm(`'${taskTitle}' 업무를 ${STATUS_CHANGE_LABEL[status]}(으)로 변경할까요?`)) return;
+    setActionError(null);
+    setPendingTaskId(taskId);
+    try {
+      await updateTaskPosition(taskId, status, nextPositionForStatus(tasks, status), currentProjectId);
+      refetch();
+    } catch {
+      setActionError("상태 변경에 실패했습니다. 잠시 후 다시 시도해주세요.");
+    } finally {
+      setPendingTaskId(null);
+    }
   };
 
   return (
@@ -71,6 +87,7 @@ export function InProgressPage() {
       </div>
 
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{error}</div>}
+      {actionError && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{actionError}</div>}
 
       <div className="grid grid-cols-4 gap-3">
         <DetailStatCard label="진행 중" value={loading ? "..." : inProgressTasks.length} sub="활성 업무" color="#3B5BDB" icon={Clock} />
@@ -154,10 +171,18 @@ export function InProgressPage() {
                 </div>
 
                 <div className="flex items-center flex-wrap gap-2 pt-3 border-t border-border">
-                  <button onClick={() => changeStatus(task.id, "done")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
+                  <button
+                    onClick={() => changeStatus(task.id, task.title, "done")}
+                    disabled={pendingTaskId === task.id}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+                  >
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> 완료 처리
                   </button>
-                  <button onClick={() => changeStatus(task.id, "blocked")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
+                  <button
+                    onClick={() => changeStatus(task.id, task.title, "blocked")}
+                    disabled={pendingTaskId === task.id}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+                  >
                     <AlertTriangle className="w-3.5 h-3.5 text-red-500" /> 블로커 전환
                   </button>
                   <button onClick={() => setDueDateTarget(task)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors">
