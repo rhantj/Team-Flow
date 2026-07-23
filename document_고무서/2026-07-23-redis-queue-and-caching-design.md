@@ -65,14 +65,25 @@ dead-letter queue, 신규 DB 컬럼, 별도 Worker 서비스는 여전히 범위
 7. **상태값**: `Meeting.analysisStatus` 필드를 그대로 유지 (`"processing"` / `"completed"` /
    `"failed"`). 구조 문서가 제안하는 `uploaded`/`queued` 세분화된 상태값, 그리고
    `analysis_error_message`/`analysis_started_at`/`analysis_completed_at`/
-   `analysis_retry_count`/`analysis_job_id` 컬럼 추가는 4단계(retry/모니터링) 범위이므로
+   `analysis_retry_count` 컬럼 추가는 4단계(retry/모니터링) 범위이므로
    이번엔 도입하지 않는다. REST 응답의 `"PROCESSING"` 문자열도 그대로 유지 — 프론트 변경 없음.
+
+   **구현에서 변경됨**: `analysis_job_id`(UUID) 컬럼은 이번 범위에 **포함됐다**
+   (`docs/db/migrations/010_meetings_analysis_job_id.sql`). 재시도로 새 job을 넣었을 때
+   먼저 돌던 옛 job의 결과가 나중에 도착해 새 결과를 덮어쓰는 문제를 막으려면 세대 식별자가
+   필요했기 때문이다. 상태값만으로는 "어느 세대의 결과인지"를 구분할 수 없다.
 8. **중복 실행 방지**: 기존과 동일하게 retry 엔드포인트는 `analysisStatus == "failed"`인
    회의만 허용한다. `processing`/`completed` 상태에서는 새 job을 등록하지 않는다.
 9. **enqueue 실패 처리**: DB 커밋 후 Stream 등록이 실패하면
    `MeetingAnalysisPersistence.saveAnalysisFailure()`를 호출해 별도 트랜잭션에서 상태를
    `failed`로 바꾼다. 사용자 수동 retry 경로를 유지한다. DB와 Redis의 완전한 원자성을 위한
    transactional outbox는 신규 DB 스키마가 필요하므로 이번 범위에서 제외한다.
+
+   **구현에서 변경됨**: 회의록 분석 큐의 outbox는 위 설명대로 도입하지 않았다. 다만 RAG 담당자
+   동기화 실패용으로 `rag_assignee_sync_failures` 테이블을 추가했다
+   (`docs/db/migrations/009_rag_assignee_sync_failures.sql`). 기존 best-effort 비동기 호출이
+   실패하면 예외를 로그만 남기고 삼켜서 복구 경로가 없다는 리뷰 지적을 반영한 것으로,
+   실패 기록을 남겨 재처리할 수 있게 하는 좁은 범위의 조치다.
 10. **장애 제어**: Redis 읽기 오류에는 최대 5초의 지수 backoff를 적용해 busy loop와 로그 폭주를
     막는다. 종료 시 Worker interrupt 후 제한 시간 동안 join한다. Spring→FastAPI HTTP 호출에는
     connect 5초/read 45초 timeout을 적용하고, 컨테이너 `stop_grace_period`는 60초로 둔다.
@@ -130,13 +141,22 @@ Frontend → GET .../status 폴링 (기존과 동일, 변경 없음)
   다시 태우지 않음.
 - **위치**: `llm_rag_assistant/app/services/chat_service.py`의 `answer_question()`, `embed_text`
   호출 직전.
-- **캐시 키**: `rag_answer:{project_id}:{assignee_id 또는 "none"}:{질문 원문 정규화 후 SHA256 해시}`
+- **캐시 키**: `rag_answer:{project_id}:{assignee_id 또는 "none"}:{SHA256 해시}`
   — 질문이 한 글자라도 다르면 miss (유사도 기반 캐싱은 하지 않음, 구현 단순성 우선).
+  해시 입력에는 schema version, project_id, assignee_id, 질문 원문, 그리고 아래 cache epoch가
+  포함된다.
 - **캐시 값**: `RagQueryResponse` 직렬화(JSON) — `answer` + `sources`.
 - **TTL**: 30분.
-- **장애/일관성**: client 생성·조회·역직렬화·저장 실패는 warning 로그 후 cache miss로
-  처리한다. 프로젝트 데이터 변경에 대한 즉시 invalidation은 하지 않고 최대 30분 stale을
-  허용한다.
+- **일관성 (구현에서 변경됨)**: 최초 설계는 "즉시 invalidation 없이 최대 30분 stale 허용"이었으나,
+  구현에서는 **프로젝트 단위 cache epoch 방식의 즉시 무효화를 도입했다.** 문서 삭제 후에도 삭제된
+  내용이 30분간 답변에 남는 것이 검토 과정에서 허용 불가로 판단됐기 때문이다.
+  - `rag_epoch:{project_id}` 키를 두고, ingest/삭제/담당자 동기화 시 `INCR`한다
+    (`core/cache.py`의 `advance_rag_project_epoch`).
+  - epoch가 키 해시에 포함되므로 개별 캐시 키를 추적해 지울 필요가 없다.
+  - DB 변경 전후로 두 번 올린다. 쓰기 도중 epoch를 읽은 리더가 낡은 답을 캐싱하는 것을 막기 위함.
+- **장애 처리**: client 생성·조회·역직렬화·저장 실패는 warning 로그 후 cache miss로 처리한다.
+  epoch 무효화 실패도 예외를 전파하지 않고 warning 후 진행한다 — 캐시는 DB 원본의 파생물이므로
+  무효화 실패가 원본 변경 API를 실패시켜서는 안 된다. 이 경우 낡은 답변이 TTL(30분) 동안 남을 수 있다.
 
 ## 공통 인프라
 
@@ -155,10 +175,36 @@ Frontend → GET .../status 폴링 (기존과 동일, 변경 없음)
 
 ## 이번 범위에서 제외되는 것 (명시적 보류)
 
+> 이 절은 구현 완료 후 실제 범위에 맞게 정정했다. 아래 "구현에서 범위에 포함된 것"도 함께 볼 것.
+
 - 회의록 분석 자동 retry 횟수/timeout/dead-letter queue 정책
-- transactional outbox와 Redis TLS(단일 호스트 내부 Docker network이므로 이번 범위에서는 ACL 적용)
+- 회의록 분석 큐의 transactional outbox, Redis TLS
+  (단일 호스트 내부 Docker network이므로 이번 범위에서는 ACL 적용)
 - `analysis_error_message`/`analysis_started_at`/`analysis_completed_at`/
-  `analysis_retry_count`/`analysis_job_id` DB 컬럼 추가
+  `analysis_retry_count` DB 컬럼 추가
 - 기여도 리포트 LLM 요약 캐싱, 워크로드 대시보드 캐싱, Spring 대시보드 집계 캐싱
   (`2026-07-21-redis-caching-candidates.md`의 후보 1~3)
 - Worker 수평 확장, 별도 Worker 서비스 분리
+
+## 구현에서 범위에 포함된 것 (설계 대비 추가)
+
+리뷰를 거치며 최초 설계보다 범위가 늘어난 항목이다. 각 항목의 근거는 위 해당 절에 적어 두었다.
+
+| 항목 | 산출물 | 이유 |
+| --- | --- | --- |
+| RAG 답변 캐시 즉시 무효화 | `rag_epoch:{project_id}`, `advance_rag_project_epoch` | 삭제된 내용이 30분간 답변에 남는 것을 허용 불가로 판단 |
+| `meetings.analysis_job_id` 컬럼 | 마이그레이션 010 | 재시도 시 옛 job의 결과가 새 결과를 덮어쓰는 것을 막을 세대 식별자가 필요 |
+| `rag_assignee_sync_failures` 테이블 | 마이그레이션 009 | 담당자 동기화 실패가 로그만 남고 복구 경로가 없다는 지적 반영 |
+| Spring liveness/readiness 분리 | `/api/v1/health/live`, `/api/v1/health/ready` | 배포 판정에 의존 서비스 상태가 필요. 기존 `/api/v1/health`는 liveness 의미를 유지 |
+| Redis ACL 사용자 분리 + AOF | `App/redis/users.acl.template` | 운영 노출 축소 및 Stream 유실 방지 |
+
+## 배포 전 필수 선행 작업
+
+이 변경은 무중단 롤아웃이 아니다. 구버전 컨테이너는 새 Stream/outbox를 처리하지 못하므로
+롤백해도 정상 동작이 보장되지 않는다. 배포 전에 다음이 모두 갖춰져야 한다.
+
+1. `App/.env`에 `REDIS_ADMIN_PASSWORD`, `REDIS_SPRING_PASSWORD`, `REDIS_FASTAPI_PASSWORD`
+   추가. 각 32~128자, `[A-Za-z0-9_-]`만 사용, 셋이 서로 달라야 한다
+   (`deploy-oci.yml`의 preflight가 검증하고 위반 시 배포를 중단한다).
+2. 마이그레이션 009, 010 적용. Flyway 경로가 아닌 `docs/db/migrations/`에 있으므로 **수동 적용**이다.
+   preflight가 두 스키마의 존재를 확인하고, 없으면 서비스를 건드리기 전에 배포를 중단한다.

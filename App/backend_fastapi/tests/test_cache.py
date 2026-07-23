@@ -100,3 +100,24 @@ async def test_advance_rag_project_epoch_uses_project_scoped_key(
     await cache.advance_rag_project_epoch(42)
 
     redis_client.incr.assert_awaited_once_with("rag_epoch:42")
+
+
+@pytest.mark.asyncio
+async def test_advance_rag_project_epoch_swallows_redis_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """캐시 무효화 실패가 원본 변경 API를 실패시키면 안 된다 (DB 커밋 뒤 호출 시 부분 성공)."""
+    redis_client = AsyncMock()
+    redis_client.incr.side_effect = ConnectionError("redis down")
+    monkeypatch.setattr(cache, "get_async_redis_client", Mock(return_value=redis_client))
+
+    await cache.advance_rag_project_epoch(42)
+
+
+@pytest.mark.asyncio
+async def test_advance_rag_project_epoch_swallows_client_creation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cache, "get_async_redis_client", Mock(side_effect=ConnectionError("no client")))
+
+    await cache.advance_rag_project_epoch(42)

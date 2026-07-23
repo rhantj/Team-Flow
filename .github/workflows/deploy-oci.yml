@@ -65,18 +65,31 @@ jobs:
             spring_db_password=${spring_db_password:-$(read_env_value POSTGRES_PASSWORD)}
             test -n "$spring_db_password"
             spring_psql_url=${spring_jdbc_url#jdbc:}
+            schema_check_url=$spring_psql_url
+            skip_schema_check=0
             case "$spring_psql_url" in
               *://db:*)
-                echo "Database schema preflight deferred to post-start readiness for local Compose database."
-                schema_ready=1
-                ;;
-              *)
-                schema_ready=$(docker run --rm --network host \
-                  -e PGPASSWORD="$spring_db_password" postgres:16-alpine \
-                  psql "$spring_psql_url" -U "$spring_db_user" -tA -v ON_ERROR_STOP=1 \
-                  -c "SELECT CASE WHEN to_regclass('"'"'public.rag_assignee_sync_failures'"'"') IS NOT NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='"'"'public'"'"' AND table_name='"'"'meetings'"'"' AND column_name='"'"'analysis_job_id'"'"') THEN 1 ELSE 0 END")
+                # 운영도 Compose 내부 db 서비스를 쓰므로 이 분기는 항상 참이다. 여기서 무조건
+                # 통과시키면 마이그레이션 누락이 서비스 교체 뒤에야 드러나 프리플라이트가 무의미해진다.
+                # prod 오버레이가 db를 127.0.0.1:5432에 게시하므로 호스트 주소로 바꿔 같은 검사를 한다.
+                if [ "$(docker inspect -f "{{.State.Running}}" workflow-db 2>/dev/null)" = "true" ]; then
+                  schema_check_url=${spring_psql_url%%://db:*}://127.0.0.1:${spring_psql_url#*://db:}
+                else
+                  # 컨테이너가 없는 최초 배포에서는 검사할 DB 자체가 없다. 이 경우에만 기동 후
+                  # readiness 단계로 넘긴다.
+                  echo "Database container is not running; schema preflight deferred to post-start readiness."
+                  skip_schema_check=1
+                fi
                 ;;
             esac
+            if [ "$skip_schema_check" -eq 1 ]; then
+              schema_ready=1
+            else
+              schema_ready=$(docker run --rm --network host \
+                -e PGPASSWORD="$spring_db_password" postgres:16-alpine \
+                psql "$schema_check_url" -U "$spring_db_user" -tA -v ON_ERROR_STOP=1 \
+                -c "SELECT CASE WHEN to_regclass('"'"'public.rag_assignee_sync_failures'"'"') IS NOT NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='"'"'public'"'"' AND table_name='"'"'meetings'"'"' AND column_name='"'"'analysis_job_id'"'"') THEN 1 ELSE 0 END")
+            fi
             unset spring_db_password
             if [ "$schema_ready" != "1" ]; then
               echo "Database schema preflight failed: apply migrations 009 and 010 before deployment."

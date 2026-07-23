@@ -45,7 +45,7 @@ class HealthControllerTest {
 
     @Test
     void returnsUpWithExistingEnvelopeAndFieldsWhenDependenciesAreReady() throws Exception {
-        mockMvc.perform(get("/api/v1/health"))
+        mockMvc.perform(get("/api/v1/health/ready"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.success").value(true))
             .andExpect(jsonPath("$.data.service").value("workflow-ai-backend"))
@@ -62,7 +62,7 @@ class HealthControllerTest {
             new RedisConnectionFailureException("redis://admin:secret@internal:6379")
         );
 
-        mockMvc.perform(get("/api/v1/health"))
+        mockMvc.perform(get("/api/v1/health/ready"))
             .andExpect(status().isServiceUnavailable())
             .andExpect(jsonPath("$.data.status").value("DOWN"))
             .andExpect(jsonPath("$.data.redisStatus").doesNotExist())
@@ -91,10 +91,25 @@ class HealthControllerTest {
     }
 
     @Test
+    void legacyHealthPathKeepsLivenessSemanticsWhenDependenciesAreDown() throws Exception {
+        // 기존 /api/v1/health를 readiness로 바꾸면 Redis 장애 시 이 경로를 보던
+        // 개발 스크립트·런북·롤백 검증이 함께 503을 받는다. liveness 의미를 유지해야 한다.
+        when(redisConnectionFactory.getConnection()).thenThrow(
+            new RedisConnectionFailureException("offline")
+        );
+        when(worker.isReady()).thenReturn(false);
+        when(worker.isWorkerAlive()).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/health"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.status").value("UP"));
+    }
+
+    @Test
     void returnsServiceUnavailableWhenWorkerIsNotReady() throws Exception {
         when(worker.isReady()).thenReturn(false);
 
-        mockMvc.perform(get("/api/v1/health"))
+        mockMvc.perform(get("/api/v1/health/ready"))
             .andExpect(status().isServiceUnavailable())
             .andExpect(jsonPath("$.data.status").value("DOWN"))
             .andExpect(jsonPath("$.data.redisStatus").doesNotExist())
@@ -107,7 +122,7 @@ class HealthControllerTest {
         when(worker.isReady()).thenReturn(false);
         when(worker.isWorkerAlive()).thenReturn(false);
 
-        mockMvc.perform(get("/api/v1/health"))
+        mockMvc.perform(get("/api/v1/health/ready"))
             .andExpect(status().isServiceUnavailable())
             .andExpect(jsonPath("$.data.status").value("DOWN"))
             .andExpect(jsonPath("$.data.redisStatus").doesNotExist())

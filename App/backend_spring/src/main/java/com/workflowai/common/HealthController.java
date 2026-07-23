@@ -34,11 +34,11 @@ public class HealthController {
     }
 
     @Operation(
-        summary = "백엔드 서버 상태 확인",
-        description = "Spring Boot 백엔드 서버가 정상적으로 실행 중인지 확인합니다. 프론트엔드 또는 배포 환경에서 서버 연결 상태를 점검할 때 사용합니다."
+        summary = "백엔드 readiness 확인",
+        description = "Redis·큐 워커·DB 스키마까지 확인해 트래픽을 받을 수 있는 상태인지 판정합니다. 배포 판정과 로드밸런서 트래픽 투입에 사용합니다."
     )
-    @GetMapping({"/api/v1/health", "/api/v1/health/ready"})
-    public ResponseEntity<ApiResponse<HealthResponse>> health() {
+    @GetMapping("/api/v1/health/ready")
+    public ResponseEntity<ApiResponse<HealthResponse>> ready() {
         boolean redisUp = isRedisUp();
         boolean workerReady = worker.isReady();
         boolean workerAlive = worker.isWorkerAlive();
@@ -53,7 +53,14 @@ public class HealthController {
         return ResponseEntity.status(status).body(ApiResponse.ok(health));
     }
 
-    @GetMapping("/api/v1/health/live")
+    @Operation(
+        summary = "백엔드 서버 상태 확인 (liveness)",
+        description = "Spring Boot 프로세스가 살아 있는지만 확인합니다. 의존 서비스 상태는 보지 않습니다."
+    )
+    // 기존 /api/v1/health는 liveness였다. readiness로 바꾸면 Redis가 잠깐 흔들릴 때
+    // 이 경로를 보던 개발 스크립트·런북·롤백 검증이 함께 503을 받는다. 의미를 유지하기 위해
+    // liveness에 붙이고, 배포 판정은 /ready를 명시적으로 쓴다.
+    @GetMapping({"/api/v1/health", "/api/v1/health/live"})
     public ResponseEntity<ApiResponse<HealthResponse>> live() {
         HealthResponse health = new HealthResponse(
             "workflow-ai-backend",
