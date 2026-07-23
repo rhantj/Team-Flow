@@ -2,9 +2,7 @@ package com.workflowai.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -20,12 +18,9 @@ import com.workflowai.user.UserRepository;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.util.List;
 import java.util.Optional;
 import javax.imageio.ImageIO;
-import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -67,9 +62,6 @@ class MeControllerTest {
     @MockitoBean
     private ProjectRepository projectRepository;
 
-    @MockitoBean
-    private DataSource dataSource;
-
     @AfterEach
     void clearSecurityContext() {
         SecurityContextHolder.clearContext();
@@ -85,13 +77,6 @@ class MeControllerTest {
 
     private User existingUser() {
         return new User("user1@workflow.ai", "김민준", "local", "user1@workflow.ai", "hash");
-    }
-
-    private void stubAdvisoryLockConnection() throws Exception {
-        Connection connection = mock(Connection.class);
-        PreparedStatement preparedStatement = mock(PreparedStatement.class);
-        when(dataSource.getConnection()).thenReturn(connection);
-        when(connection.prepareStatement(anyString())).thenReturn(preparedStatement);
     }
 
     private static byte[] pngBytes() throws Exception {
@@ -198,10 +183,9 @@ class MeControllerTest {
     @Test
     void uploadAvatar_succeedsAndUpdatesProfileImagePath() throws Exception {
         authenticateAs(1L);
-        stubAdvisoryLockConnection();
         User user = existingUser();
         when(userRepository.findById(eq(1L))).thenReturn(Optional.of(user));
-        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(userRepository.updateProfileImagePathIfUnchanged(eq(1L), any(), any())).thenReturn(1);
 
         MockMultipartFile validPng = new MockMultipartFile("file", "avatar.png", "image/png", pngBytes());
 
@@ -210,5 +194,20 @@ class MeControllerTest {
             .andExpect(jsonPath("$.data.profileImageUrl").exists());
 
         assertThat(user.getProfileImagePath()).isNotBlank();
+    }
+
+    @Test
+    void uploadAvatar_returnsConflictWhenPathChangedConcurrently() throws Exception {
+        authenticateAs(1L);
+        User user = existingUser();
+        when(userRepository.findById(eq(1L))).thenReturn(Optional.of(user));
+        // 0 = 그 사이 다른 요청이 먼저 profileImagePath를 바꿔서 compare-and-swap이 실패했다는 뜻.
+        when(userRepository.updateProfileImagePathIfUnchanged(eq(1L), any(), any())).thenReturn(0);
+
+        MockMultipartFile validPng = new MockMultipartFile("file", "avatar.png", "image/png", pngBytes());
+
+        mockMvc.perform(multipart("/api/v1/me/avatar").file(validPng))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.error.code").value("CONCURRENT_UPDATE"));
     }
 }

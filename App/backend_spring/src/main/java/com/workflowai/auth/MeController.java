@@ -16,19 +16,16 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Semaphore;
 import java.util.stream.Collectors;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
-import javax.sql.DataSource;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -54,20 +51,25 @@ public class MeController {
     private final UserRepository userRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final ProjectRepository projectRepository;
-    private final DataSource dataSource;
     private final String uploadsDir;
+
+    // 아바타 이미지 전체 디코딩(detectImageFormat)은 요청당 최대 ~16MB 버퍼(MAX_AVATAR_DIMENSION
+    // 참고)를 잡는다 — 개별 요청은 그 정도로 제한되지만, 동시에 들어오는 요청 수 자체에는
+    // 상한이 없으면 병렬 업로드가 몰릴 때 인스턴스 메모리가 요청 수만큼 곱해져 고갈될 수 있다.
+    // 인스턴스당 동시 디코딩 개수를 세마포로 제한해(디코딩 시작 "전에" 확인) 그 상한을 건다 —
+    // 초과분은 무거운 디코딩을 아예 시작하지 않고 429로 즉시 돌려보낸다.
+    private static final int MAX_CONCURRENT_AVATAR_DECODES = 8;
+    private final Semaphore avatarDecodeSemaphore = new Semaphore(MAX_CONCURRENT_AVATAR_DECODES);
 
     public MeController(
         UserRepository userRepository,
         ProjectMemberRepository projectMemberRepository,
         ProjectRepository projectRepository,
-        DataSource dataSource,
         @Value("${workflow.uploads.dir}") String uploadsDir
     ) {
         this.userRepository = userRepository;
         this.projectMemberRepository = projectMemberRepository;
         this.projectRepository = projectRepository;
-        this.dataSource = dataSource;
         this.uploadsDir = uploadsDir;
     }
 
@@ -131,12 +133,13 @@ public class MeController {
         summary = "프로필 사진 업로드",
         description = "PNG/JPG만 허용하며 최대 10MB까지 업로드할 수 있다. 기존 사진이 있으면 교체된다."
     )
-    // 의도적으로 @Transactional을 붙이지 않는다 — 이 메서드에 붙이면 saveAndFlush()가 그 트랜잭션에
-    // 참여(participate)하게 되어, saveAndFlush 이후 메서드가 정상 반환되더라도 실제 커밋은 메서드가
-    // 끝난 뒤 트랜잭션 경계에서 일어난다. 그러면 "DB 반영 확인 후 이전 파일 삭제"가 실제로는 커밋
-    // 전에 실행되는 셈이라, 이후 커밋이 실패하면 DB는 이전 경로로 롤백되는데 그 파일은 이미
-    // 지워진 상태가 된다. @Transactional 없이 두면 saveAndFlush() 자체가 자기 완결적인 트랜잭션으로
-    // 실행되어, 이 메서드 안에서 예외 없이 반환됐다는 것 = 실제로 커밋까지 끝났다는 뜻이 된다.
+    // 의도적으로 @Transactional을 붙이지 않는다 — 이 메서드에 붙이면 updateProfileImagePathIfUnchanged가
+    // 그 트랜잭션에 참여(participate)하게 되어, 호출 이후 메서드가 정상 반환되더라도 실제 커밋은
+    // 메서드가 끝난 뒤 트랜잭션 경계에서 일어난다. 그러면 "DB 반영 확인 후 이전 파일 삭제"가
+    // 실제로는 커밋 전에 실행되는 셈이라, 이후 커밋이 실패하면 DB는 이전 경로로 롤백되는데 그
+    // 파일은 이미 지워진 상태가 된다. @Transactional 없이 두면 그 리포지토리 메서드 호출 자체가
+    // 자기 완결적인 트랜잭션으로 실행되어, 이 메서드 안에서 예외 없이 반환됐다는 것 = 실제로
+    // 커밋까지 끝났다는 뜻이 된다.
     @PostMapping(value = "/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<UserSummary>> uploadAvatar(
         @Parameter(description = "프로필 사진 파일 (PNG/JPG, 최대 10MB)") @RequestPart("file") MultipartFile file
@@ -156,11 +159,17 @@ public class MeController {
         // GIF/BMP 등도 디코딩할 수 있으므로, ImageReader가 실제로 인식한 포맷이 PNG/JPEG인지까지
         // 확인한다 — /uploads/**는 인증 없이 공개되므로 위장/오분류 파일이 그대로 서빙되는 것을 막는다.
         // 저장 확장자도 이 감지된 포맷을 그대로 쓴다 (Content-Type 헤더를 신뢰하지 않는다).
+        if (!avatarDecodeSemaphore.tryAcquire()) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(ApiResponse.fail("TOO_MANY_REQUESTS", "지금 업로드 요청이 몰려 있습니다. 잠시 후 다시 시도해주세요."));
+        }
         String detectedFormat;
         try {
             detectedFormat = detectImageFormat(file);
         } catch (AvatarDimensionExceededException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("IMAGE_TOO_LARGE", e.getMessage()));
+        } finally {
+            avatarDecodeSemaphore.release();
         }
         if (detectedFormat == null) {
             return ResponseEntity.badRequest()
@@ -168,72 +177,50 @@ public class MeController {
         }
 
         Long userId = CurrentUser.id();
-        // 같은 유저가 아바타를 동시에 두 번 업로드하면, 두 요청이 서로 다른 oldPath(둘 다 업로드 전
-        // 상태)를 읽어 각자의 새 파일만 알고 있어 나중에 덮어써진 쪽의 파일이 고아로 남는다.
-        // 유저 단위로 read-store-save-cleanup 전체를 직렬화해 이 경쟁을 없애야 하는데, JVM 내부
-        // synchronized 락은 백엔드가 여러 인스턴스로 뜨면 인스턴스마다 별도 락이라 무용지물이다.
-        // 대신 Postgres 세션 단위 advisory lock(pg_advisory_lock)을 쓴다 — DB 자체가 잠금을
-        // 중재하므로 인스턴스가 몇 개든 같은 userId에 대해서는 전역으로 직렬화된다. JPA가 쓰는
-        // 커넥션과는 별개의 커넥션을 이 락 전용으로 잡아, 이 메서드가 의도적으로 @Transactional을
-        // 쓰지 않는 것(아래 설명)과 완전히 독립적으로 동작하게 한다.
-        try (Connection lockConnection = dataSource.getConnection()) {
-            acquireAvatarLock(lockConnection, userId);
-            try {
-                User user = userRepository.findById(userId)
-                    .orElseThrow(() -> new IllegalStateException("사용자를 찾을 수 없습니다."));
-                String oldPath = user.getProfileImagePath();
+        User user = userRepository.findById(userId)
+            .orElseThrow(() -> new IllegalStateException("사용자를 찾을 수 없습니다."));
+        String oldPath = user.getProfileImagePath();
 
-                String newPath;
-                try {
-                    newPath = storeAvatar(user.getId(), file, detectedFormat);
-                } catch (IOException e) {
-                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                        .body(ApiResponse.fail("UPLOAD_FAILED", "이미지 업로드에 실패했습니다."));
-                }
-
-                try {
-                    user.setProfileImagePath(newPath);
-                    userRepository.saveAndFlush(user);
-                } catch (RuntimeException e) {
-                    // DB 반영이 실패하면 방금 쓴 새 파일을 되돌린다 — 새 파일은 이전 파일과 이름이 겹치지
-                    // 않으므로(storeAvatar 참고) 기존 사진은 그대로 남는다. DB 경로와 실제 파일이 어긋나지 않게 한다.
-                    deleteAvatarFile(newPath);
-                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                        .body(ApiResponse.fail("UPLOAD_FAILED", "이미지 업로드에 실패했습니다."));
-                }
-
-                // DB에 새 경로가 반영된 게 확인된 뒤에만 이전 파일을 지운다.
-                if (oldPath != null && !oldPath.equals(newPath)) {
-                    deleteAvatarFile(oldPath);
-                }
-
-                return ResponseEntity.ok(ApiResponse.ok(UserSummary.from(user)));
-            } finally {
-                releaseAvatarLock(lockConnection, userId);
-            }
-        } catch (SQLException e) {
+        String newPath;
+        try {
+            newPath = storeAvatar(user.getId(), file, detectedFormat);
+        } catch (IOException e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.fail("UPLOAD_FAILED", "이미지 업로드에 실패했습니다."));
         }
-    }
 
-    private void acquireAvatarLock(Connection connection, long userId) throws SQLException {
-        try (PreparedStatement ps = connection.prepareStatement("SELECT pg_advisory_lock(?)")) {
-            ps.setLong(1, userId);
-            ps.execute();
+        // 같은 유저가 아바타를 동시에 두 번 업로드하면, 두 요청이 서로 다른 oldPath(둘 다 업로드
+        // 전 상태)를 읽어 각자의 새 파일만 알고 있어 나중에 덮어써진 쪽의 파일이 고아로 남는다.
+        // 이걸 막으려고 락으로 read-store-save를 직렬화하는 대신, DB의 원자적 UPDATE 하나로
+        // "내가 읽었던 oldPath가 그 사이 바뀌지 않았을 때만 반영"하는 compare-and-swap을 쓴다 —
+        // 락도, JPA 커넥션과 별개인 추가 커넥션도 필요 없고(커넥션 풀 고갈 위험이 없다),
+        // 인스턴스가 몇 개든 Postgres 행 단위 원자성만으로 항상 정확하다.
+        int updatedRows;
+        try {
+            updatedRows = userRepository.updateProfileImagePathIfUnchanged(userId, oldPath, newPath);
+        } catch (RuntimeException e) {
+            // DB 반영이 실패하면 방금 쓴 새 파일을 되돌린다 — 새 파일은 이전 파일과 이름이 겹치지
+            // 않으므로(storeAvatar 참고) 기존 사진은 그대로 남는다. DB 경로와 실제 파일이 어긋나지 않게 한다.
+            deleteAvatarFile(newPath);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ApiResponse.fail("UPLOAD_FAILED", "이미지 업로드에 실패했습니다."));
         }
-    }
 
-    /**
-     * 곧 이 커넥션을 닫으므로(호출부의 try-with-resources) unlock 실패는 무시해도 안전하다 —
-     * 세션이 끝나면 Postgres가 그 세션이 들고 있던 advisory lock을 전부 자동으로 해제한다.
-     */
-    private void releaseAvatarLock(Connection connection, long userId) {
-        try (PreparedStatement ps = connection.prepareStatement("SELECT pg_advisory_unlock(?)")) {
-            ps.setLong(1, userId);
-            ps.execute();
-        } catch (SQLException ignored) {
+        if (updatedRows == 0) {
+            // 그 사이 다른 요청이 먼저 반영됐다 — 내가 방금 쓴 새 파일은 아무도 참조하지 않으므로
+            // 지운다. oldPath도 이미 다른 요청이 정리했을 값이라 여기서는 건드리지 않는다.
+            deleteAvatarFile(newPath);
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.fail("CONCURRENT_UPDATE", "동시에 다른 업로드가 반영되었습니다. 다시 시도해주세요."));
         }
+
+        // DB에 새 경로가 반영된 게 확인된 뒤에만 이전 파일을 지운다.
+        if (oldPath != null && !oldPath.equals(newPath)) {
+            deleteAvatarFile(oldPath);
+        }
+
+        user.setProfileImagePath(newPath);
+        return ResponseEntity.ok(ApiResponse.ok(UserSummary.from(user)));
     }
 
     @Operation(
