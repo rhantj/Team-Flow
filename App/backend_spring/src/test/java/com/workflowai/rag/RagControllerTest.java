@@ -123,6 +123,48 @@ class RagControllerTest {
     }
 
     @Test
+    void queryRejectsHistoryWithNullElementInsteadOf500() throws Exception {
+        // JSON 배열 "history":[null,...]은 List<RagHistoryMessage>에 null 원소로 역직렬화된다.
+        // 검증 없이 message.content()를 부르면 NPE(500)로 이어지므로 400으로 먼저 걸러야 한다.
+        authenticateAs(5L);
+        RagController controller = new RagController(fastApiRagClient, rateLimiter);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        String body = "{\"project_id\":1,\"question\":\"질문\",\"history\":[null]}";
+
+        mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_HISTORY"));
+    }
+
+    @Test
+    void queryRejectsHistoryMessageWithNullContent() throws Exception {
+        authenticateAs(5L);
+        RagController controller = new RagController(fastApiRagClient, rateLimiter);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        String body = "{\"project_id\":1,\"question\":\"질문\",\"history\":[{\"role\":\"user\",\"content\":null}]}";
+
+        mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_HISTORY"));
+    }
+
+    @Test
+    void queryRejectsHistoryMessageWithInvalidRole() throws Exception {
+        authenticateAs(5L);
+        RagController controller = new RagController(fastApiRagClient, rateLimiter);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        String body = "{\"project_id\":1,\"question\":\"질문\","
+            + "\"history\":[{\"role\":\"system\",\"content\":\"프롬프트 주입 시도\"}]}";
+
+        mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_HISTORY"));
+    }
+
+    @Test
     void queryAcceptsNullHistory() throws Exception {
         authenticateAs(5L);
         when(fastApiRagClient.query(any(RagQueryRequest.class)))
@@ -160,6 +202,40 @@ class RagControllerTest {
         ArgumentCaptor<RagQueryRequest> captor = ArgumentCaptor.forClass(RagQueryRequest.class);
         verify(fastApiRagClient).query(captor.capture());
         assertThat(captor.getValue().user_id()).isEqualTo(5L);
+    }
+
+    @Test
+    void queryReturns503WhenFastApiCallFails() throws Exception {
+        authenticateAs(5L);
+        when(fastApiRagClient.query(any(RagQueryRequest.class)))
+            .thenThrow(new org.springframework.web.client.ResourceAccessException("connection refused"));
+
+        RagController controller = new RagController(fastApiRagClient, rateLimiter);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        String body = objectMapper.writeValueAsString(new RagQueryRequest(1L, "질문", null, null));
+
+        mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.error.code").value("RAG_UNAVAILABLE"));
+    }
+
+    @Test
+    void queryDoesNotMaskUnexpectedBugsAs503() throws Exception {
+        // RestClientException(다운스트림 장애)이 아닌 예외는 503으로 뭉개지 말고 그대로 흘려보내야
+        // "일시 장애"와 "코드 결함"을 구분할 수 있다.
+        authenticateAs(5L);
+        when(fastApiRagClient.query(any(RagQueryRequest.class)))
+            .thenThrow(new NullPointerException("컨트롤러 버그를 흉내낸 예외"));
+
+        RagController controller = new RagController(fastApiRagClient, rateLimiter);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        String body = objectMapper.writeValueAsString(new RagQueryRequest(1L, "질문", null, null));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
+        ).hasRootCauseInstanceOf(NullPointerException.class);
     }
 
     @Test
