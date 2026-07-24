@@ -28,7 +28,8 @@ describe("AIAssistant", () => {
 
   it("shows loading indicator then renders answer with source badge", async () => {
     vi.mocked(apiFetch).mockResolvedValue({
-      answer: "실제 RAG 답변",
+      type: "answer",
+      message: "실제 RAG 답변",
       sources: [{ source_type: "meeting", source_id: 3, content_snippet: "요약", similarity: 0.8 }],
     });
 
@@ -64,7 +65,7 @@ describe("AIAssistant", () => {
   });
 
   it("automatically sends a pending dashboard question exactly once", async () => {
-    vi.mocked(apiFetch).mockResolvedValue({ answer: "추천 답변", sources: [] });
+    vi.mocked(apiFetch).mockResolvedValue({ type: "answer", message: "추천 답변", sources: [] });
 
     const { rerender } = render(
       <AIAssistant

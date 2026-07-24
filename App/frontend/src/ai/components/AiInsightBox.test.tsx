@@ -15,7 +15,7 @@ describe("AiInsightBox", () => {
   });
 
   it("shows the fallback text while the AI answer is loading, then the answer once it resolves", async () => {
-    vi.mocked(apiFetch).mockResolvedValue({ answer: "블로커부터 처리하세요", sources: [] });
+    vi.mocked(apiFetch).mockResolvedValue({ type: "answer", message: "블로커부터 처리하세요", sources: [] });
 
     render(<AiInsightBox projectId={1} prompt="질문" ready fallbackText="폴백 문구" />);
 
@@ -31,7 +31,7 @@ describe("AiInsightBox", () => {
   });
 
   it("applies formatAnswer to wrap the raw LLM answer", async () => {
-    vi.mocked(apiFetch).mockResolvedValue({ answer: "코드 리뷰를 먼저 진행하세요", sources: [] });
+    vi.mocked(apiFetch).mockResolvedValue({ type: "answer", message: "코드 리뷰를 먼저 진행하세요", sources: [] });
 
     render(
       <AiInsightBox
@@ -47,7 +47,7 @@ describe("AiInsightBox", () => {
   });
 
   it("dispatches the open-AI-assistant event with the same prompt when the button is clicked", async () => {
-    vi.mocked(apiFetch).mockResolvedValue({ answer: "답변", sources: [] });
+    vi.mocked(apiFetch).mockResolvedValue({ type: "answer", message: "답변", sources: [] });
     const handler = vi.fn();
     window.addEventListener(OPEN_AI_ASSISTANT_EVENT, handler);
 
@@ -64,7 +64,7 @@ describe("AiInsightBox", () => {
   });
 
   it("renders the banner variant with the given action label", async () => {
-    vi.mocked(apiFetch).mockResolvedValue({ answer: "답변", sources: [] });
+    vi.mocked(apiFetch).mockResolvedValue({ type: "answer", message: "답변", sources: [] });
 
     render(<AiInsightBox projectId={1} prompt="질문" ready fallbackText="폴백" variant="banner" actionLabel="자세히" />);
 

@@ -23,7 +23,7 @@ describe("useAiInsight", () => {
   });
 
   it("asks exactly once when ready becomes true, and reports the answer", async () => {
-    vi.mocked(apiFetch).mockResolvedValue({ answer: "추천 답변", sources: [] });
+    vi.mocked(apiFetch).mockResolvedValue({ type: "answer", message: "추천 답변", sources: [] });
 
     const { result, rerender } = renderHook(
       ({ ready }: { ready: boolean }) => useAiInsight(1, "질문입니다", ready),
@@ -64,7 +64,7 @@ describe("useAiInsight", () => {
         new Promise(resolve => {
           pendingResolvers.push(() => {
             resolveCount += 1;
-            resolve({ answer: `답변 ${resolveCount}`, sources: [] });
+            resolve({ type: "answer", message: `답변 ${resolveCount}`, sources: [] });
           });
         })
     );
@@ -108,7 +108,7 @@ describe("useAiInsight", () => {
         new Promise(resolve => {
           const release = () => {
             resolveCount += 1;
-            resolve({ answer: `답변 ${resolveCount}`, sources: [] });
+            resolve({ type: "answer", message: `답변 ${resolveCount}`, sources: [] });
           };
           if (!releaseFirst) releaseFirst = release;
           else pendingResolvers.push(release);
@@ -145,7 +145,7 @@ describe("useAiInsight", () => {
     await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
 
     // 슬롯이 해제되지 않았다면 이 두 번째 요청이 대기열에 갇혀 apiFetch가 다시 불리지 않는다.
-    vi.mocked(apiFetch).mockResolvedValue({ answer: "정상 답변", sources: [] });
+    vi.mocked(apiFetch).mockResolvedValue({ type: "answer", message: "정상 답변", sources: [] });
     const { result } = renderHook(() => useAiInsight(1, "그다음 질문", true));
 
     await waitFor(() => expect(result.current.text).toBe("정상 답변"));

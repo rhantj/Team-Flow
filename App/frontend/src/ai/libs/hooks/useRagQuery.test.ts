@@ -14,7 +14,8 @@ describe("useRagQuery", () => {
 
   it("returns answer and sources on success", async () => {
     vi.mocked(apiFetch).mockResolvedValue({
-      answer: "테스트 답변",
+      type: "answer",
+      message: "테스트 답변",
       sources: [{ source_type: "meeting", source_id: 1, content_snippet: "요약", similarity: 0.9 }],
     });
 
@@ -27,7 +28,7 @@ describe("useRagQuery", () => {
     expect(result.current.status).toBe("loading");
 
     await waitFor(() => expect(result.current.status).toBe("success"));
-    expect(apiFetch).toHaveBeenCalledWith("/ai/rag/query", {
+    expect(apiFetch).toHaveBeenCalledWith("/ai/assistant/command", {
       method: "POST",
       body: JSON.stringify({ project_id: 1, question: "질문입니다", history: [] }),
       signal: expect.any(AbortSignal),
@@ -36,8 +37,22 @@ describe("useRagQuery", () => {
     expect(result.current.answer?.sources).toHaveLength(1);
   });
 
+  it("posts to the assistant command endpoint", async () => {
+    vi.mocked(apiFetch).mockResolvedValue({ type: "answer", message: "답변", sources: [] });
+
+    const { result } = renderHook(() => useRagQuery());
+
+    act(() => {
+      result.current.ask(1, "내 업무가 뭐야?");
+    });
+
+    await waitFor(() => expect(result.current.status).toBe("success"));
+    expect(vi.mocked(apiFetch).mock.calls[0][0]).toBe("/ai/assistant/command");
+    expect(result.current.answer?.content).toBe("답변");
+  });
+
   it("sends only the last 6 history messages and strips non-conversational fields", async () => {
-    vi.mocked(apiFetch).mockResolvedValue({ answer: "답변", sources: [] });
+    vi.mocked(apiFetch).mockResolvedValue({ type: "answer", message: "답변", sources: [] });
 
     const history = Array.from({ length: 10 }, (_, i) => ({
       role: i % 2 === 0 ? ("user" as const) : ("assistant" as const),
@@ -69,7 +84,7 @@ describe("useRagQuery", () => {
   });
 
   it("truncates each history message to 1000 characters to avoid server INVALID_HISTORY rejection", async () => {
-    vi.mocked(apiFetch).mockResolvedValue({ answer: "답변", sources: [] });
+    vi.mocked(apiFetch).mockResolvedValue({ type: "answer", message: "답변", sources: [] });
 
     const longContent = "가".repeat(1500);
     const history = [{ role: "assistant" as const, content: longContent }];
@@ -87,7 +102,7 @@ describe("useRagQuery", () => {
   });
 
   it("sends an empty history array when there is no prior conversation", async () => {
-    vi.mocked(apiFetch).mockResolvedValue({ answer: "답변", sources: [] });
+    vi.mocked(apiFetch).mockResolvedValue({ type: "answer", message: "답변", sources: [] });
 
     const { result } = renderHook(() => useRagQuery());
 
