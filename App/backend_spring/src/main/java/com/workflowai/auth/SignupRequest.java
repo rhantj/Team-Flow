@@ -28,11 +28,10 @@ public record SignupRequest(
     @Schema(description = "가입 유형: MEMBER(일반 회원) 또는 REVIEWER(심사자, 승인 대기)", example = "MEMBER")
     String roleType,
 
-    // Boolean wrapper 타입으로 설정하여 하위 호환성을 확보한다.
-    // JSON에 이 필드가 누락되면 null로 바인딩되며, @AssertTrue는 null을 유효한 값(성공)으로 처리한다.
-    // 명시적으로 false인 경우에만 회원가입 검증이 실패하여 400 에러를 반환한다.
+    // boolean(원시타입)이라 요청 JSON에 이 필드가 아예 없으면 Jackson이 false로 채운다 —
+    // @AssertTrue와 합쳐지면 "누락"과 "명시적 false"가 동일하게 검증 실패로 처리된다.
     @AssertTrue(message = "이용약관 및 개인정보처리방침에 동의해주세요.")
-    @Schema(description = "이용약관/개인정보처리방침 동의 여부. 하위 호환성을 위해 null은 허용하며, 명시적으로 false일 때만 가입이 거부됩니다.", example = "true")
-    Boolean termsAgreed
+    @Schema(description = "이용약관/개인정보처리방침 동의 여부. true가 아니면 회원가입이 거부된다", example = "true")
+    boolean termsAgreed
 ) {
 }

@@ -49,8 +49,8 @@ spring:
       hibernate:
         format_sql: true
   flyway:
-    enabled: ${SPRING_FLYWAY_ENABLED:true}
-    # Flyway는 기본 활성화다. 명시적으로 켠 기존 DB에서는 schema_history 부재로 기동 실패하지 않게 baseline을 기본 허용한다.
+    enabled: ${SPRING_FLYWAY_ENABLED:false}
+    # Flyway는 기본 비활성화다. 명시적으로 켠 기존 DB에서는 schema_history 부재로 기동 실패하지 않게 baseline을 기본 허용한다.
     baseline-on-migrate: ${SPRING_FLYWAY_BASELINE_ON_MIGRATE:true}
     # baseline-on-migrate=true만으로는 "기존 DB=최신 상태"가 보장되지 않는다 — baseline-version을
     # 명시하지 않으면 Flyway 기본값(1)이 쓰이는데, db/migration에 이미 있는 V20260721_1은 그보다

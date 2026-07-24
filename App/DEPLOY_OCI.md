@@ -266,8 +266,9 @@ Flyway 마이그레이션에는 없었다 — db/init을 거치지 않았거나 
 > 테이블을 먼저 갖춘 뒤에 Flyway를 켤 것.
 
 **운영(OCI) DB에서 최초로 켜기 전 검증 절차 (필수):** `docker-compose.prod.yml`은
-`SPRING_FLYWAY_ENABLED`가 기본 `true`로 설정되어 있어 자동으로 마이그레이션이 적용되지만,
-프로덕션 배포 전 반드시 아래 절차에 따라 동작을 검증해야 합니다.
+`SPRING_FLYWAY_ENABLED`를 다시 기본 `false`로 되돌려서, 로컬에서 기본으로 켜지는 것과 달리
+운영에서는 자동으로 켜지지 않는다. 아래를 거친 뒤에만 `.env`에 `SPRING_FLYWAY_ENABLED=true`를
+추가해 명시적으로 켤 것.
 
 1. `ls backend_spring/src/main/resources/db/migration/`로 이 시점에 실제로 존재하는
    마이그레이션 파일 전체 목록을 뽑고, 그중 **baseline-version(현재 `20260721_1`)보다
@@ -285,7 +286,8 @@ Flyway 마이그레이션에는 없었다 — db/init을 거치지 않았거나 
    기록돼 있는지, 그 외 예상 못한 행이 없는지 눈으로 확인한다.
 5. `\d users`(또는 동등한 방법)로 `field_tags`/`profile_image_path`/`affiliation`/
    `github_username`/`terms_agreed_at` 컬럼이 실제로 생겼는지 확인한다.
-6. 위 확인이 끝난 후, 운영 환경에 새 빌드 이미지를 배포하면 기동 시 신규 스키마가 안전하게 반영된다.
+6. 위 확인이 끝난 뒤에만 실제 운영 `.env`에 `SPRING_FLYWAY_ENABLED=true`를 추가하고
+   재배포한다.
 
 새 스키마 변경이 필요하면 `docs/db/migrations`에 번호를 추가하지 말고 `db/migration/`에
 `V20260723_1__avatar_and_field_tags_columns.sql`처럼 `V<날짜>_<순번>__설명.sql` 형식으로

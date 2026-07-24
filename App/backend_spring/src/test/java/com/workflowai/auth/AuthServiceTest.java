@@ -145,18 +145,18 @@ class AuthServiceTest {
     }
 
     @Test
-    void signup_termsAgreedNull_succeedsButDoesNotSetTermsAgreedAt() {
-        when(userRepository.existsByEmail("nullconsent@example.com")).thenReturn(false);
+    void signup_termsAgreed_setsTermsAgreedAt() {
+        when(userRepository.existsByEmail("consent@example.com")).thenReturn(false);
         when(userRepository.saveAndFlush(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(jwtService.issueAccessToken(any())).thenReturn("access-token");
         when(jwtService.issueRefreshToken(any())).thenReturn("refresh-token");
         when(jwtService.accessTokenTtlSeconds()).thenReturn(1800L);
 
-        SignupResponse response = authService.signup("nullconsent@example.com", "12345678", "이름", "MEMBER", null);
+        authService.signup("consent@example.com", "12345678", "이름", "MEMBER", true);
 
         ArgumentCaptor<User> savedUser = ArgumentCaptor.forClass(User.class);
         verify(userRepository).saveAndFlush(savedUser.capture());
-        assertThat(savedUser.getValue().getTermsAgreedAt()).isNull();
+        assertThat(savedUser.getValue().getTermsAgreedAt()).isNotNull();
     }
 
     @Test
