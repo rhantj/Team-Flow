@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from pydantic import BaseModel, Field
 
 from llm_rag_assistant.app.services.embedding_service import embed_text
-from llm_rag_assistant.app.services.retrieval_service import search_similar_chunks
+from llm_rag_assistant.app.services.retrieval_service import (
+    find_task_chunks_by_code,
+    search_similar_chunks,
+)
 
 logger = logging.getLogger(__name__)
 
 _SEARCH_TOP_K = 5
 _TITLE_MAX_LEN = 60
+# "WF-195", "FS-6" 같은 명시적 업무 코드. 있으면 임베딩보다 이 토큰의 정확 일치를 우선한다.
+_CODE_PATTERN = re.compile(r"[A-Za-z]{2,}-\d+")
 # 1등과 2등의 유사도 차이가 이보다 작으면 "확실하다"고 볼 수 없어 사용자에게 되묻는다.
 # 임의로 하나를 골랐다가 엉뚱한 업무를 수정하는 것이 되묻는 것보다 훨씬 나쁘다.
 _AMBIGUITY_MARGIN = 0.05
@@ -38,12 +44,54 @@ def _shorten(value: str) -> str:
     return text if len(text) <= _TITLE_MAX_LEN else text[: _TITLE_MAX_LEN - 1] + "…"
 
 
+def _dedup_by_source_id(rows: list[dict]) -> list[dict]:
+    seen: set[int] = set()
+    unique: list[dict] = []
+    for row in rows:
+        if row["source_id"] in seen:
+            continue
+        seen.add(row["source_id"])
+        unique.append(row)
+    return unique
+
+
+async def _resolve_by_code(pool, project_id: int, code: str) -> TaskMatch:
+    """명시적 업무 코드를 본문 정확 일치로 해소한다.
+
+    코드가 있으면 임베딩으로 되돌아가지 않는다. 존재하지 않는 코드를 유사한 다른 업무로
+    억지 매칭하는 것이 바로 이 경로가 막으려는 오작동이기 때문이다(없으면 못 찾음으로 처리).
+    """
+    try:
+        rows = await find_task_chunks_by_code(pool, project_id, code)
+    except Exception:
+        logger.warning("업무 코드 조회 실패, 후보 없음으로 처리합니다.", exc_info=True)
+        return TaskMatch()
+
+    unique = _dedup_by_source_id(rows)
+    if not unique:
+        return TaskMatch()
+    if len(unique) == 1:
+        top = unique[0]
+        return TaskMatch(task_id=top["source_id"], title=_shorten(top["content"]))
+    return TaskMatch(
+        candidates=[
+            TaskCandidate(task_id=row["source_id"], title=_shorten(row["content"]))
+            for row in unique[:3]
+        ]
+    )
+
+
 async def resolve_task_ref(pool, project_id: int, task_ref: str) -> TaskMatch:
     """업무 지칭 표현을 실제 task id로 바꾼다.
 
-    기존 RAG 검색이 돌려주는 source_id가 곧 task id다(source_type="task"인 경우).
+    "WF-195" 같은 명시적 코드가 있으면 본문 정확 일치를 우선하고, 없으면 임베딩 검색으로
+    의미 유사한 업무를 찾는다. 검색이 돌려주는 source_id가 곧 task id다(source_type="task").
     회의록·액션아이템의 source_id는 다른 테이블의 id라 반드시 걸러내야 한다.
     """
+    code = _CODE_PATTERN.search(task_ref or "")
+    if code:
+        return await _resolve_by_code(pool, project_id, code.group(0))
+
     try:
         embedding = await embed_text(task_ref)
         rows = await search_similar_chunks(pool, project_id, embedding, top_k=_SEARCH_TOP_K)
