@@ -50,3 +50,21 @@ async def test_get_graph_builds_once_under_concurrency(monkeypatch: pytest.Monke
     assert all(result is compiled_sentinel for result in results)
     assert from_conn.call_count == 1
     assert builder.compile.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_close_graph_closes_checkpointer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """종료 시 체크포인터의 Redis 연결을 닫고 전역 상태를 초기화한다."""
+    from unittest.mock import AsyncMock
+
+    cm = MagicMock()
+    cm.__aexit__ = AsyncMock(return_value=None)
+    monkeypatch.setattr(assistant_graph, "_checkpointer_cm", cm)
+    monkeypatch.setattr(assistant_graph, "_compiled", object())
+    monkeypatch.setattr(assistant_graph, "_graph_lock", asyncio.Lock())
+
+    await assistant_graph.close_graph()
+
+    cm.__aexit__.assert_awaited_once_with(None, None, None)
+    assert assistant_graph._checkpointer_cm is None
+    assert assistant_graph._compiled is None

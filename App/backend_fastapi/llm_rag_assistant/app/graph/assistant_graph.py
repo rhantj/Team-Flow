@@ -217,6 +217,19 @@ async def get_graph():
     return _compiled
 
 
+async def close_graph() -> None:
+    """앱 종료 시 체크포인터가 잡고 있는 Redis 연결을 닫는다(자원 누수 방지)."""
+    global _compiled, _checkpointer_cm
+    async with _graph_lock:
+        if _checkpointer_cm is not None:
+            try:
+                await _checkpointer_cm.__aexit__(None, None, None)
+            except Exception:
+                logger.warning("체크포인터 종료 실패", exc_info=True)
+        _checkpointer_cm = None
+        _compiled = None
+
+
 def _to_outcome(result: dict, thread_id: str) -> GraphOutcome:
     interrupts = result.get("__interrupt__")
     if interrupts:

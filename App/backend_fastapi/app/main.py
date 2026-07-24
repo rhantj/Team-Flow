@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from core.cache import get_redis_client
 from llm_rag_assistant.app.routers.chat_router import router as rag_router
 from llm_rag_assistant.app.routers.assistant_router import router as assistant_router
+from llm_rag_assistant.app.graph.assistant_graph import close_graph
 from llm_rag_assistant.app.services.embedding_service import preload_embedding_model
 from ml_workload_score.app.routers.workload_router import router as workload_router
 from ai_contribution_report.app.routers.contribution_router import router as contribution_report_router
@@ -62,6 +63,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.exception("RAG 임베딩 모델 사전 로드 실패 - 첫 요청 시 재시도됩니다.")
     yield
+    # 명령 그래프 체크포인터가 잡은 Redis 연결을 닫는다.
+    await close_graph()
 
 
 app = FastAPI(title="WorkFlow AI FastAPI", version="0.1.0", lifespan=lifespan)
