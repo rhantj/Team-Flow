@@ -41,6 +41,7 @@ describe("회원가입 약관 동의 체크박스", () => {
     await userEvent.type(screen.getByPlaceholderText("실명을 입력하세요"), "홍길동");
     await userEvent.type(screen.getByPlaceholderText("name@university.ac.kr"), "hong@example.com");
     await userEvent.type(screen.getByPlaceholderText("8자 이상 입력"), "supersecret1");
+    await userEvent.type(screen.getByPlaceholderText("비밀번호를 다시 입력"), "supersecret1");
 
     await userEvent.click(screen.getByRole("button", { name: "약관 보기" }));
 
@@ -58,9 +59,11 @@ describe("회원가입 약관 동의 체크박스", () => {
     expect(nameInput).toHaveValue("홍길동");
     expect(screen.getByPlaceholderText("name@university.ac.kr")).toHaveValue("hong@example.com");
 
-    // 비밀번호도 다른 필드와 마찬가지로 보존된다 — router state가 아니라 모듈 스코프
-    // 변수(pendingSignupPassword)를 통해 복원되므로 브라우저 히스토리에는 남지 않는다.
+    // 비밀번호/비밀번호 확인도 다른 필드와 마찬가지로 보존된다 — router state가 아니라 모듈
+    // 스코프 변수(pendingSignupPassword/pendingSignupPasswordConfirm)를 통해 복원되므로
+    // 브라우저 히스토리에는 남지 않는다.
     expect(screen.getByPlaceholderText("8자 이상 입력")).toHaveValue("supersecret1");
+    expect(screen.getByPlaceholderText("비밀번호를 다시 입력")).toHaveValue("supersecret1");
 
     // 약관 동의 체크박스가 자동으로 켜졌다.
     expect(screen.getByRole("checkbox")).toHaveAttribute("aria-checked", "true");

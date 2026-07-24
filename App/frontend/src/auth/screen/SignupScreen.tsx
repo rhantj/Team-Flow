@@ -34,11 +34,13 @@ interface SignupDraft {
   professorNo: string;
 }
 
-// 비밀번호는 location.state가 아니라 모듈 스코프 변수에만 잠깐 담아둔다 — 브라우저 세션
-// 히스토리/sessionStorage 어디에도 직렬화되지 않고, 이 탭의 JS 메모리에만 존재하다가 탭을
-// 닫거나 새로고침하면 사라진다. 약관 보기 → 돌아오기(같은 탭 안에서의 리렌더)에서만 값이
-// 살아있으면 되므로 이 정도로 충분하고, location.state에 남기는 것보다 노출 범위가 훨씬 좁다.
+// 비밀번호/비밀번호 확인은 location.state가 아니라 모듈 스코프 변수에만 잠깐 담아둔다 —
+// 브라우저 세션 히스토리/sessionStorage 어디에도 직렬화되지 않고, 이 탭의 JS 메모리에만
+// 존재하다가 탭을 닫거나 새로고침하면 사라진다. 약관 보기 → 돌아오기(같은 탭 안에서의
+// 리렌더)에서만 값이 살아있으면 되므로 이 정도로 충분하고, location.state에 남기는 것보다
+// 노출 범위가 훨씬 좁다.
 let pendingSignupPassword: string | undefined;
+let pendingSignupPasswordConfirm: string | undefined;
 
 export function SignupScreen() {
   const navigate = useNavigate();
@@ -60,7 +62,12 @@ export function SignupScreen() {
     pendingSignupPassword = undefined;
     return restored;
   });
-  const [pwConfirm, setPwConfirm] = useState("");
+  const [pwConfirm, setPwConfirm] = useState(() => {
+    if (!navState?.draft) return "";
+    const restored = pendingSignupPasswordConfirm ?? "";
+    pendingSignupPasswordConfirm = undefined;
+    return restored;
+  });
   const [showPw, setShowPw] = useState(false);
   // 일반적인 클릭으로는 체크할 수 없다 — /signup/terms에서 약관을 확인하고 돌아올 때만
   // agreed: true 상태로 마운트되며, 그 외에는 이 컴포넌트 내부에서 값을 바꿀 방법이 없다.
@@ -304,8 +311,8 @@ export function SignupScreen() {
                   aria-checked={agreed}
                   aria-disabled="true"
                   title="약관 보기를 통해 확인 후 자동으로 체크됩니다"
-                  className={`w-4 h-4 rounded border flex items-center justify-center mt-0.5 shrink-0 ${
-                    agreed ? "border-blue-500 bg-blue-500" : "border-border bg-muted cursor-not-allowed"
+                  className={`w-4 h-4 rounded border-2 flex items-center justify-center mt-0.5 shrink-0 ${
+                    agreed ? "border-blue-500 bg-blue-500" : "border-gray-400 bg-muted cursor-not-allowed"
                   }`}
                 >
                   {agreed && <Check className="w-3 h-3 text-white" />}
@@ -314,9 +321,10 @@ export function SignupScreen() {
                   <button
                     type="button"
                     onClick={() => {
-                      // 비밀번호는 location.state로 넘기지 않는다 — 모듈 스코프 변수에만 잠깐
-                      // 담아둔다(SignupDraft/pendingSignupPassword 선언부 설명 참고).
+                      // 비밀번호/비밀번호 확인은 location.state로 넘기지 않는다 — 모듈 스코프
+                      // 변수에만 잠깐 담아둔다(SignupDraft/pendingSignupPassword 선언부 설명 참고).
                       pendingSignupPassword = pw;
+                      pendingSignupPasswordConfirm = pwConfirm;
                       navigate("/signup/terms", {
                         state: { draft: { name, email, isProfessor, professorNo } },
                       });
