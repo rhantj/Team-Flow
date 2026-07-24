@@ -13,6 +13,7 @@ import com.workflowai.activity.ActivityService;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.NotificationService;
 import com.workflowai.project.ProjectMemberRepository;
+import com.workflowai.project.ProjectRepository;
 import com.workflowai.rag.RagIngestService;
 import com.workflowai.security.ProjectAccess;
 import com.workflowai.user.UserRepository;
@@ -59,6 +60,9 @@ class TaskControllerSecurityTest {
 
     @MockitoBean
     private ProjectMemberRepository projectMemberRepository;
+
+    @MockitoBean
+    private ProjectRepository projectRepository;
 
     @MockitoBean
     private RagIngestService ragIngestService;

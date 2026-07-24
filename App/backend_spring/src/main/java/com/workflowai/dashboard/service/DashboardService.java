@@ -281,6 +281,7 @@ public class DashboardService {
         return new MilestoneProgressDto(
             String.valueOf(milestone.getId()),
             milestone.getTitle(),
+            milestone.getStartDate() == null ? null : milestone.getStartDate().toString(),
             milestone.getDueDate() == null ? null : milestone.getDueDate().toString(),
             status,
             taskCount,

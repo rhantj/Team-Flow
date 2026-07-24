@@ -5,6 +5,8 @@ import com.workflowai.notification.Notification;
 import com.workflowai.notification.NotificationRepository;
 import com.workflowai.project.ProjectMember;
 import com.workflowai.project.ProjectMemberRepository;
+import com.workflowai.project.ProjectRepository;
+import com.workflowai.project.ProjectSchedulePolicy;
 import com.workflowai.rag.RagIngestService;
 import com.workflowai.security.CurrentUser;
 import com.workflowai.task.Task;
@@ -54,6 +56,7 @@ public class MeetingAnalysisService {
     private final NotificationRepository notificationRepository;
     private final UserRepository userRepository;
     private final ProjectMemberRepository projectMemberRepository;
+    private final ProjectRepository projectRepository;
     private final RagIngestService ragIngestService;
     private final MeetingAnalysisPersistence meetingAnalysisPersistence;
     private final String uploadsDir;
@@ -69,6 +72,7 @@ public class MeetingAnalysisService {
         NotificationRepository notificationRepository,
         UserRepository userRepository,
         ProjectMemberRepository projectMemberRepository,
+        ProjectRepository projectRepository,
         RagIngestService ragIngestService,
         MeetingAnalysisPersistence meetingAnalysisPersistence,
         @Value("${workflow.uploads.dir}") String uploadsDir
@@ -83,6 +87,7 @@ public class MeetingAnalysisService {
         this.notificationRepository = notificationRepository;
         this.userRepository = userRepository;
         this.projectMemberRepository = projectMemberRepository;
+        this.projectRepository = projectRepository;
         this.ragIngestService = ragIngestService;
         this.meetingAnalysisPersistence = meetingAnalysisPersistence;
         this.uploadsDir = uploadsDir;
@@ -469,6 +474,10 @@ public class MeetingAnalysisService {
 
         Meeting meeting = meetingRepository.findById(meetingId).orElse(null);
         Long taskProjectId = meeting == null ? null : meeting.getProjectId();
+        if (taskProjectId != null && dueDate != null) {
+            projectRepository.findById(taskProjectId)
+                .ifPresent(project -> ProjectSchedulePolicy.validate(project, null, dueDate, "업무"));
+        }
         double position = taskRepository.findTopByProjectIdAndStatusOrderByPositionDesc(taskProjectId, "todo")
             .map(t -> t.getPosition() + 1)
             .orElse(0.0);

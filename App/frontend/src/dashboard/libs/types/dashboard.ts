@@ -59,6 +59,7 @@ export interface DashboardSummaryResponse {
 export interface MilestoneProgressDto {
   id: string;
   title: string;
+  startDate: string | null;
   dueDate: string | null;
   status: string;
   taskCount: number;

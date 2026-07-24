@@ -15,6 +15,7 @@ import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.NotificationRepository;
 import com.workflowai.project.ProjectMember;
 import com.workflowai.project.ProjectMemberRepository;
+import com.workflowai.project.ProjectRepository;
 import com.workflowai.project.ProjectRole;
 import com.workflowai.rag.RagIngestService;
 import com.workflowai.security.UserPrincipal;
@@ -63,6 +64,7 @@ class MeetingAnalysisServiceTest {
     @Mock private NotificationRepository notificationRepository;
     @Mock private UserRepository userRepository;
     @Mock private ProjectMemberRepository projectMemberRepository;
+    @Mock private ProjectRepository projectRepository;
     @Mock private RagIngestService ragIngestService;
     @Mock private MeetingAnalysisPersistence meetingAnalysisPersistence;
 
@@ -86,7 +88,8 @@ class MeetingAnalysisServiceTest {
         return new MeetingAnalysisService(
             meetingAnalysisJobPublisher, demoDataService, meetingRepository, meetingAttendeeRepository,
             meetingAnalysisRepository, meetingActionItemRepository, taskRepository, notificationRepository,
-            userRepository, projectMemberRepository, ragIngestService, meetingAnalysisPersistence, "/tmp/workflow-uploads"
+            userRepository, projectMemberRepository, projectRepository, ragIngestService,
+            meetingAnalysisPersistence, "/tmp/workflow-uploads"
         );
     }
 
