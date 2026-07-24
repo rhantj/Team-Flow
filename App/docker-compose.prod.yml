@@ -54,6 +54,14 @@ services:
       SERVER_FORWARD_HEADERS_STRATEGY: framework
       REDIS_USERNAME: spring
       REDIS_PASSWORD: ${REDIS_SPRING_PASSWORD:?REDIS_SPRING_PASSWORD is required}
+    # 아바타 등 업로드 파일의 uploads-data 볼륨은 여기서 재선언하지 않아 base(docker-compose.yml)
+    # 것을 그대로 물려받는다 — Docker named volume은 이 호스트의 로컬 디스크일 뿐이다. 현재
+    # OCI 배포는 backend-spring 컨테이너가 단일 인스턴스라 이걸로 충분하지만(컨테이너
+    # 재빌드/재시작에도 파일이 유지됨), 인스턴스를 여러 대로 늘리면 각 컨테이너가 서로 다른
+    # 로컬 볼륨을 보게 되어 "다른 인스턴스가 업로드한 아바타가 404" 문제가 생긴다. 이 named
+    # volume을 NFS 등 네트워크 스토리지로 바꾸는 것만으로는 안전하지 않다 — StorageService
+    # 인터페이스(App/backend_spring/src/main/java/com/workflowai/storage/)를 S3 등
+    # Object Storage 구현체로 교체하는 것이 이 코드베이스가 의도한 다중 인스턴스 전환 경로다.
     ports: !override
       - '127.0.0.1:8080:8080'
 
