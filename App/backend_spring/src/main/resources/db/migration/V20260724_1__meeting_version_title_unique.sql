@@ -2,37 +2,24 @@
 -- 락 조회 경로에 예외적인 빈틈이 생기면 중복 제목이 만들어질 수 있어, DB 유일성 제약으로
 -- 이중 안전장치를 둔다. 같은 원본(original_meeting_id) 아래에서는 제목이 유일해야 한다.
 
--- 유니크 인덱스 생성이 기존 중복 데이터 때문에 배포 자체를 실패시키지 않도록,
--- 인덱스를 걸기 전에 이미 존재하는 중복 제목을 행별로 유일하게 보정한다.
--- 단순히 title에 id를 붙이면 그 결과 문자열이 우연히 다른 행의 제목과 같을 수 있으므로,
--- 후보 제목이 (original_meeting_id, title) 기준으로 실제 비어 있는지 확인하며 순차 증가시킨다.
--- 데이터는 지우지 않고 제목만 보정한다.
+-- 기존 사용자 데이터(제목)를 마이그레이션이 임의로 바꾸는 것은 그 자체로 파괴적 변경이므로,
+-- 자동 보정(rename)은 하지 않는다. 대신 유니크 인덱스를 걸기 전에 중복 여부만 확인하고,
+-- 중복이 있으면 배포를 막고 사람이 직접 검토·정리하도록 예외를 던진다.
 DO $$
 DECLARE
-    dup RECORD;
-    candidate TEXT;
-    dup_suffix INT;
+    dup_count INT;
 BEGIN
-    FOR dup IN
-        SELECT id, original_meeting_id, title,
-               ROW_NUMBER() OVER (PARTITION BY original_meeting_id, title ORDER BY id) AS rn
+    SELECT COUNT(*) INTO dup_count FROM (
+        SELECT original_meeting_id, title
         FROM meetings
         WHERE original_meeting_id IS NOT NULL
-    LOOP
-        IF dup.rn > 1 THEN
-            dup_suffix := 1;
-            LOOP
-                candidate := dup.title || '_dup' || dup_suffix;
-                EXIT WHEN NOT EXISTS (
-                    SELECT 1 FROM meetings
-                    WHERE original_meeting_id = dup.original_meeting_id
-                      AND title = candidate
-                );
-                dup_suffix := dup_suffix + 1;
-            END LOOP;
-            UPDATE meetings SET title = candidate WHERE id = dup.id;
-        END IF;
-    END LOOP;
+        GROUP BY original_meeting_id, title
+        HAVING COUNT(*) > 1
+    ) duplicated_groups;
+
+    IF dup_count > 0 THEN
+        RAISE EXCEPTION '중복된 (original_meeting_id, title) 조합이 %건 있습니다. 데이터를 임의로 변경하지 않으므로, 직접 확인 후 정리하고 이 마이그레이션을 다시 적용하세요.', dup_count;
+    END IF;
 END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_meetings_original_id_title
