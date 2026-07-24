@@ -409,11 +409,13 @@ public class MeetingAnalysisService {
     @Transactional
     public MeetingDeleteResponse delete(String projectId, String meetingId, boolean deleteLinkedTasks) {
         Long projectDbId = requireProjectMember(projectId);
-        requireLeader(projectDbId);
         Long meetingDbId = parseLongOrNull(meetingId);
         if (meetingDbId == null) return null;
         Meeting meeting = meetingRepository.findByIdAndProjectIdForUpdate(meetingDbId, projectDbId).orElse(null);
         if (meeting == null) return null;
+        // 존재하지 않는 회의록에 대해서도 비팀장에게 403을 먼저 주면 기존 404 응답 계약이 깨지므로,
+        // 회의록 존재를 먼저 확인한 뒤에 팀장 권한을 검사한다.
+        requireLeader(projectDbId);
 
         String filePath = meeting.getFilePath();
         List<Task> linkedTasks = deleteLinkedTasks
@@ -532,7 +534,9 @@ public class MeetingAnalysisService {
         // 루트를 비관적 락(FOR UPDATE)으로 조회해서, 같은 원본에 대한 동시 수정본 생성 요청을
         // 트랜잭션 단위로 직렬화한다 — 그래야 count 기반 제목 접미사가 동시 요청에서 중복되지 않는다.
         Long rootId = original.getOriginalMeetingId() != null ? original.getOriginalMeetingId() : original.getId();
-        Meeting lockedRoot = meetingRepository.findByIdForUpdate(rootId).orElse(original);
+        // 락 없이 계속 진행하면 동시성 보장이 깨지므로, 루트 조회 실패는 폴백하지 않고 즉시 실패시킨다.
+        Meeting lockedRoot = meetingRepository.findByIdForUpdate(rootId)
+            .orElseThrow(() -> new IllegalStateException("원본 회의록을 찾을 수 없습니다: " + rootId));
         String rootTitle = lockedRoot.getTitle();
 
         long existingVersions = meetingRepository.countByOriginalMeetingId(rootId);

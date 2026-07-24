@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -238,6 +239,8 @@ public class MeetingAnalysisController {
             return ResponseEntity.ok(ApiResponse.ok(response));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(400).body(ApiResponse.fail("INVALID_TRANSCRIPT", e.getMessage()));
+        } catch (DataIntegrityViolationException e) {
+            return ResponseEntity.status(409).body(ApiResponse.fail("VERSION_TITLE_CONFLICT", "동시 수정 요청으로 버전 제목이 충돌했습니다. 다시 시도해주세요."));
         }
     }
 }

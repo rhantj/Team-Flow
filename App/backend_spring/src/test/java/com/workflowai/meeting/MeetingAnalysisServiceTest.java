@@ -365,9 +365,13 @@ class MeetingAnalysisServiceTest {
     @Test
     void deleteRejectsWhenCurrentUserIsNotLeader() {
         // 컨트롤러의 @PreAuthorize에만 기대지 않고 서비스 레이어에서도 팀장 권한을 재확인한다.
+        // 존재하지 않는 회의록에 대해 403을 먼저 주지 않도록, 권한 검사 전에 회의록 존재를 확인하므로
+        // 이 테스트는 실제로 존재하는 회의록을 스텁해야 팀장 권한 검사 분기까지 도달한다.
         mockMember(1L);
         when(projectMemberRepository.findByProjectIdAndUserId(1L, CURRENT_USER_ID))
             .thenReturn(Optional.of(new ProjectMember(1L, CURRENT_USER_ID, ProjectRole.MEMBER)));
+        Meeting meeting = new Meeting(1L, "회의록", "text/plain", null, "completed", null, null, null, 50L, null);
+        when(meetingRepository.findByIdAndProjectIdForUpdate(20L, 1L)).thenReturn(Optional.of(meeting));
         MeetingAnalysisService service = newService();
 
         assertThatThrownBy(() -> service.delete("demo-project", "20", false))
@@ -378,7 +382,8 @@ class MeetingAnalysisServiceTest {
 
     @Test
     void deleteReturnsNullWhenMeetingBelongsToAnotherProject() {
-        mockLeader(1L);
+        // 회의록이 존재하지 않으면(다른 프로젝트 소속) 팀장 권한 검사에 도달하지 않으므로 mockMember로 충분하다.
+        mockMember(1L);
         when(meetingRepository.findByIdAndProjectIdForUpdate(99L, 1L)).thenReturn(Optional.empty());
         MeetingAnalysisService service = newService();
 
@@ -834,6 +839,7 @@ class MeetingAnalysisServiceTest {
         Meeting original = new Meeting(1L, "정기회의", "document", null, "completed", LocalDate.now(), "정기회의", "a.txt", 10L, 10L);
         ReflectionTestUtils.setField(original, "id", 5L);
         when(meetingRepository.findByIdAndProjectId(5L, 1L)).thenReturn(Optional.of(original));
+        when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(original));
         when(meetingRepository.countByOriginalMeetingId(5L)).thenReturn(0L);
         when(meetingRepository.save(any(Meeting.class))).thenAnswer(inv -> inv.getArgument(0));
         when(projectMemberRepository.findByProjectIdAndRole(1L, ProjectRole.LEADER))
@@ -859,6 +865,7 @@ class MeetingAnalysisServiceTest {
         Meeting original = new Meeting(1L, "정기회의", "document", null, "completed", LocalDate.now(), "정기회의", "a.txt", 10L, 10L);
         ReflectionTestUtils.setField(original, "id", 5L);
         when(meetingRepository.findByIdAndProjectId(5L, 1L)).thenReturn(Optional.of(original));
+        when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(original));
         when(meetingRepository.countByOriginalMeetingId(5L)).thenReturn(1L);
         when(meetingRepository.save(any(Meeting.class))).thenAnswer(inv -> inv.getArgument(0));
         MeetingAnalysisService service = newService();
@@ -907,6 +914,7 @@ class MeetingAnalysisServiceTest {
         Meeting original = new Meeting(1L, "정기회의", "document", null, "completed", LocalDate.now(), "정기회의", "a.txt", 10L, 10L);
         ReflectionTestUtils.setField(original, "id", 5L);
         when(meetingRepository.findByIdAndProjectId(5L, 1L)).thenReturn(Optional.of(original));
+        when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(original));
         when(meetingRepository.countByOriginalMeetingId(5L)).thenReturn(0L);
         when(meetingRepository.save(any(Meeting.class))).thenAnswer(inv -> inv.getArgument(0));
         MeetingAnalysisService service = newService();
