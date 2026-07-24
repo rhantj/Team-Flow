@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.project.ProjectRepository;
 import com.workflowai.security.UserPrincipal;
+import com.workflowai.storage.LocalFileStorageService;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
 import java.awt.image.BufferedImage;
@@ -27,6 +28,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -35,7 +37,11 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+// LocalFileStorageService를 실제 빈으로 띄운다 — @WebMvcTest는 기본적으로 @Service 빈을
+// 스캔하지 않지만, 이 테스트는 실제 파일이 @TempDir에 쓰이고 지워지는지까지 검증해야 하므로
+// StorageService를 목(mock)으로 대체하지 않고 실제 로컬 구현체를 그대로 쓴다.
 @WebMvcTest(MeController.class)
+@Import(LocalFileStorageService.class)
 @AutoConfigureMockMvc(addFilters = false)
 class MeControllerTest {
 

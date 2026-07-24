@@ -6,6 +6,7 @@ import com.workflowai.project.ProjectMember;
 import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.project.ProjectRepository;
 import com.workflowai.security.CurrentUser;
+import com.workflowai.storage.StorageService;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
 import io.swagger.v3.oas.annotations.Operation;
@@ -13,9 +14,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -29,7 +28,6 @@ import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -51,11 +49,12 @@ public class MeController {
     private static final Set<String> ALLOWED_AVATAR_TYPES = Set.of("image/png", "image/jpeg");
     private static final long MAX_AVATAR_BYTES = 10L * 1024 * 1024;
     private static final int MAX_AVATAR_DIMENSION = 2000;
+    private static final String AVATAR_SUBDIRECTORY = "avatars";
 
     private final UserRepository userRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final ProjectRepository projectRepository;
-    private final String uploadsDir;
+    private final StorageService storageService;
 
     // 아바타 이미지 전체 디코딩(detectImageFormat)은 요청당 최대 ~16MB 버퍼(MAX_AVATAR_DIMENSION
     // 참고)를 잡는다 — 개별 요청은 그 정도로 제한되지만, 동시에 들어오는 요청 수 자체에는
@@ -69,12 +68,12 @@ public class MeController {
         UserRepository userRepository,
         ProjectMemberRepository projectMemberRepository,
         ProjectRepository projectRepository,
-        @Value("${workflow.uploads.dir}") String uploadsDir
+        StorageService storageService
     ) {
         this.userRepository = userRepository;
         this.projectMemberRepository = projectMemberRepository;
         this.projectRepository = projectRepository;
-        this.uploadsDir = uploadsDir;
+        this.storageService = storageService;
     }
 
     @Operation(summary = "내 정보 조회", description = "현재 로그인한 사용자의 기본 정보와 프로젝트별 역할을 조회한다.")
@@ -317,60 +316,33 @@ public class MeController {
      * 지우면 된다(호출부 참고). System.nanoTime()은 JVM마다 기준점이 달라 인스턴스 간 유일성이
      * 보장되지 않으므로(다중 인스턴스 배포 시 이론상 같은 유저가 서로 다른 인스턴스에 동시
      * 업로드하면 충돌 가능), UUID.randomUUID()로 유일성을 보장한다 — timestamp는 충돌 방지용이
-     * 아니라 파일 생성 시각을 파일명에서 바로 알아볼 수 있게 하는 용도로만 남긴다. ATOMIC_MOVE는
-     * 요구하지 않는다 — 이를 지원하지 않는 파일시스템(일부 컨테이너/네트워크 볼륨)에서는
-     * AtomicMoveNotSupportedException으로 업로드가 항상 실패하는데, 같은 디렉터리 안에서는
-     * REPLACE_EXISTING만으로도 이 용도에 충분하다.
+     * 아니라 파일 생성 시각을 파일명에서 바로 알아볼 수 있게 하는 용도로만 남긴다. 실제 저장
+     * 위치/방식은 StorageService(현재는 LocalFileStorageService)에 위임한다 — 나중에 S3 등으로
+     * 바꿔도 이 컨트롤러는 그대로 둘 수 있다.
      */
     private String storeAvatar(Long userId, MultipartFile file, String extension) throws IOException {
-        Path dir = Path.of(uploadsDir, "avatars").toAbsolutePath().normalize();
-        Files.createDirectories(dir);
-
         String fileName = userId + "-" + System.currentTimeMillis() + "-" + UUID.randomUUID() + "." + extension;
-        Path target = dir.resolve(fileName);
-
-        Path tmp = dir.resolve(fileName + ".tmp");
-        try {
-            file.transferTo(tmp);
-            Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
-        } finally {
-            Files.deleteIfExists(tmp);
-        }
-
-        return "avatars/" + fileName;
+        return storageService.store(AVATAR_SUBDIRECTORY, fileName, file);
     }
 
     /**
      * DB 반영이 확인된 뒤에만 호출한다. 정리가 실패해도 요청은 실패시키지 않는다 — orphan
      * 파일만 남을 뿐 서비스 동작에는 영향 없다. relativePath는 항상 storeAvatar()가 만든
-     * 값이라 정상적으로는 안전하지만,
-     * DB 값이 손상/변조됐을 가능성까지 방어적으로 차단하기 위해 avatars 디렉터리를 벗어나는
-     * 경로는 지우지 않는다 (MeetingAnalysisService의 zip-slip 가드와 동일한 패턴). 여기에 더해
-     * 파일명이 userId 소유가 맞는지도 확인한다 — storeAvatar가 만드는 파일명은 항상
-     * "{userId}-{timestamp}-{UUID}.{ext}" 형식이므로, 이 조건은 정상 경로에서는 항상 성립한다. 이걸
-     * 확인하는 이유는 profile_image_path가 (버그나 DB 직접 조작으로) 다른 유저의 경로를 가리키게
-     * 되는 이상 상황이 생기더라도, 그 값을 그대로 믿고 지워서 남의 아바타 파일을 삭제하는 사고를
-     * 막기 위해서다.
+     * 값이라 정상적으로는 안전하지만, 파일명이 userId 소유가 맞는지 확인한다 — storeAvatar가
+     * 만드는 파일명은 항상 "{userId}-{timestamp}-{UUID}.{ext}" 형식이므로, 이 조건은 정상
+     * 경로에서는 항상 성립한다. 이걸 확인하는 이유는 profile_image_path가 (버그나 DB 직접
+     * 조작으로) 다른 유저의 경로를 가리키게 되는 이상 상황이 생기더라도, 그 값을 그대로 믿고
+     * 지워서 남의 아바타 파일을 삭제하는 사고를 막기 위해서다. avatars 디렉터리를 벗어나는
+     * 경로 방어는 StorageService.delete가 담당한다.
      * 정리가 실패하거나 거부되면 요청 자체는 여전히 성공으로 응답한다(DB는 이미 정확한
-     * 상태이므로) — 대신 WARN 로그를 남긴다. 그냥 무시하면 디스크 권한/네트워크 볼륨 문제 등으로
-     * 정리가 계속 실패해도 아무도 모른 채 고아 파일이 조용히 쌓일 수 있으므로, 최소한 로그로는
-     * 관측 가능하게 한다.
+     * 상태이므로).
      */
     private void deleteAvatarFile(Long userId, String relativePath) {
-        try {
-            Path avatarsDir = Path.of(uploadsDir, "avatars").toAbsolutePath().normalize();
-            Path target = Path.of(uploadsDir, relativePath).toAbsolutePath().normalize();
-            if (!target.startsWith(avatarsDir)) {
-                log.warn("아바타 정리 거부: userId={} 경로가 avatars 디렉터리를 벗어남 ({})", userId, relativePath);
-                return;
-            }
-            if (!target.getFileName().toString().startsWith(userId + "-")) {
-                log.warn("아바타 정리 거부: userId={} 소유가 아닌 파일명 ({})", userId, relativePath);
-                return;
-            }
-            Files.deleteIfExists(target);
-        } catch (IOException e) {
-            log.warn("아바타 파일 정리 실패, 고아 파일로 남을 수 있음: userId={} path={}", userId, relativePath, e);
+        String fileName = Path.of(relativePath).getFileName().toString();
+        if (!fileName.startsWith(userId + "-")) {
+            log.warn("아바타 정리 거부: userId={} 소유가 아닌 파일명 ({})", userId, relativePath);
+            return;
         }
+        storageService.delete(AVATAR_SUBDIRECTORY, relativePath);
     }
 }
