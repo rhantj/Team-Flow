@@ -161,20 +161,15 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 ## 8. DB 마이그레이션 적용 (신규 앱 기동 전 필수, 이후 스키마 변경도 항상 수동 적용)
 
-> 📋 **지금 이 시점 기준으로 기존 운영(Supabase/OCI) DB에 아직 반영 안 됐을 수 있는 컬럼은
-> `terms_agreed_at` 하나뿐이다.** `field_tags`/`profile_image_path`/`affiliation`/
-> `github_username`은 이미 007/008(아래 for 루프)로 과거에 적용된 이력이 있다. 아래를
-> **코드 배포 전에** 실행할 것(재실행해도 안전 — `ADD COLUMN IF NOT EXISTS`):
+> 📋 **배포 전 실행할 SQL은 [`App/DEPLOY_MANUAL.sql`](DEPLOY_MANUAL.sql)에 모아둔다.**
+> 지금 이 시점 기준으로는 `terms_agreed_at` 하나뿐이다 — `field_tags`/`profile_image_path`/
+> `affiliation`/`github_username`은 이미 007/008(아래 for 루프)로 과거에 적용된 이력이 있다.
 > ```bash
-> docker exec -i workflow-db psql -U postgres -d workflow < docs/db/migrations/012_users_terms_agreement.sql
-> ```
-> 내용은 이렇다(`docs/db/migrations/012_users_terms_agreement.sql`과 동일):
-> ```sql
-> ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_agreed_at TIMESTAMP;
-> COMMENT ON COLUMN users.terms_agreed_at IS '이메일/비밀번호 회원가입 시 이용약관에 동의한 시각. Google OAuth/데모 계정은 이 절차를 거치지 않아 NULL';
+> docker exec -i workflow-db psql -U postgres -d workflow < App/DEPLOY_MANUAL.sql
 > ```
 > `\d users`로 컬럼이 생겼는지 확인한 뒤에만 새 백엔드 이미지를 배포할 것 — 순서를 바꾸면
-> `ddl-auto=validate`가 기동을 막는다.
+> `ddl-auto=validate`가 기동을 막는다. 새 스키마 변경을 추가할 때마다 이 파일도 함께
+> 갱신할 것(아래 체크리스트 참고).
 
 compose는 `backend_spring/src/main/resources/db/init`만 자동 실행한다. `docs/db/migrations`는
 운영 DB에 스키마 변경을 수동으로 적용하는 방식으로, 이 환경을 **아직 한 번도 001~010까지
@@ -255,6 +250,9 @@ DDL을 자동 생성/실행할 수 있어(컬럼 삭제·타입 변경 오판단
    (Supabase라면 `supabase db push --linked` 또는 해당 SQL을 직접 실행.) **순서가 중요하다**
    — 새 컬럼을 참조하는 코드가 먼저 배포되면 `ddl-auto=validate`가 기동을 막는다.
 4. 적용 후 `\d <테이블명>`으로 컬럼이 실제로 생겼는지 확인한 뒤에만 코드를 배포한다.
+5. [`App/DEPLOY_MANUAL.sql`](DEPLOY_MANUAL.sql)에 방금 만든 `docs/db/migrations/NNN_*.sql`
+   내용을 추가해, 다음에 새 환경을 배포하는 사람이 "지금 시점에 실행할 SQL 전체"를 한 파일로
+   받을 수 있게 한다.
 
 파괴적 변경(컬럼/테이블 삭제, 타입 변경 등)은 8-1절의 `011_drop_legacy_field.sql` 패턴처럼
 RENAME으로 먼저 보관하고, 실제 DROP은 최소 한 배포 주기 이상 문제 없음을 확인한 뒤 별도로
