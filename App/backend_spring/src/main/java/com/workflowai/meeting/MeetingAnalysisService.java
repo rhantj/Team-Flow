@@ -419,13 +419,16 @@ public class MeetingAnalysisService {
             .orElse(null);
         String title = meeting.getTitle();
         String actorName = defaultString(resolveNameById(actorId), "누군가");
+        String scopeSuffix = deleteLinkedTasks ? " (등록된 업무도 함께 삭제됨)" : " (등록된 업무는 유지됨)";
 
         meetingRepository.delete(meeting);
         deleteUploadedFile(filePath);
 
         notificationService.notifyActorAndCounterpart(
-            actorId, "MEETING_DELETED", "회의록을 삭제했습니다", "'" + title + "' 회의록을 삭제했습니다.",
-            leaderId, "MEETING_DELETED", "회의록이 삭제되었습니다", actorName + "님이 '" + title + "' 회의록을 삭제했습니다.",
+            actorId, "MEETING_DELETED", "회의록을 삭제했습니다",
+            "'" + title + "' 회의록을 삭제했습니다." + scopeSuffix,
+            leaderId, "MEETING_DELETED", "회의록이 삭제되었습니다",
+            actorName + "님이 '" + title + "' 회의록을 삭제했습니다." + scopeSuffix,
             "meeting", meetingDbId
         );
         return new MeetingDeleteResponse(meetingId, "DELETED");
