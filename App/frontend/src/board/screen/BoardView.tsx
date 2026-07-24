@@ -11,7 +11,9 @@ import { TaskDetailPanel } from "../components/TaskDetailPanel";
 import { TaskResultPanel } from "../components/TaskResultPanel";
 import { AddTaskModal } from "../components/AddTaskModal";
 import { EditTaskModal } from "../components/EditTaskModal";
-import { fetchTasks, updateTaskPosition, deleteTask, DEMO_PROJECT_ID } from "../libs/utils/taskApi";
+import {
+  fetchTasks, updateTaskPosition, deleteTask, requestTaskCompletion, cancelTaskCompletion, DEMO_PROJECT_ID,
+} from "../libs/utils/taskApi";
 import { NEXT_STATUS, quickMoveTargetStatus } from "../libs/utils/taskActions";
 import { reorderTasks } from "../libs/utils/taskService";
 import { useAuth } from "../../global/hooks/useAuth";
@@ -25,7 +27,8 @@ function parseFilterParam(searchParams: URLSearchParams, key: string): string[] 
 }
 
 export function BoardView() {
-  const { currentProjectId } = useAuth();
+  const { currentProjectId, currentProject } = useAuth();
+  const isLeader = currentProject?.role === "팀장";
   const projectId = currentProjectId ?? DEMO_PROJECT_ID;
   const [projectMembers, setProjectMembers] = useState<MemberResponse[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -37,6 +40,7 @@ export function BoardView() {
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [workResultOpen, setWorkResultOpen] = useState(false);
+  const [completionConfirmTaskId, setCompletionConfirmTaskId] = useState<string | null>(null);
 
   const selTask = selId ? tasks.find((t) => t.id === selId) ?? null : null;
 
@@ -105,7 +109,7 @@ export function BoardView() {
 
   useEffect(() => {
     if (searchParams.get("openAdd") === "1") {
-      openModal("todo");
+      if (isLeader) openModal("todo");
       const next = new URLSearchParams(searchParams);
       next.delete("openAdd");
       setSearchParams(next, { replace: true });
@@ -144,6 +148,15 @@ export function BoardView() {
     setWorkResultOpen(false);
   };
 
+  // 팀원이 "완료"로 옮기려는 시도를 가로채서 확인 팝업을 띄운다. 팀장은 그대로 즉시 이동.
+  const requestOrMoveToDone = (taskId: string, moveDirectly: () => void) => {
+    if (isLeader) {
+      moveDirectly();
+      return;
+    }
+    setCompletionConfirmTaskId(taskId);
+  };
+
   const handleQuickAction = (label: string, isPrimary: boolean) => {
     if (!selTask) return;
     const moveTo = quickMoveTargetStatus(label, selTask.status);
@@ -157,8 +170,15 @@ export function BoardView() {
       const nextStatus = NEXT_STATUS[selTask.status];
       if (nextStatus) {
         const columnCount = tasks.filter((t) => t.status === nextStatus && t.id !== selTask.id).length;
-        moveTask(selTask.id, nextStatus, columnCount);
-        showToast(`${label} 완료`);
+        const moveDirectly = () => {
+          moveTask(selTask.id, nextStatus, columnCount);
+          showToast(`${label} 완료`);
+        };
+        if (nextStatus === "done") {
+          requestOrMoveToDone(selTask.id, moveDirectly);
+        } else {
+          moveDirectly();
+        }
         return;
       }
     }
@@ -168,7 +188,35 @@ export function BoardView() {
   // 컬럼의 빈 영역에 드롭 = 그 컬럼 맨 끝에 추가.
   const handleDropTask = (taskId: string, status: TaskStatus) => {
     const columnCount = tasks.filter((t) => t.status === status && t.id !== taskId).length;
-    moveTask(taskId, status, columnCount);
+    const moveDirectly = () => moveTask(taskId, status, columnCount);
+    if (status === "done") {
+      requestOrMoveToDone(taskId, moveDirectly);
+    } else {
+      moveDirectly();
+    }
+  };
+
+  const confirmCompletionRequest = async () => {
+    const taskId = completionConfirmTaskId;
+    setCompletionConfirmTaskId(null);
+    if (!taskId) return;
+    try {
+      const updated = await requestTaskCompletion(taskId, projectId);
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? updated : t)));
+      showToast("완료 승인을 요청했습니다.");
+    } catch {
+      showToast("완료 승인 요청에 실패했습니다. 다시 시도해주세요.");
+    }
+  };
+
+  const handleCancelCompletionRequest = async (taskId: string) => {
+    try {
+      const updated = await cancelTaskCompletion(taskId, projectId);
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? updated : t)));
+      showToast("완료 승인 요청을 취소했습니다.");
+    } catch {
+      showToast("취소에 실패했습니다. 다시 시도해주세요.");
+    }
   };
 
   const handleDeleteTask = async (taskId: string) => {
@@ -194,7 +242,12 @@ export function BoardView() {
     const targetIndex = columnTasks.findIndex((t) => t.id === targetId);
     if (targetIndex === -1) return;
     const insertAt = position === "after" ? targetIndex + 1 : targetIndex;
-    moveTask(draggedId, targetTask.status, insertAt);
+    const moveDirectly = () => moveTask(draggedId, targetTask.status, insertAt);
+    if (targetTask.status === "done") {
+      requestOrMoveToDone(draggedId, moveDirectly);
+    } else {
+      moveDirectly();
+    }
   };
 
   const workspaceMode = Boolean(selTask);
@@ -248,7 +301,6 @@ export function BoardView() {
                     compact
                     selectedId={selId}
                     onSelectTask={handleSelectTask}
-                    onAddTask={openModal}
                     onDropTask={handleDropTask}
                     onReorderTask={handleReorderTask}
                   />
@@ -266,6 +318,7 @@ export function BoardView() {
                     onDeleteTask={handleDeleteTask}
                     onEditTask={() => setEditingTask(selTask)}
                     onOpenWorkResult={() => setWorkResultOpen(true)}
+                    onCancelCompletionRequest={() => handleCancelCompletionRequest(selTask.id)}
                   />
                 </Panel>
                 {workResultOpen && (
@@ -290,7 +343,6 @@ export function BoardView() {
                 compact={false}
                 selectedId={selId}
                 onSelectTask={handleSelectTask}
-                onAddTask={openModal}
                 onDropTask={handleDropTask}
                 onReorderTask={handleReorderTask}
               />
@@ -300,6 +352,33 @@ export function BoardView() {
 
         <AddTaskModal open={showModal} initialStatus={modalStatus} projectMembers={projectMembers} onClose={() => setShowModal(false)} onCreated={handleTaskCreated} />
         <EditTaskModal task={editingTask} projectMembers={projectMembers} onClose={() => setEditingTask(null)} onUpdated={handleTaskUpdated} />
+
+        {completionConfirmTaskId && (
+          <>
+            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50" onClick={() => setCompletionConfirmTaskId(null)} />
+            <div className="fixed inset-0 flex items-center justify-center z-50 p-4" onClick={(e) => e.stopPropagation()}>
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5">
+                <div className="text-sm font-bold text-foreground mb-1.5">업무를 완료했습니까?</div>
+                <div className="text-xs text-muted-foreground mb-4">팀장에게 승인 요청하겠습니다.</div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => setCompletionConfirmTaskId(null)}
+                    className="px-4 py-2 text-xs font-medium text-muted-foreground border border-border rounded-xl hover:bg-muted transition-colors"
+                  >
+                    취소
+                  </button>
+                  <button
+                    onClick={confirmCompletionRequest}
+                    className="px-4 py-2 text-xs font-semibold text-white rounded-xl hover:opacity-90 transition-opacity"
+                    style={{ background: "linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}
+                  >
+                    승인 신청
+                  </button>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </DndProvider>
   );

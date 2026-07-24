@@ -207,7 +207,7 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
                           <div className="font-semibold">{n.title}</div>
                         </div>
                         {n.content && <div className="text-muted-foreground mt-0.5">{n.content}</div>}
-                        <div className="text-[10px] text-muted-foreground mt-0.5">{new Date(n.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })}</div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5">{new Date(n.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Seoul" })}</div>
                         {isActionRequired && n.targetType === "meeting" && n.targetId && (
                           <button
                             onClick={() => {

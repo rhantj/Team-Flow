@@ -22,7 +22,7 @@ vi.mock("../libs/utils/reviewerApi", () => ({
 }));
 
 function makeTask(id: string, assignee: string, status: Task["status"], dueDate: string): Task {
-  return { id, title: `업무 ${id}`, status, priority: "medium", assignee, dueDate, labels: [], category: "frontend", position: 0 };
+  return { id, title: `업무 ${id}`, status, priority: "medium", assignee, dueDate, labels: [], category: "frontend", position: 0, pendingApproval: false, startDate: "", extraFields: {} };
 }
 
 function makeReviewerProject(projectId: number, title: string, evalStatus: ReviewerProject["evalStatus"] = "pending"): ReviewerProject {

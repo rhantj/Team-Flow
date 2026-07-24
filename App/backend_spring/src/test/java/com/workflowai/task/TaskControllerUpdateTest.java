@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.workflowai.activity.ActivityService;
 import com.workflowai.common.DemoDataService;
+import com.workflowai.common.GlobalExceptionHandler;
 import com.workflowai.notification.NotificationService;
 import com.workflowai.project.Project;
 import com.workflowai.project.ProjectMemberRepository;
@@ -70,6 +71,7 @@ class TaskControllerUpdateTest {
                 taskRepository, userRepository, demoDataService, activityService,
                 notificationService, projectMemberRepository, projectRepository, ragIngestService
             ))
+            .setControllerAdvice(new GlobalExceptionHandler())
             .build();
         SecurityContextHolder.getContext().setAuthentication(
             new UsernamePasswordAuthenticationToken(
@@ -148,6 +150,49 @@ class TaskControllerUpdateTest {
                 .content("{\"dueDate\":\"not-a-date\"}"))
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.error.code").value("INVALID_DUE_DATE"));
+    }
+
+    @Test
+    void rejectsInvalidStartDateFormat() throws Exception {
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(taskRepository.findById(anyLong())).thenReturn(Optional.of(existingTask()));
+
+        mockMvc.perform(patch("/api/v1/projects/demo-project/tasks/42")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"startDate\":\"not-a-date\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_START_DATE"));
+    }
+
+    @Test
+    void rejectsStartDateAfterExistingDueDate() throws Exception {
+        // existingTask()의 dueDate는 2026-07-01. startDate만 그보다 늦게 보내면
+        // applyUpdate 적용 후 실제 값 기준(2026-07-15 > 2026-07-01)으로 막혀야 한다.
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(taskRepository.findById(anyLong())).thenReturn(Optional.of(existingTask()));
+        when(projectRepository.findById(1L)).thenReturn(Optional.of(new Project("프로젝트", "team", "")));
+
+        mockMvc.perform(patch("/api/v1/projects/demo-project/tasks/42")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"startDate\":\"2026-07-15\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_DATE_RANGE"));
+
+        verify(taskRepository, never()).save(any());
+    }
+
+    @Test
+    void allowsStartDateOnOrBeforeDueDate() throws Exception {
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(taskRepository.findById(anyLong())).thenReturn(Optional.of(existingTask()));
+        when(projectRepository.findById(1L)).thenReturn(Optional.of(new Project("프로젝트", "team", "")));
+        when(taskRepository.save(any(Task.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        mockMvc.perform(patch("/api/v1/projects/demo-project/tasks/42")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"startDate\":\"2026-06-01\",\"dueDate\":\"2026-07-01\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.startDate").value("2026-06-01"));
     }
 
     @Test

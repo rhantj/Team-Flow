@@ -165,6 +165,27 @@ class TaskControllerPositionTest {
     }
 
     @Test
+    void blocksMovingTaskWhilePendingApproval() throws Exception {
+        // 완료 승인 대기 중인 업무는 팀장이라도 승인/반려/취소 전에는 이동할 수 없어야 한다 -
+        // 그렇지 않으면 pendingApproval=true인 채로 status만 바뀌어 정합성이 깨진다.
+        authenticateAs(1L);
+        Task task = existingTask();
+        task.requestCompletion();
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(taskRepository.findById(anyLong())).thenReturn(Optional.of(task));
+        when(projectMemberRepository.findByProjectIdAndUserId(1L, 1L))
+            .thenReturn(Optional.of(new ProjectMember(1L, 1L, ProjectRole.LEADER)));
+
+        mockMvc.perform(patch("/api/v1/projects/demo-project/tasks/42/position")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"status\":\"blocked\",\"position\":1.0}"))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.error.code").value("PENDING_APPROVAL"));
+
+        verify(taskRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
     void doesNotNotifyWhenStatusUnchanged() throws Exception {
         authenticateAs(3L);
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
