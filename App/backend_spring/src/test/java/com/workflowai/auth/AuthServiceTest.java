@@ -160,6 +160,21 @@ class AuthServiceTest {
     }
 
     @Test
+    void signup_termsAgreedNull_succeedsButDoesNotSetTermsAgreedAt() {
+        when(userRepository.existsByEmail("nullconsent@example.com")).thenReturn(false);
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jwtService.issueAccessToken(any())).thenReturn("access-token");
+        when(jwtService.issueRefreshToken(any())).thenReturn("refresh-token");
+        when(jwtService.accessTokenTtlSeconds()).thenReturn(1800L);
+
+        authService.signup("nullconsent@example.com", "12345678", "이름", "MEMBER", null);
+
+        ArgumentCaptor<User> savedUser = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).saveAndFlush(savedUser.capture());
+        assertThat(savedUser.getValue().getTermsAgreedAt()).isNull();
+    }
+
+    @Test
     void loginWithPassword_normalizesEmail() {
         String hash = passwordEncoder.encode("12345678");
         User user = new User("local@example.com", "홍길동", "local", "local@example.com", hash);
