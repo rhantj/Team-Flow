@@ -169,12 +169,30 @@ public class MeetingAnalysisPersistence {
         meeting.setAnalysisStatus("completed");
         meetingRepository.save(meeting);
 
-        if (meeting.getUploadedBy() != null) {
-            notifyBestEffort(
-                meeting.getUploadedBy(), "MEETING_ANALYSIS_COMPLETED", "회의 분석이 완료되었습니다.",
-                "'" + meeting.getTitle() + "' 회의록 분석이 완료되었습니다.", meetingId
-            );
+        notifyAnalysisCompleted(meeting, meetingId);
+    }
+
+    /**
+     * 업로더 본인에게는 항상 알리고, 업로더가 팀장이 아니면 팀장에게도 "역할분배를 진행해달라"는
+     * 별도 알림을 보낸다. 업로더==팀장이면 중복이므로 업로더 알림 1건만 나간다.
+     */
+    private void notifyAnalysisCompleted(Meeting meeting, Long meetingId) {
+        Long uploaderId = meeting.getUploadedBy();
+        if (uploaderId == null) {
+            return;
         }
+        notifyBestEffort(
+            uploaderId, "MEETING_ANALYSIS_COMPLETED", "회의 분석이 완료되었습니다.",
+            "'" + meeting.getTitle() + "' 회의록 분석이 완료되었습니다.", meetingId
+        );
+        String uploaderName = userRepository.findById(uploaderId).map(User::getName).orElse("누군가");
+        projectMemberRepository.findByProjectIdAndRole(meeting.getProjectId(), com.workflowai.project.ProjectRole.LEADER)
+            .map(com.workflowai.project.ProjectMember::getUserId)
+            .filter(leaderId -> !leaderId.equals(uploaderId))
+            .ifPresent(leaderId -> notifyBestEffort(
+                leaderId, "MEETING_ANALYSIS_COMPLETED_NOTIFY_LEADER", "회의록 분석이 완료되었습니다.",
+                uploaderName + "님이 '" + meeting.getTitle() + "' 회의록 분석을 완료했습니다. 역할분배 및 업무등록을 진행해주세요.", meetingId
+            ));
     }
 
     @Transactional

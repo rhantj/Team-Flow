@@ -30,6 +30,7 @@ export interface MeetingAnalysisResponse {
   analysis: MeetingAiResult | null;
   errorMessage: string | null;
   attendees: AttendeeSummary[];
+  transcript: string | null;
 }
 
 export async function analyzeMeeting(params: AnalyzeMeetingParams): Promise<MeetingAnalysisResponse> {
@@ -99,6 +100,9 @@ export interface MeetingSummaryDto {
   meetingDate: string | null;
   meetingType: string | null;
   analysisStatus: string;
+  savedAt: string | null;
+  originalMeetingId: string | null;
+  tasksRegistered: boolean;
 }
 
 export async function fetchMeetings(projectId: string): Promise<MeetingSummaryDto[]> {
@@ -119,5 +123,33 @@ export async function registerMeetingTasks(
   return apiFetch<TaskRegisterResponseDto>(`/projects/${projectId}/meetings/${meetingId}/tasks/register`, {
     method: "POST",
     body: JSON.stringify({ todos }),
+  });
+}
+
+export interface MeetingSaveResponseDto {
+  meetingId: string;
+  status: "SAVED";
+}
+
+export async function confirmMeetingSave(projectId: string, meetingId: string): Promise<MeetingSaveResponseDto> {
+  return apiFetch<MeetingSaveResponseDto>(`/projects/${projectId}/meetings/${meetingId}/save`, {
+    method: "POST",
+  });
+}
+
+export interface MeetingVersionResponseDto {
+  meetingId: string;
+  status: "SAVED" | "PROCESSING";
+}
+
+export async function createMeetingVersion(
+  projectId: string,
+  meetingId: string,
+  transcript: string,
+  triggerAnalysis: boolean
+): Promise<MeetingVersionResponseDto> {
+  return apiFetch<MeetingVersionResponseDto>(`/projects/${projectId}/meetings/${meetingId}/versions`, {
+    method: "POST",
+    body: JSON.stringify({ transcript, triggerAnalysis }),
   });
 }

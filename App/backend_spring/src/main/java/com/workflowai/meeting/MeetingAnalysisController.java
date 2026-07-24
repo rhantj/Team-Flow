@@ -42,7 +42,7 @@ public class MeetingAnalysisController {
             + "요청한 사용자가 해당 프로젝트 멤버가 아니면 403을 반환합니다."
     )
     @PostMapping(value = "/analyze", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("@projectAccess.isMember(#projectId)")
+    @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER') || @projectAccess.hasRole(#projectId, 'MEMBER')")
     public ResponseEntity<ApiResponse<MeetingAnalysisResponse>> analyze(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "회의록 원본 파일 (문서/음성)") @RequestPart(value = "file", required = false) MultipartFile file,
@@ -143,13 +143,13 @@ public class MeetingAnalysisController {
 
     @Operation(
         summary = "회의록 삭제",
-        description = "프로젝트에 업로드된 회의록을 삭제합니다. 본인이 업로드한 회의록만 삭제할 수 있습니다. "
+        description = "프로젝트에 업로드된 회의록을 삭제합니다. 팀장만 삭제할 수 있으며, 본인이 업로드하지 않은 회의록도 삭제할 수 있습니다. "
             + "회의록 원본 파일, 참석자 정보, AI 분석 결과, To-Do 후보가 함께 정리됩니다. "
             + "deleteLinkedTasks=true이면 업무보드에 등록된 연동 업무도 함께 삭제하고, false(기본값)이면 업무(meeting_action_items 등)는 유지한 채 원본 회의록 연결만 해제합니다. "
-            + "meetingId가 이 프로젝트 소속이 아니면 404를, 프로젝트 멤버가 아니거나 본인이 업로드한 회의록이 아니면 403을 반환합니다."
+            + "meetingId가 이 프로젝트 소속이 아니면 404를, 팀장이 아니면 403을 반환합니다."
     )
     @DeleteMapping("/{meetingId}")
-    @PreAuthorize("@projectAccess.isMember(#projectId)")
+    @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER')")
     public ResponseEntity<ApiResponse<MeetingDeleteResponse>> deleteMeeting(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "회의록 ID", example = "42") @PathVariable String meetingId,
@@ -189,7 +189,7 @@ public class MeetingAnalysisController {
         description = "팀장이 승인한 회의록 기반 To-Do 후보를 실제 업무(Task)로 등록합니다. 등록된 업무는 업무보드와 대시보드에서 사용할 수 있습니다."
     )
     @PostMapping("/{meetingId}/tasks/register")
-    @PreAuthorize("@projectAccess.isMember(#projectId)")
+    @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER')")
     public ResponseEntity<ApiResponse<TaskRegisterResponse>> registerTasks(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "회의록 ID", example = "demo-project-1") @PathVariable String meetingId,
@@ -200,5 +200,44 @@ public class MeetingAnalysisController {
             return ResponseEntity.status(404).body(ApiResponse.fail("MEETING_NOT_FOUND", "회의록을 찾을 수 없습니다."));
         }
         return ResponseEntity.ok(ApiResponse.ok(response));
+    }
+
+    @Operation(
+        summary = "회의록 분석결과 저장 확정",
+        description = "회의록 분석결과를 저장 확정한다. 팀장/팀원 모두 가능하며, 심사자는 접근할 수 없다."
+    )
+    @PostMapping("/{meetingId}/save")
+    @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER') || @projectAccess.hasRole(#projectId, 'MEMBER')")
+    public ResponseEntity<ApiResponse<MeetingSaveResponse>> saveMeeting(
+        @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
+        @Parameter(description = "회의록 ID", example = "demo-project-1") @PathVariable String meetingId
+    ) {
+        MeetingSaveResponse response = meetingAnalysisService.confirmSave(projectId, meetingId);
+        if (response == null) {
+            return ResponseEntity.status(404).body(ApiResponse.fail("MEETING_NOT_FOUND", "회의록을 찾을 수 없습니다."));
+        }
+        return ResponseEntity.ok(ApiResponse.ok(response));
+    }
+
+    @Operation(
+        summary = "회의록 수정본(버전) 생성",
+        description = "원본을 훼손하지 않고 새 버전을 만든다. triggerAnalysis=false면 저장만, true면 저장 후 AI 재분석까지 수행한다. 팀장/팀원 모두 가능하며 심사자는 접근할 수 없다."
+    )
+    @PostMapping("/{meetingId}/versions")
+    @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER') || @projectAccess.hasRole(#projectId, 'MEMBER')")
+    public ResponseEntity<ApiResponse<MeetingVersionResponse>> createVersion(
+        @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
+        @Parameter(description = "원본 회의록 ID", example = "demo-project-1") @PathVariable String meetingId,
+        @RequestBody MeetingVersionRequest request
+    ) {
+        try {
+            MeetingVersionResponse response = meetingAnalysisService.createVersion(projectId, meetingId, request);
+            if (response == null) {
+                return ResponseEntity.status(404).body(ApiResponse.fail("MEETING_NOT_FOUND", "회의록을 찾을 수 없습니다."));
+            }
+            return ResponseEntity.ok(ApiResponse.ok(response));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(400).body(ApiResponse.fail("INVALID_TRANSCRIPT", e.getMessage()));
+        }
     }
 }

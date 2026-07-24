@@ -8,10 +8,12 @@ import { addActivity } from "../../board/libs/utils/activityStore";
 import { CATEGORIES } from "../../board/libs/mock/tasks";
 import type { Meeting, UploadFlow, UploadType, GenTodo, SavedMeetingRecord } from "../libs/types/meeting";
 import type { CatId, Priority, Task } from "../../board/libs/types/task";
-import { analyzeMeeting, deleteMeeting, fetchMeeting, fetchMeetings, registerMeetingTasks, retryMeetingAnalysis } from "../libs/utils/meetingAiApi";
+import { analyzeMeeting, confirmMeetingSave, deleteMeeting, fetchMeeting, fetchMeetings, registerMeetingTasks, retryMeetingAnalysis } from "../libs/utils/meetingAiApi";
+import { MeetingEditPanel } from "../components/MeetingEditPanel";
 import type { MeetingAiResult } from "../libs/types/meetingAiTypes";
 import { deleteTask, DEMO_PROJECT_ID } from "../../board/libs/utils/taskApi";
 import { useAuth } from "../../global/hooks/useAuth";
+import type { ProjectRoleKo } from "../../global/api/authTypes";
 import { ApiRequestError } from "../../global/api/apiClient";
 import { getProjectMembers, type MemberResponse } from "../../global/api/projectsApi";
 import jsPDF from "jspdf";
@@ -44,7 +46,14 @@ import {
   Loader2,
 } from "lucide-react";
 
-const CURRENT_USER_ROLE: "leader" | "member" = "leader";
+export type CurrentUserRole = "leader" | "member" | "reviewer";
+
+export function deriveCurrentUserRole(role: ProjectRoleKo | null | undefined): CurrentUserRole {
+  if (role === "팀장") return "leader";
+  if (role === "심사자") return "reviewer";
+  return "member";
+}
+
 const PARTICIPANT_COLORS = ["#3B5BDB", "#7048E8", "#10B981", "#F59E0B", "#EC4899", "#0EA5E9"];
 const MEETING_STATUS_POLL_INTERVAL_MS = 2000;
 const MEETING_STATUS_MAX_POLL_ATTEMPTS = 60;
@@ -358,12 +367,14 @@ const buildMeetingFromAnalysisResponse = (
 };
 
 export function MeetingsView() {
-  const { currentProjectId, user } = useAuth();
+  const { currentProjectId, user, currentProject } = useAuth();
+  const currentUserRole = deriveCurrentUserRole(currentProject?.role);
   const projectId = String(currentProjectId ?? DEMO_PROJECT_ID);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [meetings, setMeetings] = useState<Meeting[]>(() => getStoredMeetings(projectId));
   const [selected, setSelected] = useState<string|null>(() => getStoredMeetings(projectId)[0]?.id ?? null);
+  const [homeTab, setHomeTab] = useState<"analyze" | "saved">("analyze");
   const [uploadFlow, setUploadFlow] = useState<UploadFlow>(null);
   const [uploadType, setUploadType] = useState<UploadType>(null);
   const [modalStep, setModalStep] = useState(0);
@@ -401,6 +412,7 @@ export function MeetingsView() {
   const [newTodoPriority, setNewTodoPriority] = useState<Priority>("medium");
   const [newTodoError, setNewTodoError] = useState<string | null>(null);
   const [saveMeetingMessage, setSaveMeetingMessage] = useState<string | null>(null);
+  const [saveMeetingError, setSaveMeetingError] = useState<string | null>(null);
   const [originalViewMessage, setOriginalViewMessage] = useState<string | null>(null);
   const [originalPreview, setOriginalPreview] = useState<{ kind: "text"; content: string; fileName: string } | { kind: "unsupported"; fileName: string } | null>(null);
   const [pdfExportMessage, setPdfExportMessage] = useState<string | null>(null);
@@ -412,13 +424,16 @@ export function MeetingsView() {
   const [deletingMeetingId, setDeletingMeetingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Meeting | null>(null);
   const [confirmReregister, setConfirmReregister] = useState<(() => void) | null>(null);
+  const [editingMeetingId, setEditingMeetingId] = useState<string | null>(null);
+  const [editingTranscript, setEditingTranscript] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pdfCaptureRef = useRef<HTMLDivElement | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const resultTransitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollSessionRef = useRef(0);
+  const deepLinkHandledIdRef = useRef<string | null>(null);
   const analyzeStages = getAnalyzeStages(uploadType);
-  const canAddManualTodo = CURRENT_USER_ROLE === "leader";
+  const canAddManualTodo = currentUserRole === "leader";
 
   // 실제 서버 처리 흐름에 맞춘 진행률 표시:
   // 업로드 요청 → 서버 PROCESSING 폴링 → 완료/실패 응답 순서로 목표 진행률만 올린다.
@@ -577,11 +592,10 @@ export function MeetingsView() {
 
   // 서버에 저장된 회의록 목록을 가져와 로컬에 없는 항목만 보충한다.
   // 실패해도 화면은 로컬 저장 목록으로 그대로 동작한다.
-  useEffect(() => {
+  // 마운트 시의 초기 로드뿐 아니라, 회의록 수정(버전 생성) 후 목록을 다시 불러올 때도 재사용한다.
+  const refreshMeetingsFromServer = () => {
     const cached = getStoredMeetings(projectId);
-    setMeetings(cached);
-    setSelected(cached[0]?.id ?? null);
-    fetchMeetings(projectId)
+    return fetchMeetings(projectId)
       .then(list => {
         const deletedMeetingIds = getDeletedMeetingIds(projectId);
         const serverMeetings: Meeting[] = list.map(dto => {
@@ -592,6 +606,9 @@ export function MeetingsView() {
             date: dto.meetingDate ?? "",
             duration: dto.analysisStatus === "completed" ? "분석 완료" : dto.analysisStatus,
             status,
+            savedAt: dto.savedAt,
+            originalMeetingId: dto.originalMeetingId,
+            tasksRegistered: dto.tasksRegistered,
           };
           // 목록 API는 요약만 내려주므로, 이미 상세 분석 결과를 캐시해둔 회의록은 그 결과를 보존한다.
           // 그렇지 않으면 탭을 옮겼다가 돌아올 때마다 상세 조회를 다시 하게 되어 화면이 늦게 뜬다.
@@ -608,8 +625,30 @@ export function MeetingsView() {
         setMeetingListError("서버에서 회의록 목록을 불러오지 못했습니다. 로컬 저장 목록만 표시됩니다.");
         setTimeout(() => setMeetingListError(null), 4000);
       });
+  };
+
+  useEffect(() => {
+    const cached = getStoredMeetings(projectId);
+    setMeetings(cached);
+    setSelected(cached[0]?.id ?? null);
+    refreshMeetingsFromServer();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  // 알림의 "바로가기"를 통해 특정 회의록으로 딥링크된 경우, 저장 확정 여부(savedAt)에 따라
+  // 알맞은 탭으로 보내준다: 저장 확정된 회의록은 "저장된" 탭, 분석만 완료되고 아직
+  // 저장 전(MEETING_ANALYSIS_COMPLETED_NOTIFY_LEADER 알림 시점)인 회의록은 "분석/업로드" 탭.
+  // 목록이 아직 로드되기 전이라면 selected만 먼저 세팅해두고, 목록 로드 후 이 effect가
+  // 다시 실행될 때 탭을 결정한다.
+  useEffect(() => {
+    const targetMeetingId = searchParams.get("meetingId");
+    if (!targetMeetingId || deepLinkHandledIdRef.current === targetMeetingId) return;
+    setSelected(targetMeetingId);
+    const target = meetings.find(item => item.id === targetMeetingId);
+    if (!target) return;
+    setHomeTab(target.savedAt ? "saved" : "analyze");
+    deepLinkHandledIdRef.current = targetMeetingId;
+  }, [searchParams, meetings]);
 
   // 참석자 체크 목록은 현재 프로젝트의 실제 멤버만 보여준다.
   useEffect(() => {
@@ -666,6 +705,7 @@ export function MeetingsView() {
   const meeting = meetings.find(m => m.id === selected);
   // meetingId가 있으면 우선 사용, 없으면(review 화면에서 아직 meetings에 반영 전 등) meetTitle로 대체.
   const meetingIdentifier = meeting?.id || meetTitle;
+  const savedMeetingsList = meetings.filter(m => Boolean(m.savedAt));
 
   // ── Upload type metadata ─────────────────────────────────────────────────────
   const UPLOAD_TYPES = [
@@ -760,6 +800,41 @@ export function MeetingsView() {
     saveSavedMeetings(next, projectId);
     setSaveMeetingMessage("회의록이 저장되었습니다.");
     setTimeout(() => setSaveMeetingMessage(null), 2500);
+  };
+
+  // 로컬 상태 반영(handleSaveMeeting)에 더해 서버의 saved_at 확정과 MEETING_SAVED/_NOTIFY_LEADER 알림 발송을 트리거한다.
+  const handleConfirmSave = async () => {
+    handleSaveMeeting();
+    if (!selected) return;
+    setSaveMeetingError(null);
+    try {
+      await confirmMeetingSave(projectId, selected);
+    } catch (error) {
+      const status = error instanceof ApiRequestError ? ` (${error.status})` : "";
+      setSaveMeetingError(`서버 저장에 실패했습니다${status}. 잠시 후 다시 시도해주세요.`);
+      setTimeout(() => setSaveMeetingError(null), 6000);
+    }
+  };
+
+  // 저장된 회의록 탭에서 "수정"/"AI 재분석하기"를 누르면 수정 화면(MeetingEditPanel)을 연다.
+  // 상세 조회(fetchMeeting)로 실제 원문(transcript)을 가져온 뒤에 패널을 열어야
+  // MeetingEditPanel의 초기 textarea 값이 빈 문자열로 뜨지 않는다.
+  const handleOpenMeetingEdit = (meetingId: string) => {
+    fetchMeeting(projectId, meetingId)
+      .then(response => {
+        setEditingTranscript(response.transcript ?? "");
+        setEditingMeetingId(meetingId);
+      })
+      .catch(() => {
+        setEditingTranscript("");
+        setEditingMeetingId(meetingId);
+      });
+  };
+
+  const closeMeetingEditAndRefresh = () => {
+    setEditingMeetingId(null);
+    setEditingTranscript("");
+    void refreshMeetingsFromServer();
   };
 
   const handleViewOriginal = async () => {
@@ -1421,15 +1496,20 @@ export function MeetingsView() {
         </div>
         {/* Actions */}
         <div className="p-4 space-y-2">
-          <button onClick={() => setUploadFlow("review")}
-            className="w-full py-2.5 text-sm font-semibold text-white rounded-xl flex items-center justify-center gap-2 hover:opacity-90 transition-opacity"
-            style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
-            <ListChecks className="w-4 h-4" />역할 분배 검토 →
-          </button>
-          <button onClick={handleSaveMeeting} className="w-full py-2 text-xs font-medium text-muted-foreground border border-border rounded-xl hover:bg-muted transition-colors flex items-center justify-center gap-1.5">
-            <FileText className="w-3.5 h-3.5" />회의록 저장
-          </button>
+          {currentUserRole === "leader" && (
+            <button onClick={() => setUploadFlow("review")}
+              className="w-full py-2.5 text-sm font-semibold text-white rounded-xl flex items-center justify-center gap-2 hover:opacity-90 transition-opacity"
+              style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
+              <ListChecks className="w-4 h-4" />역할 분배 검토 →
+            </button>
+          )}
+          {currentUserRole !== "reviewer" && (
+            <button onClick={handleConfirmSave} className="w-full py-2 text-xs font-medium text-muted-foreground border border-border rounded-xl hover:bg-muted transition-colors flex items-center justify-center gap-1.5">
+              <FileText className="w-3.5 h-3.5" />{currentUserRole === "leader" ? "회의록 분석결과 저장" : "회의록 저장"}
+            </button>
+          )}
           {saveMeetingMessage && <div className="text-[10px] text-emerald-600 text-center">{saveMeetingMessage}</div>}
+          {saveMeetingError && <div className="text-[10px] text-amber-600 text-center">{saveMeetingError}</div>}
           <button onClick={() => setUploadFlow(null)} className="w-full py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
             닫기
           </button>
@@ -1505,10 +1585,12 @@ export function MeetingsView() {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <div className="text-sm font-semibold text-foreground">생성된 To-Do <span className="text-muted-foreground font-normal">({generatedTodos.length}개)</span></div>
-              <button onClick={() => setUploadFlow("review")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg hover:opacity-90"
-                style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
-                <ListChecks className="w-3.5 h-3.5" />역할 분배 검토
-              </button>
+              {currentUserRole === "leader" && (
+                <button onClick={() => setUploadFlow("review")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg hover:opacity-90"
+                  style={{ background:"linear-gradient(135deg,#3B5BDB,#4F6EF7)" }}>
+                  <ListChecks className="w-3.5 h-3.5" />역할 분배 검토
+                </button>
+              )}
             </div>
             {groupedGeneratedTodos.map(todo => {
               const assigneeId = getAssignee(todo);
@@ -1660,7 +1742,7 @@ export function MeetingsView() {
                   className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border transition-all ${showUnassigned ? "border-amber-400 bg-amber-50 text-amber-700" : "border-border bg-card text-muted-foreground hover:border-slate-300"}`}>
                   <AlertTriangle className="w-3.5 h-3.5" />미배정만 보기 {showUnassigned && <span className="bg-amber-200 text-amber-800 px-1 rounded text-[10px]">{unassignedCount}</span>}
                 </button>
-                {isReviewBatchAlreadyRegistered ? (
+                {currentUserRole === "leader" && (isReviewBatchAlreadyRegistered ? (
                   <button onClick={() => { setUploadFlow(null); navigate("/board"); }}
                     className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity"
                     style={{ background:"linear-gradient(135deg,#10B981,#059669)" }}>
@@ -1674,7 +1756,7 @@ export function MeetingsView() {
                     {isRegisteringTasks ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                     {isRegisteringTasks ? "업무보드 등록 중" : `${approvedCount}개 업무 보드에 등록`}
                   </button>
-                )}
+                ))}
               </div>
               {registerMessage && <div className="text-[11px] text-amber-600">{registerMessage}</div>}
             </div>
@@ -1875,11 +1957,30 @@ export function MeetingsView() {
   if (uploadFlow === "done")      return renderDone();
 
   return (
-    <div className="flex h-full overflow-hidden relative" style={{ fontFamily:"'Inter','Noto Sans KR',sans-serif" }}>
+    <div className="flex flex-col h-full overflow-hidden relative" style={{ fontFamily:"'Inter','Noto Sans KR',sans-serif" }}>
       {renderRegisteringOverlay()}
       {renderDeletingOverlay()}
       {renderDeleteConfirmModal()}
       {renderReregisterConfirmModal()}
+
+      <div className="flex gap-2 border-b border-border px-4 shrink-0">
+        <button
+          onClick={() => setHomeTab("analyze")}
+          className={`px-4 py-2 text-sm font-semibold ${homeTab === "analyze" ? "border-b-2 border-blue-600 text-blue-600" : "text-muted-foreground"}`}
+        >
+          분석/업로드
+        </button>
+        <button
+          onClick={() => setHomeTab("saved")}
+          className={`px-4 py-2 text-sm font-semibold ${homeTab === "saved" ? "border-b-2 border-blue-600 text-blue-600" : "text-muted-foreground"}`}
+        >
+          저장된 회의록
+        </button>
+      </div>
+
+      <div className="flex flex-1 overflow-hidden">
+      {homeTab === "analyze" && (
+      <>
       {/* ── Upload modal ── */}
       {uploadFlow === "modal" && (
         <>
@@ -2114,19 +2215,21 @@ export function MeetingsView() {
                   <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${m.status === "processed" ? "bg-emerald-100 text-emerald-600" : m.status === "processing" ? "bg-blue-100 text-blue-600" : m.status === "failed" ? "bg-red-100 text-red-600" : "bg-slate-100 text-slate-500"}`}>
                     {m.status === "processed" ? "AI 분석 완료" : m.status === "processing" ? "분석 중" : m.status === "failed" ? "분석 실패" : "예정"}
                   </span>
-                  <button
-                    type="button"
-                    onClick={event => {
-                      event.stopPropagation();
-                      setDeleteTarget(m);
-                    }}
-                    disabled={Boolean(deletingMeetingId)}
-                    className="p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                    title="회의록 삭제"
-                    aria-label={`${m.title} 회의록 삭제`}
-                  >
-                    {deletingMeetingId === m.id ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-600" /> : <Trash2 className="w-3.5 h-3.5" />}
-                  </button>
+                  {currentUserRole === "leader" && (
+                    <button
+                      type="button"
+                      onClick={event => {
+                        event.stopPropagation();
+                        setDeleteTarget(m);
+                      }}
+                      disabled={Boolean(deletingMeetingId)}
+                      className="p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      title="회의록 삭제"
+                      aria-label={`${m.title} 회의록 삭제`}
+                    >
+                      {deletingMeetingId === m.id ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-600" /> : <Trash2 className="w-3.5 h-3.5" />}
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="text-sm font-medium text-foreground leading-snug">{m.title}</div>
@@ -2184,7 +2287,7 @@ export function MeetingsView() {
                     <CheckSquare className="w-4 h-4" style={{ color: "var(--primary)" }} />
                     <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">생성된 To-Do</div>
                   </div>
-                  {isMeetingTodosRegistered ? (
+                  {currentUserRole === "leader" && (isMeetingTodosRegistered ? (
                     <button onClick={() => { navigate("/board"); }}
                       className="text-xs font-medium text-emerald-600 hover:text-emerald-700">
                       등록 완료 · 업무보드 확인
@@ -2197,7 +2300,7 @@ export function MeetingsView() {
                       {isRegisteringTasks && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                       {isRegisteringTasks ? "등록 중" : "업무로 등록"}
                     </button>
-                  )}
+                  ))}
                 </div>
                 {registerMessage && <div className="text-[11px] text-amber-600 mb-2">{registerMessage}</div>}
                 <ul className="space-y-2">
@@ -2256,6 +2359,81 @@ export function MeetingsView() {
             )}
           </div>
         )}
+      </div>
+      </>
+      )}
+
+      {homeTab === "saved" && (
+        <div className="flex-1 overflow-y-auto p-6">
+          {editingMeetingId ? (
+            <div className="max-w-2xl">
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-sm font-semibold text-foreground">회의록 수정</div>
+                <button type="button" onClick={() => setEditingMeetingId(null)}
+                  className="text-xs text-muted-foreground hover:underline">
+                  취소
+                </button>
+              </div>
+              <MeetingEditPanel
+                projectId={projectId}
+                meetingId={editingMeetingId}
+                initialTranscript={editingTranscript}
+                onSaved={closeMeetingEditAndRefresh}
+                onAnalyzed={closeMeetingEditAndRefresh}
+              />
+            </div>
+          ) : savedMeetingsList.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full gap-3 text-center text-muted-foreground">
+              <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center">
+                <FileAudio className="w-8 h-8 text-slate-400" />
+              </div>
+              <div className="text-sm font-semibold text-foreground mb-1">저장된 회의록이 없습니다</div>
+              <div className="text-xs leading-relaxed max-w-sm">회의록 분석 후 '회의록 분석결과 저장'을 눌러 저장하면 이곳에 표시됩니다.</div>
+            </div>
+          ) : (
+            <div className="space-y-2 max-w-2xl">
+              {savedMeetingsList.map(m => {
+                const isPendingVersion = Boolean(m.originalMeetingId) && m.status === "pending";
+                return (
+                <div key={m.id} onClick={() => { setSelected(m.id); setHomeTab("analyze"); }}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={event => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelected(m.id);
+                      setHomeTab("analyze");
+                    }
+                  }}
+                  className="w-full text-left p-3 rounded-lg border border-border bg-card hover:bg-muted transition-all cursor-pointer">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-mono text-muted-foreground">{m.date}</span>
+                    <div className="flex items-center gap-1.5">
+                      {m.tasksRegistered && (
+                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-600">등록완료</span>
+                      )}
+                      {m.originalMeetingId && (
+                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">수정됨</span>
+                      )}
+                      {currentUserRole !== "reviewer" && (
+                        <button
+                          type="button"
+                          onClick={event => { event.stopPropagation(); handleOpenMeetingEdit(m.id); }}
+                          className="text-[10px] font-medium px-2 py-0.5 rounded-full border border-border text-foreground hover:bg-muted"
+                        >
+                          {isPendingVersion ? "AI 재분석하기" : "수정"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-sm font-medium text-foreground leading-snug">{m.title}</div>
+                </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
       </div>
     </div>
   );

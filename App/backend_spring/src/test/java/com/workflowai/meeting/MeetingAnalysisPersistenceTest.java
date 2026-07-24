@@ -2,14 +2,17 @@ package com.workflowai.meeting;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.NotificationService;
+import com.workflowai.project.ProjectMember;
 import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.rag.RagIngestService;
 import com.workflowai.user.User;
@@ -189,6 +192,50 @@ class MeetingAnalysisPersistenceTest {
         }
 
         verify(notificationService, never()).notify(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void saveAnalysisSuccessNotifiesLeaderWhenUploaderIsMember() {
+        MeetingAnalysisPersistence persistence = newPersistence();
+        Meeting meeting = new Meeting(1L, "정기회의", "document", null, "processing", LocalDate.now(), "정기회의", "a.txt", 10L, 10L);
+        when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(meeting));
+        when(meetingAttendeeRepository.findByMeetingId(5L)).thenReturn(List.of());
+        when(meetingAnalysisRepository.save(any(MeetingAnalysis.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        ProjectMember leaderMember = new ProjectMember(1L, 99L, com.workflowai.project.ProjectRole.LEADER);
+        when(projectMemberRepository.findByProjectIdAndRole(1L, com.workflowai.project.ProjectRole.LEADER))
+            .thenReturn(Optional.of(leaderMember));
+
+        MeetingAnalysisResult result = new MeetingAnalysisResult(
+            "요약", List.of(), List.of(), List.of(), List.of(),
+            new MeetingMeta("정기회의", "2026-07-15", List.of())
+        );
+
+        persistence.saveAnalysisSuccess(5L, result, "FASTAPI");
+
+        verify(notificationService).notify(eq(10L), eq("MEETING_ANALYSIS_COMPLETED"), any(), any(), eq("meeting"), eq(5L));
+        verify(notificationService).notify(eq(99L), eq("MEETING_ANALYSIS_COMPLETED_NOTIFY_LEADER"), any(), any(), eq("meeting"), eq(5L));
+    }
+
+    @Test
+    void saveAnalysisSuccessSendsOnlyOneNotificationWhenUploaderIsLeader() {
+        MeetingAnalysisPersistence persistence = newPersistence();
+        Meeting meeting = new Meeting(1L, "정기회의", "document", null, "processing", LocalDate.now(), "정기회의", "a.txt", 99L, 10L);
+        when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(meeting));
+        when(meetingAttendeeRepository.findByMeetingId(5L)).thenReturn(List.of());
+        when(meetingAnalysisRepository.save(any(MeetingAnalysis.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        ProjectMember leaderMember = new ProjectMember(1L, 99L, com.workflowai.project.ProjectRole.LEADER);
+        when(projectMemberRepository.findByProjectIdAndRole(1L, com.workflowai.project.ProjectRole.LEADER))
+            .thenReturn(Optional.of(leaderMember));
+
+        MeetingAnalysisResult result = new MeetingAnalysisResult(
+            "요약", List.of(), List.of(), List.of(), List.of(),
+            new MeetingMeta("정기회의", "2026-07-15", List.of())
+        );
+
+        persistence.saveAnalysisSuccess(5L, result, "FASTAPI");
+
+        verify(notificationService, times(1)).notify(any(), any(), any(), any(), any(), any());
+        verify(notificationService).notify(eq(99L), eq("MEETING_ANALYSIS_COMPLETED"), any(), any(), eq("meeting"), eq(5L));
     }
 
     @Test

@@ -171,6 +171,10 @@ public class Task {
         return sourceMeetingId;
     }
 
+    public Long getCreatedBy() {
+        return createdBy;
+    }
+
     public double getPosition() {
         return position;
     }

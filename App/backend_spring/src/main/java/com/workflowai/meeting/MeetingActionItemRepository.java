@@ -10,6 +10,8 @@ import org.springframework.data.repository.query.Param;
 public interface MeetingActionItemRepository extends JpaRepository<MeetingActionItem, Long> {
     List<MeetingActionItem> findByMeetingId(Long meetingId);
 
+    List<MeetingActionItem> findByMeetingIdIn(List<Long> meetingIds);
+
     Optional<MeetingActionItem> findFirstByMeetingIdAndTitle(Long meetingId, String title);
 
     void deleteByMeetingId(Long meetingId);

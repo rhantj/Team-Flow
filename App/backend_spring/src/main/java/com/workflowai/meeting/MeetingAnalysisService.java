@@ -3,7 +3,9 @@ package com.workflowai.meeting;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.Notification;
 import com.workflowai.notification.NotificationRepository;
+import com.workflowai.notification.NotificationService;
 import com.workflowai.project.ProjectMember;
+import com.workflowai.project.ProjectRole;
 import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.project.ProjectRepository;
 import com.workflowai.project.ProjectSchedulePolicy;
@@ -54,6 +56,7 @@ public class MeetingAnalysisService {
     private final MeetingActionItemRepository meetingActionItemRepository;
     private final TaskRepository taskRepository;
     private final NotificationRepository notificationRepository;
+    private final NotificationService notificationService;
     private final UserRepository userRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final ProjectRepository projectRepository;
@@ -70,6 +73,7 @@ public class MeetingAnalysisService {
         MeetingActionItemRepository meetingActionItemRepository,
         TaskRepository taskRepository,
         NotificationRepository notificationRepository,
+        NotificationService notificationService,
         UserRepository userRepository,
         ProjectMemberRepository projectMemberRepository,
         ProjectRepository projectRepository,
@@ -85,6 +89,7 @@ public class MeetingAnalysisService {
         this.meetingActionItemRepository = meetingActionItemRepository;
         this.taskRepository = taskRepository;
         this.notificationRepository = notificationRepository;
+        this.notificationService = notificationService;
         this.userRepository = userRepository;
         this.projectMemberRepository = projectMemberRepository;
         this.projectRepository = projectRepository;
@@ -128,13 +133,14 @@ public class MeetingAnalysisService {
             LocalDate.parse(resolvedDate),
             meetingKind,
             fileName,
-            null,
+            CurrentUser.id(),
             file == null ? null : file.getSize()
         );
         newMeeting.setAnalysisJobId(jobId);
         Meeting meeting = meetingRepository.save(newMeeting);
 
         meeting.setFilePath(storeUploadedFile(meeting.getId(), file));
+        meeting.setTranscript(text);
         meetingRepository.save(meeting);
 
         List<String> resolvedParticipantNames;
@@ -162,7 +168,7 @@ public class MeetingAnalysisService {
         String meetingId = String.valueOf(meeting.getId());
         return new MeetingAnalysisResponse(
             meetingId, projectId, "PROCESSING", resolvedSourceType, fileName, null, null, null,
-            buildAttendeeSummaries(meeting.getId(), projectDbId)
+            buildAttendeeSummaries(meeting.getId(), projectDbId), meeting.getTranscript()
         );
     }
 
@@ -185,7 +191,8 @@ public class MeetingAnalysisService {
                 null,
                 null,
                 errorMessage,
-                buildAttendeeSummaries(id, meeting.getProjectId())
+                buildAttendeeSummaries(id, meeting.getProjectId()),
+                meeting.getTranscript()
             );
         }
 
@@ -216,7 +223,8 @@ public class MeetingAnalysisService {
             analysis.getAnalysisEngine(),
             result,
             null,
-            buildAttendeeSummaries(id, meeting.getProjectId())
+            buildAttendeeSummaries(id, meeting.getProjectId()),
+            meeting.getTranscript()
         );
     }
 
@@ -256,7 +264,8 @@ public class MeetingAnalysisService {
                 null,
                 null,
                 errorMessage,
-                buildAttendeeSummaries(id, meeting.getProjectId())
+                buildAttendeeSummaries(id, meeting.getProjectId()),
+                meeting.getTranscript()
             );
         }
         if (text.isBlank()) {
@@ -271,7 +280,8 @@ public class MeetingAnalysisService {
                 null,
                 null,
                 errorMessage,
-                buildAttendeeSummaries(id, meeting.getProjectId())
+                buildAttendeeSummaries(id, meeting.getProjectId()),
+                meeting.getTranscript()
             );
         }
         List<String> participantNames = meetingAttendeeRepository.findByMeetingId(id).stream()
@@ -292,6 +302,7 @@ public class MeetingAnalysisService {
 
         UUID jobId = UUID.randomUUID();
         meeting.setAnalysisStatus("processing");
+        meeting.setTranscript(text);
         meeting.setAnalysisJobId(jobId);
         meetingRepository.save(meeting);
 
@@ -306,19 +317,33 @@ public class MeetingAnalysisService {
             null,
             null,
             null,
-            buildAttendeeSummaries(id, meeting.getProjectId())
+            buildAttendeeSummaries(id, meeting.getProjectId()),
+            meeting.getTranscript()
         );
     }
 
     public List<MeetingSummary> findByProject(String projectId) {
         Long projectDbId = requireProjectMember(projectId);
-        return meetingRepository.findByProjectIdOrderByCreatedAtDesc(projectDbId).stream()
+        List<Meeting> meetings = meetingRepository.findByProjectIdOrderByCreatedAtDesc(projectDbId);
+
+        List<Long> meetingIds = meetings.stream().map(Meeting::getId).toList();
+        Set<Long> meetingIdsWithRegisteredTasks = meetingIds.isEmpty()
+            ? Set.of()
+            : meetingActionItemRepository.findByMeetingIdIn(meetingIds).stream()
+                .filter(item -> item.getCreatedTaskId() != null)
+                .map(MeetingActionItem::getMeetingId)
+                .collect(Collectors.toSet());
+
+        return meetings.stream()
             .map(m -> new MeetingSummary(
                 String.valueOf(m.getId()),
                 m.getTitle(),
                 m.getMeetingDate() == null ? null : m.getMeetingDate().toString(),
                 m.getMeetingType(),
-                m.getAnalysisStatus()
+                m.getAnalysisStatus(),
+                m.getSavedAt() == null ? null : m.getSavedAt().toString(),
+                m.getOriginalMeetingId() == null ? null : String.valueOf(m.getOriginalMeetingId()),
+                meetingIdsWithRegisteredTasks.contains(m.getId())
             ))
             .toList();
     }
@@ -388,7 +413,6 @@ public class MeetingAnalysisService {
         if (meetingDbId == null) return null;
         Meeting meeting = meetingRepository.findByIdAndProjectIdForUpdate(meetingDbId, projectDbId).orElse(null);
         if (meeting == null) return null;
-        requireUploader(meeting);
 
         String filePath = meeting.getFilePath();
         List<Task> linkedTasks = deleteLinkedTasks
@@ -415,6 +439,14 @@ public class MeetingAnalysisService {
             meetingActionItemRepository.clearMeetingId(meetingDbId);
             taskRepository.clearSourceMeetingId(meetingDbId);
         }
+        // 삭제는 팀장 전용이라 actorId가 항상 팀장이다 — 반대편(counterpart)은 팀장 자신이 아니라
+        // 원본 업로더로 잡아야, 팀장이 남이 올린 회의록을 지웠을 때 그 업로더에게도 알림이 간다.
+        Long actorId = CurrentUser.id();
+        Long uploaderId = meeting.getUploadedBy();
+        String title = meeting.getTitle();
+        String actorName = defaultString(resolveNameById(actorId), "누군가");
+        String scopeSuffix = deleteLinkedTasks ? " (등록된 업무도 함께 삭제됨)" : " (등록된 업무는 유지됨)";
+
         meetingRepository.delete(meeting);
         runAfterCommit(() ->
             ragIngestService.deleteSourceBestEffort(meeting.getProjectId(), "meeting", meetingDbId)
@@ -431,6 +463,13 @@ public class MeetingAnalysisService {
         );
         deleteUploadedFile(filePath);
 
+        notificationService.notifyActorAndCounterpart(
+            actorId, "MEETING_DELETED", "회의록을 삭제했습니다",
+            "'" + title + "' 회의록을 삭제했습니다." + scopeSuffix,
+            uploaderId, "MEETING_DELETED", "회의록이 삭제되었습니다",
+            actorName + "님이 '" + title + "' 회의록을 삭제했습니다." + scopeSuffix,
+            "meeting", meetingDbId
+        );
         return new MeetingDeleteResponse(meetingId, "DELETED");
     }
 
@@ -440,15 +479,106 @@ public class MeetingAnalysisService {
         if (meeting == null) return null;
         Long meetingDbId = parseLongOrNull(meetingId);
         List<MeetingTodo> todos = request == null || request.todos() == null ? List.of() : request.todos();
-        Long currentLeaderId = demoDataService.resolveUserId("1");
+        Long registeredBy = CurrentUser.id();
 
         int registeredCount = 0;
         for (MeetingTodo todo : todos) {
-            if (registerSingleTask(meetingDbId, todo, currentLeaderId)) {
+            if (registerSingleTask(meetingDbId, todo, registeredBy)) {
                 registeredCount++;
             }
         }
+        String registeredByName = defaultString(resolveNameById(registeredBy), "팀장");
+        notificationService.notifyActorAndCounterpart(
+            registeredBy, "MEETING_TASKS_REGISTERED", "역할분배 및 업무등록이 완료되었습니다",
+            "'" + meeting.getTitle() + "' 회의록의 역할분배 및 업무등록이 완료되었습니다.",
+            meeting.getUploadedBy(), "MEETING_TASKS_REGISTERED_NOTIFY_MEMBER", "역할분배가 완료되었습니다",
+            registeredByName + "님이 '" + meeting.getTitle() + "' 회의록의 역할분배를 완료했습니다. 확인해주세요.",
+            "meeting", meetingDbId
+        );
         return new TaskRegisterResponse(meetingId, registeredCount, "REGISTERED");
+    }
+
+    @Transactional
+    public MeetingSaveResponse confirmSave(String projectId, String meetingId) {
+        Meeting meeting = requireProjectMeeting(projectId, meetingId);
+        if (meeting == null) return null;
+        meeting.markSaved();
+        meetingRepository.save(meeting);
+
+        Long actorId = CurrentUser.id();
+        Long leaderId = projectMemberRepository.findByProjectIdAndRole(meeting.getProjectId(), ProjectRole.LEADER)
+            .map(ProjectMember::getUserId)
+            .orElse(null);
+        String actorName = defaultString(resolveNameById(actorId), "누군가");
+        notificationService.notifyActorAndCounterpart(
+            actorId, "MEETING_SAVED", "회의록이 저장되었습니다", "'" + meeting.getTitle() + "' 회의록이 저장되었습니다.",
+            leaderId, "MEETING_SAVED_NOTIFY_LEADER", "회의록이 저장되었습니다",
+            actorName + "님이 '" + meeting.getTitle() + "' 회의록을 저장했습니다. 역할분배를 진행해주세요.",
+            "meeting", parseLongOrNull(meetingId)
+        );
+        return new MeetingSaveResponse(meetingId, "SAVED");
+    }
+
+    @Transactional
+    public MeetingVersionResponse createVersion(String projectId, String meetingId, MeetingVersionRequest request) {
+        if (request == null || request.transcript() == null || request.transcript().isBlank()) {
+            throw new IllegalArgumentException("수정할 회의록 원문(transcript)은 비워둘 수 없습니다.");
+        }
+        Meeting original = requireProjectMeeting(projectId, meetingId);
+        if (original == null) return null;
+
+        // 경로 파라미터로 받은 회의록이 이미 버전(originalMeetingId != null)이면 최초 원본을 기준으로 제목/카운트를 계산한다.
+        Long rootId = original.getOriginalMeetingId() != null ? original.getOriginalMeetingId() : original.getId();
+        String rootTitle = original.getOriginalMeetingId() == null
+            ? original.getTitle()
+            : meetingRepository.findById(rootId).map(Meeting::getTitle).orElse(original.getTitle());
+
+        long existingVersions = meetingRepository.countByOriginalMeetingId(rootId);
+        String versionTitle = rootTitle + (existingVersions == 0 ? "_수정본" : "_수정본" + (existingVersions + 1));
+
+        Long editorId = CurrentUser.id();
+        Meeting version = meetingRepository.save(Meeting.newVersion(original, request.transcript(), editorId, versionTitle));
+        version.markSaved();
+        meetingRepository.save(version);
+
+        notifyEdited(original, version, editorId);
+
+        if (!request.triggerAnalysis()) {
+            return new MeetingVersionResponse(String.valueOf(version.getId()), "SAVED");
+        }
+
+        AiAnalyzeRequest aiRequest = new AiAnalyzeRequest(
+            projectId,
+            version.getTitle(),
+            version.getMeetingDate() == null ? LocalDate.now().toString() : version.getMeetingDate().toString(),
+            defaultString(version.getMeetingType(), "정기회의"),
+            defaultString(version.getFileType(), "document"),
+            version.getOriginalFileName(),
+            request.transcript(),
+            List.of()
+        );
+        UUID jobId = UUID.randomUUID();
+        version.setAnalysisStatus("processing");
+        version.setAnalysisJobId(jobId);
+        meetingRepository.save(version);
+        runAnalysisAfterCommit(version.getId(), aiRequest, jobId);
+        return new MeetingVersionResponse(String.valueOf(version.getId()), "PROCESSING");
+    }
+
+    /** 수정본 저장/분석 시 수정한 본인 + 반대편(팀장 또는 원본 업로더)에게 알린다. */
+    private void notifyEdited(Meeting original, Meeting version, Long editorId) {
+        Long leaderId = projectMemberRepository.findByProjectIdAndRole(original.getProjectId(), ProjectRole.LEADER)
+            .map(ProjectMember::getUserId)
+            .orElse(null);
+        Long counterpartId = editorId != null && editorId.equals(leaderId) ? original.getUploadedBy() : leaderId;
+        String editorName = defaultString(resolveNameById(editorId), "누군가");
+        notificationService.notifyActorAndCounterpart(
+            editorId, "MEETING_EDITED", "회의록을 수정했습니다",
+            "'" + original.getTitle() + "' 회의록을 수정했습니다.",
+            counterpartId, "MEETING_EDITED", "회의록이 수정되었습니다",
+            editorName + "님이 '" + original.getTitle() + "' 회의록을 수정했습니다.",
+            "meeting", version.getId()
+        );
     }
 
     private boolean registerSingleTask(Long meetingId, MeetingTodo todo, Long createdBy) {
@@ -555,14 +685,6 @@ public class MeetingAnalysisService {
         Long meetingDbId = parseLongOrNull(meetingIdParam);
         if (meetingDbId == null) return null;
         return meetingRepository.findByIdAndProjectId(meetingDbId, projectDbId).orElse(null);
-    }
-
-    /** 회의록을 업로드한 본인만 통과한다. 업로더가 아니거나 uploadedBy가 비어있으면 403. */
-    private void requireUploader(Meeting meeting) {
-        Long userId = CurrentUser.id();
-        if (meeting.getUploadedBy() == null || !meeting.getUploadedBy().equals(userId)) {
-            throw new AccessDeniedException("본인이 업로드한 회의록만 삭제할 수 있습니다.");
-        }
     }
 
     private void validateAttendeeIds(Long projectId, List<Long> attendeeIds) {

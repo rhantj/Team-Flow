@@ -8,6 +8,12 @@ import { fetchNotifications, fetchUnreadNotificationCount, markNotificationsRead
 
 vi.mock("../ui/use-mobile", () => ({ useIsMobile: () => true }));
 
+const mockNavigate = vi.fn();
+vi.mock("react-router", async () => {
+  const actual = await vi.importActual<typeof import("react-router")>("react-router");
+  return { ...actual, useNavigate: () => mockNavigate };
+});
+
 function renderHeader(onOpenMobileMenu = vi.fn()) {
   render(
     <MemoryRouter initialEntries={["/board"]}>
@@ -106,5 +112,33 @@ describe("Header 알림", () => {
     await openBell();
     await waitFor(() => expect(markNotificationsRead).toHaveBeenCalledWith(["1"]));
     expect(screen.getByRole("button", { name: "알림" }).textContent).toContain("3");
+  });
+
+  it("액션필요 알림에는 바로가기 버튼이 보이고 클릭 시 meetingId로 이동한다", async () => {
+    vi.mocked(fetchNotifications).mockResolvedValue([
+      { id: "1", type: "MEETING_SAVED_NOTIFY_LEADER", title: "회의록이 저장됐습니다", content: null, targetType: "meeting", targetId: "7", read: false, createdAt: new Date().toISOString() },
+    ]);
+    vi.mocked(markNotificationsRead).mockResolvedValue(undefined);
+
+    renderHeader();
+    await openBell();
+
+    const shortcutButton = await screen.findByRole("button", { name: "바로가기" });
+    await userEvent.click(shortcutButton);
+
+    expect(mockNavigate).toHaveBeenCalledWith("/meetings?meetingId=7");
+  });
+
+  it("액션불필요 알림에는 바로가기 버튼이 없다", async () => {
+    vi.mocked(fetchNotifications).mockResolvedValue([
+      { id: "1", type: "MEETING_SAVED", title: "회의록이 저장됐습니다", content: null, targetType: "meeting", targetId: "7", read: false, createdAt: new Date().toISOString() },
+    ]);
+    vi.mocked(markNotificationsRead).mockResolvedValue(undefined);
+
+    renderHeader();
+    await openBell();
+
+    await screen.findByText("회의록이 저장됐습니다");
+    expect(screen.queryByRole("button", { name: "바로가기" })).not.toBeInTheDocument();
   });
 });

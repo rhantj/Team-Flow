@@ -13,6 +13,8 @@ public interface MeetingRepository extends JpaRepository<Meeting, Long> {
 
     Optional<Meeting> findByIdAndProjectId(Long id, Long projectId);
 
+    long countByOriginalMeetingId(Long originalMeetingId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select meeting from Meeting meeting where meeting.id = :id")
     Optional<Meeting> findByIdForUpdate(@Param("id") Long id);

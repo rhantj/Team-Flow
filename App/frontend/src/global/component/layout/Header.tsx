@@ -15,6 +15,11 @@ import { useIsMobile } from "../ui/use-mobile";
 
 const NOTIFICATION_POLL_INTERVAL_MS = 30_000;
 
+const ACTION_REQUIRED_NOTIFICATION_TYPES = new Set([
+  "MEETING_ANALYSIS_COMPLETED_NOTIFY_LEADER",
+  "MEETING_SAVED_NOTIFY_LEADER",
+]);
+
 const ROLE_COLORS: Record<ProjectRoleKo, string> = {
   "팀장": "#3B5BDB",
   "팀원": "#10B981",
@@ -188,13 +193,35 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
                     <div className="px-4 py-6 text-xs text-red-600 text-center">알림을 불러오지 못했습니다. 다시 시도해주세요.</div>
                   ) : notifications.length === 0 ? (
                     <div className="px-4 py-6 text-xs text-muted-foreground text-center">알림이 없습니다.</div>
-                  ) : notifications.map(n => (
-                    <div key={n.id} className="px-4 py-2.5 border-b border-border last:border-0 text-xs text-foreground">
-                      <div className="font-semibold">{n.title}</div>
-                      {n.content && <div className="text-muted-foreground mt-0.5">{n.content}</div>}
-                      <div className="text-[10px] text-muted-foreground mt-0.5">{new Date(n.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })}</div>
-                    </div>
-                  ))}
+                  ) : notifications.map(n => {
+                    const isActionRequired = ACTION_REQUIRED_NOTIFICATION_TYPES.has(n.type);
+                    return (
+                      <div
+                        key={n.id}
+                        className={`px-4 py-2.5 border-b border-border last:border-0 text-xs text-foreground ${isActionRequired ? "bg-amber-50" : ""}`}
+                      >
+                        <div className="flex items-center gap-1.5">
+                          {isActionRequired && (
+                            <span className="px-1.5 py-0.5 rounded bg-amber-500 text-white text-[9px] font-bold">할 일</span>
+                          )}
+                          <div className="font-semibold">{n.title}</div>
+                        </div>
+                        {n.content && <div className="text-muted-foreground mt-0.5">{n.content}</div>}
+                        <div className="text-[10px] text-muted-foreground mt-0.5">{new Date(n.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })}</div>
+                        {isActionRequired && n.targetType === "meeting" && n.targetId && (
+                          <button
+                            onClick={() => {
+                              setNotifOpen(false);
+                              navigate(`/meetings?meetingId=${n.targetId}`);
+                            }}
+                            className="mt-1.5 px-2 py-1 rounded bg-blue-600 text-white text-[10px] font-semibold hover:bg-blue-700"
+                          >
+                            바로가기
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </>

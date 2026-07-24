@@ -1,6 +1,38 @@
-import { describe, expect, it } from "vitest";
-import { buildGeneratedTodos } from "./MeetingsView";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { buildGeneratedTodos, deriveCurrentUserRole, MeetingsView } from "./MeetingsView";
 import type { MeetingAiResult } from "../libs/types/meetingAiTypes";
+
+vi.mock("../../global/hooks/useAuth", () => ({
+  useAuth: () => ({
+    user: { id: 1, email: "leader@test.com", name: "김민준" },
+    projectRoles: [{ projectId: 1, projectTitle: "테스트 프로젝트", role: "팀장" }],
+    currentProjectId: 1,
+    currentProject: { projectId: 1, projectTitle: "테스트 프로젝트", role: "팀장" },
+    logout: vi.fn(),
+  }),
+}));
+
+vi.mock("../../global/api/projectsApi", () => ({
+  getProjectMembers: vi.fn().mockResolvedValue([
+    { userId: 1, name: "김민준", email: "leader@test.com", role: "팀장" },
+  ]),
+}));
+
+const fetchMeetings = vi.fn();
+const fetchMeeting = vi.fn();
+
+vi.mock("../libs/utils/meetingAiApi", () => ({
+  analyzeMeeting: vi.fn(),
+  confirmMeetingSave: vi.fn(),
+  fetchMeeting: (...args: unknown[]) => fetchMeeting(...args),
+  fetchMeetings: (...args: unknown[]) => fetchMeetings(...args),
+  deleteMeeting: vi.fn(),
+  retryMeetingAnalysis: vi.fn(),
+  registerMeetingTasks: vi.fn(),
+}));
 
 const baseResult = (assignee_id: string | null): MeetingAiResult => ({
   summary: "요약",
@@ -53,5 +85,158 @@ describe("buildGeneratedTodos", () => {
     const todos = buildGeneratedTodos(result);
 
     expect(todos[0].basis).toBe("회의록 후보 담당자: 곽진아");
+  });
+});
+
+describe("deriveCurrentUserRole", () => {
+  it("팀장 역할은 leader로 매핑된다", () => {
+    expect(deriveCurrentUserRole("팀장")).toBe("leader");
+  });
+
+  it("심사자 역할은 reviewer로 매핑된다", () => {
+    expect(deriveCurrentUserRole("심사자")).toBe("reviewer");
+  });
+
+  it("팀원 역할은 member로 매핑된다", () => {
+    expect(deriveCurrentUserRole("팀원")).toBe("member");
+  });
+
+  it("역할 정보가 없으면(null/undefined) member로 폴백한다, 하드코딩된 leader로 기본값을 두지 않는다", () => {
+    expect(deriveCurrentUserRole(null)).toBe("member");
+    expect(deriveCurrentUserRole(undefined)).toBe("member");
+  });
+});
+
+describe("MeetingsView 홈 탭", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    fetchMeetings.mockResolvedValue([
+      { meetingId: "1", title: "저장된 정기회의", meetingDate: "2026-07-19", meetingType: "정기회의", analysisStatus: "completed", savedAt: "2026-07-19T10:00:00", originalMeetingId: null, tasksRegistered: false },
+      { meetingId: "2", title: "미저장 준비회의", meetingDate: "2026-07-20", meetingType: "정기회의", analysisStatus: "completed", savedAt: null, originalMeetingId: null, tasksRegistered: false },
+    ]);
+    fetchMeeting.mockResolvedValue({
+      meetingId: "1",
+      projectId: "1",
+      status: "COMPLETED",
+      sourceType: "document",
+      fileName: "meeting.txt",
+      analysisSource: "FASTAPI",
+      analysis: null,
+      errorMessage: null,
+      attendees: [],
+    });
+  });
+
+  it("저장된 회의록 탭을 누르면 savedAt이 있는 회의록만 목록에 보인다", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/meetings"]}>
+        <MeetingsView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(fetchMeetings).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getAllByText("저장된 정기회의").length).toBeGreaterThan(0));
+
+    await user.click(screen.getByRole("button", { name: "저장된 회의록" }));
+
+    expect(screen.getByText("저장된 정기회의")).toBeInTheDocument();
+    expect(screen.queryByText("미저장 준비회의")).not.toBeInTheDocument();
+  });
+
+  it("역할분배·업무등록이 안 된 저장 회의록에는 '등록완료' 배지가 보이지 않는다", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/meetings"]}>
+        <MeetingsView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(fetchMeetings).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "저장된 회의록" }));
+
+    expect(await screen.findByText("저장된 정기회의")).toBeInTheDocument();
+    expect(screen.queryByText("등록완료")).not.toBeInTheDocument();
+  });
+
+  it("역할분배·업무등록이 완료된 저장 회의록에는 '등록완료' 배지가 보이고, 원본이면 '수정됨' 배지는 보이지 않는다", async () => {
+    fetchMeetings.mockResolvedValue([
+      { meetingId: "3", title: "등록완료된 회의", meetingDate: "2026-07-21", meetingType: "정기회의", analysisStatus: "completed", savedAt: "2026-07-21T10:00:00", originalMeetingId: null, tasksRegistered: true },
+    ]);
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/meetings"]}>
+        <MeetingsView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(fetchMeetings).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "저장된 회의록" }));
+
+    expect(await screen.findByText("등록완료")).toBeInTheDocument();
+    expect(screen.queryByText("수정됨")).not.toBeInTheDocument();
+  });
+
+  it("수정본이면서 등록완료된 저장 회의록에는 '등록완료'와 '수정됨' 배지가 모두 보인다", async () => {
+    fetchMeetings.mockResolvedValue([
+      { meetingId: "4", title: "수정된 회의", meetingDate: "2026-07-22", meetingType: "정기회의", analysisStatus: "completed", savedAt: "2026-07-22T10:00:00", originalMeetingId: "3", tasksRegistered: true },
+    ]);
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/meetings"]}>
+        <MeetingsView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(fetchMeetings).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "저장된 회의록" }));
+
+    expect(await screen.findByText("등록완료")).toBeInTheDocument();
+    expect(await screen.findByText("수정됨")).toBeInTheDocument();
+  });
+
+  it("저장된 회의록 카드를 클릭하면 분석/업로드 탭으로 전환되어 상세 결과를 볼 수 있다", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/meetings"]}>
+        <MeetingsView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(fetchMeetings).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "저장된 회의록" }));
+    await user.click(await screen.findByText("저장된 정기회의"));
+
+    expect(screen.getByRole("button", { name: "분석/업로드" })).toHaveClass("border-blue-600");
+  });
+
+  it("meetingId 쿼리파라미터가 있으면 저장된 회의록 탭으로 전환되고 해당 회의록이 선택된다", async () => {
+    render(
+      <MemoryRouter initialEntries={["/meetings?meetingId=1"]}>
+        <MeetingsView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(fetchMeetings).toHaveBeenCalled());
+
+    // 대상 회의록(savedAt 있음)이 목록에 반영된 뒤에 탭이 결정되므로 waitFor로 최종 상태를 확인한다.
+    await waitFor(() => expect(screen.getByRole("button", { name: "저장된 회의록" })).toHaveClass("border-blue-600"));
+  });
+
+  it("meetingId 쿼리파라미터의 회의록이 아직 저장되지 않았으면(savedAt null) 분석/업로드 탭으로 전환된다", async () => {
+    // "2"는 beforeEach의 fetchMeetings 목록에서 savedAt: null(분석 완료, 저장 확정 전) 상태다.
+    // MEETING_ANALYSIS_COMPLETED_NOTIFY_LEADER 알림의 바로가기는 이 상태에서 발송되므로,
+    // 저장된 탭이 아니라 분석/업로드 탭으로 이동해야 한다.
+    render(
+      <MemoryRouter initialEntries={["/meetings?meetingId=2"]}>
+        <MeetingsView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(fetchMeetings).toHaveBeenCalled());
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "분석/업로드" })).toHaveClass("border-blue-600"));
+    expect(screen.getByRole("button", { name: "저장된 회의록" })).not.toHaveClass("border-blue-600");
   });
 });

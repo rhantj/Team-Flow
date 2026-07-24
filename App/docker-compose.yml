@@ -71,6 +71,7 @@ services:
     build: ./backend_spring
     container_name: workflow-backend-spring
     environment:
+      TZ: Asia/Seoul # LocalDateTime.now()가 KST 기준으로 찍히도록(알림 등 타임존 없는 시각 표시 보정)
       DB_HOST: db # application.properties에서 이 이름으로 참조
       REDIS_HOST: redis
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092 # KafkaConfig.java의 실제 프로퍼티 키에 맞춰 이름 조정
@@ -149,7 +150,9 @@ services:
       HF_MEETING_ANALYSIS_MODEL: ${HF_MEETING_ANALYSIS_MODEL:-Qwen/Qwen3-4B-Instruct-2507}
       HF_MEETING_ANALYSIS_ENDPOINT: ${HF_MEETING_ANALYSIS_ENDPOINT:-https://router.huggingface.co/v1/chat/completions}
       HF_MEETING_ANALYSIS_TIMEOUT_SECONDS: ${HF_MEETING_ANALYSIS_TIMEOUT_SECONDS:-35}
-      HF_MEETING_ANALYSIS_MAX_TOKENS: ${HF_MEETING_ANALYSIS_MAX_TOKENS:-900}
+      # 900 토큰으로는 요약+결정사항+위험요소+투두 여러 건을 포함한 JSON이 완성되기 전에
+      # 잘려서 파싱 실패(JSONDecodeError: Unterminated string)가 나던 문제 수정.
+      HF_MEETING_ANALYSIS_MAX_TOKENS: ${HF_MEETING_ANALYSIS_MAX_TOKENS:-3000}
       HF_MEETING_ANALYSIS_TEMPERATURE: ${HF_MEETING_ANALYSIS_TEMPERATURE:-0.1}
       # LangSmith 트레이싱 (RAG 챗봇 langchain-huggingface ChatHuggingFace 실행 관찰용)
       LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
