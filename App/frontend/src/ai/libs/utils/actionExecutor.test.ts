@@ -89,6 +89,37 @@ describe("executeAction", () => {
     expect(updateChecklistItem).toHaveBeenCalledWith("37", 2, { done: true }, 1);
   });
 
+  it("refuses to guess when multiple checklist items partially match", async () => {
+    vi.mocked(fetchChecklist).mockResolvedValue([
+      { id: 1, label: "리뷰 요청", done: false },
+      { id: 2, label: "리뷰 반영", done: false },
+    ] as never);
+
+    const result = await executeAction(
+      card({ tool: "toggle_checklist", args: { item: "리뷰", done: true } }),
+      1
+    );
+
+    expect(result.ok).toBe(false);
+    expect(updateChecklistItem).not.toHaveBeenCalled();
+  });
+
+  it("prefers an exact label match over a partial one", async () => {
+    vi.mocked(fetchChecklist).mockResolvedValue([
+      { id: 1, label: "리뷰", done: false },
+      { id: 2, label: "리뷰 반영", done: false },
+    ] as never);
+    vi.mocked(updateChecklistItem).mockResolvedValue({} as never);
+
+    const result = await executeAction(
+      card({ tool: "toggle_checklist", args: { item: "리뷰", done: true } }),
+      1
+    );
+
+    expect(result.ok).toBe(true);
+    expect(updateChecklistItem).toHaveBeenCalledWith("37", 1, { done: true }, 1);
+  });
+
   it("refuses an empty checklist item instead of matching the first one", async () => {
     // item이 빈 문자열이면 label.includes("")가 항상 참이라 첫 항목을 잘못 토글할 수 있다.
     const result = await executeAction(

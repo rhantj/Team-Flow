@@ -11,10 +11,6 @@ export interface ExecutionResult {
 
 const VALID_STATUSES: TaskStatus[] = ["todo", "inprogress", "blocked", "done"];
 
-// 칸반 position은 드래그앤드롭용 정렬값이다. AI 경로에서는 순서를 지정하지 않으므로
-// 목록 끝으로 보내는 큰 값을 쓴다.
-const APPEND_POSITION = Date.now();
-
 function toMessage(error: unknown): string {
   return error instanceof Error ? error.message : "요청을 처리하지 못했습니다.";
 }
@@ -38,7 +34,9 @@ export async function executeAction(card: ActionCard, projectId: number): Promis
         if (!VALID_STATUSES.includes(to as TaskStatus)) {
           return { ok: false, error: "알 수 없는 상태입니다." };
         }
-        await updateTaskPosition(taskId, to as TaskStatus, APPEND_POSITION, projectId);
+        // 칸반 position은 드래그앤드롭용 정렬값이다. AI 경로는 순서를 지정하지 않으므로
+        // 실행 시점 타임스탬프로 목록 끝에 붙인다(호출마다 값이 달라 정렬 충돌을 피한다).
+        await updateTaskPosition(taskId, to as TaskStatus, Date.now(), projectId);
         return { ok: true };
       }
       case "add_comment": {
@@ -53,9 +51,15 @@ export async function executeAction(card: ActionCard, projectId: number): Promis
         if (!itemText) return { ok: false, error: "체크리스트 항목이 지정되지 않았습니다." };
         const done = card.args.done === true;
         const items = await fetchChecklist(taskId, projectId);
-        const target = items.find(item => item.label.includes(itemText));
-        if (!target) return { ok: false, error: "해당 체크리스트 항목을 찾지 못했습니다." };
-        await updateChecklistItem(taskId, target.id, { done }, projectId);
+        // 정확히 같은 항목을 우선한다. 없으면 부분 일치로 넓히되, 여러 개면 되묻는다
+        // (유사 항목이 있을 때 첫 번째를 임의로 바꾸지 않기 위해서다).
+        const exact = items.find(item => item.label.trim() === itemText);
+        const matches = exact ? [exact] : items.filter(item => item.label.includes(itemText));
+        if (matches.length === 0) return { ok: false, error: "해당 체크리스트 항목을 찾지 못했습니다." };
+        if (matches.length > 1) {
+          return { ok: false, error: "일치하는 체크리스트 항목이 여러 개입니다. 더 구체적으로 말씀해주세요." };
+        }
+        await updateChecklistItem(taskId, matches[0].id, { done }, projectId);
         return { ok: true };
       }
       default:
