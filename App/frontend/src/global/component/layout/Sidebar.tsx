@@ -33,6 +33,7 @@ export function Sidebar({ active, onSelect, onAI, collapsed, onToggleCollapsed, 
   const navItems = NAV_ITEMS.filter((item) => {
     if (item.activate === false) return false;
     if (item.id === "contributors") return role === "심사자";
+    if (item.id === "completion-approvals") return role === "팀장";
     return true;
   });
 

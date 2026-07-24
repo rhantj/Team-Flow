@@ -16,6 +16,7 @@ import { UrgentTasksPage } from "../dashboard/screen/detail/UrgentTasksPage";
 import { WorkloadPage } from "../dashboard/screen/detail/WorkloadPage";
 import { ActivityPage } from "../dashboard/screen/detail/ActivityPage";
 import { BoardView } from "../board/screen/BoardView";
+import { CompletionApprovalsView } from "../board/screen/CompletionApprovalsView";
 import { MeetingsView } from "../meetings/screen/MeetingsView";
 import { DeliverablesView } from "../deliverables/screen/DeliverablesView";
 import { ContributorsView } from "../contributors/screen/ContributorsView";
@@ -44,6 +45,12 @@ export const router = createBrowserRouter([
           { path: "dashboard/workload", element: <WorkloadPage /> },
           { path: "dashboard/activity", element: <ActivityPage /> },
           { path: "board", element: <BoardView /> },
+          {
+            element: <RequireRole allow={["팀장"]} />,
+            children: [
+              { path: "completion-approvals", element: <CompletionApprovalsView /> },
+            ],
+          },
           { path: "meetings", element: <MeetingsView /> },
           { path: "deliverables", element: <DeliverablesView /> },
           {

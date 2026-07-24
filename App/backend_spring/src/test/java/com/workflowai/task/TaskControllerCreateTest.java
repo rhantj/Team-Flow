@@ -98,6 +98,38 @@ class TaskControllerCreateTest {
     }
 
     @Test
+    void createsTaskWithStartDate() throws Exception {
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(taskRepository.findTopByProjectIdAndStatusOrderByPositionDesc(anyLong(), any()))
+            .thenReturn(java.util.Optional.empty());
+        when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        mockMvc.perform(post("/api/v1/projects/demo-project/tasks")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"title":"새 업무","category":"backend","startDate":"2026-07-01","dueDate":"2026-07-10"}
+                    """))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.startDate").value("2026-07-01"))
+            .andExpect(jsonPath("$.data.dueDate").value("2026-07-10"));
+    }
+
+    @Test
+    void rejectsStartDateAfterDueDate() throws Exception {
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+
+        mockMvc.perform(post("/api/v1/projects/demo-project/tasks")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"title":"새 업무","category":"backend","startDate":"2026-07-10","dueDate":"2026-07-01"}
+                    """))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_DATE_RANGE"));
+
+        verify(taskRepository, never()).save(any());
+    }
+
+    @Test
     void rejectsInvalidAssigneeIdFormat() throws Exception {
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
 

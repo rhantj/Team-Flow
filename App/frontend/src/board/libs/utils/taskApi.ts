@@ -11,10 +11,13 @@ interface TaskListItemDto {
   category: string | null;
   status: string;
   assigneeId: string | null;
+  startDate: string | null;
   dueDate: string | null;
   priority: string | null;
   position: number;
   description: string | null;
+  pendingApproval: boolean;
+  extraFields: Record<string, string> | null;
 }
 
 const VALID_STATUSES: TaskStatus[] = ["todo", "inprogress", "blocked", "done"];
@@ -38,11 +41,14 @@ function toTask(dto: TaskListItemDto): Task {
     status: normalizeStatus(dto.status),
     priority: normalizePriority(dto.priority),
     assignee: dto.assigneeId ?? "",
+    startDate: dto.startDate ?? "",
     dueDate: dto.dueDate ?? "",
     category: dto.category ?? "other",
     labels: [],
     position: dto.position,
     description: dto.description ?? undefined,
+    pendingApproval: dto.pendingApproval,
+    extraFields: dto.extraFields ?? {},
   };
 }
 
@@ -56,9 +62,11 @@ export interface CreateTaskInput {
   category: string;
   status: TaskStatus;
   assigneeId: string | null;
+  startDate: string | null;
   dueDate: string | null;
   priority: Priority;
   description?: string;
+  extraFields?: Record<string, string>;
 }
 
 export async function createTask(input: CreateTaskInput, projectId: number = DEMO_PROJECT_ID): Promise<Task> {
@@ -86,9 +94,11 @@ export interface UpdateTaskInput {
   title?: string;
   category?: string;
   assigneeId?: string;
+  startDate?: string;
   dueDate?: string;
   priority?: Priority;
   description?: string;
+  extraFields?: Record<string, string>;
 }
 
 export async function updateTask(taskId: string, input: UpdateTaskInput, projectId: number = DEMO_PROJECT_ID): Promise<Task> {
@@ -101,6 +111,31 @@ export async function updateTask(taskId: string, input: UpdateTaskInput, project
 
 export async function deleteTask(taskId: string, projectId: number = DEMO_PROJECT_ID): Promise<void> {
   await apiFetch<null>(`/projects/${projectId}/tasks/${taskId}`, { method: "DELETE" });
+}
+
+export async function requestTaskCompletion(taskId: string, projectId: number = DEMO_PROJECT_ID): Promise<Task> {
+  const dto = await apiFetch<TaskListItemDto>(`/projects/${projectId}/tasks/${taskId}/completion-request`, { method: "POST" });
+  return toTask(dto);
+}
+
+export async function cancelTaskCompletion(taskId: string, projectId: number = DEMO_PROJECT_ID): Promise<Task> {
+  const dto = await apiFetch<TaskListItemDto>(`/projects/${projectId}/tasks/${taskId}/completion-cancel`, { method: "POST" });
+  return toTask(dto);
+}
+
+export async function approveTaskCompletion(taskId: string, projectId: number = DEMO_PROJECT_ID): Promise<Task> {
+  const dto = await apiFetch<TaskListItemDto>(`/projects/${projectId}/tasks/${taskId}/completion-approve`, { method: "POST" });
+  return toTask(dto);
+}
+
+export async function rejectTaskCompletion(taskId: string, projectId: number = DEMO_PROJECT_ID): Promise<Task> {
+  const dto = await apiFetch<TaskListItemDto>(`/projects/${projectId}/tasks/${taskId}/completion-reject`, { method: "POST" });
+  return toTask(dto);
+}
+
+export async function fetchPendingApprovalTasks(projectId: number = DEMO_PROJECT_ID): Promise<Task[]> {
+  const items = await apiFetch<TaskListItemDto[]>(`/projects/${projectId}/tasks/pending-approvals`);
+  return items.map(toTask);
 }
 
 export type NudgeKind = "START" | "PROGRESS" | "URGENT";

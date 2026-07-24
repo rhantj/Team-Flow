@@ -8,6 +8,9 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Map;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "tasks")
@@ -35,6 +38,9 @@ public class Task {
     @Column(name = "assignee_id")
     private Long assigneeId;
 
+    @Column(name = "start_date")
+    private LocalDate startDate;
+
     @Column(name = "due_date")
     private LocalDate dueDate;
 
@@ -54,6 +60,14 @@ public class Task {
 
     @Column(nullable = false)
     private double position;
+
+    @Column(name = "pending_approval", nullable = false)
+    private boolean pendingApproval;
+
+    // 카테고리별 추가 정보(자유 키-값). Hibernate 6 내장 JSON 매핑으로 별도 라이브러리 없이 JSONB에 저장한다.
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "extra_fields", columnDefinition = "jsonb")
+    private Map<String, String> extraFields;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
@@ -122,6 +136,14 @@ public class Task {
         return assigneeId;
     }
 
+    public LocalDate getStartDate() {
+        return startDate;
+    }
+
+    public void setStartDate(LocalDate startDate) {
+        this.startDate = startDate;
+    }
+
     public LocalDate getDueDate() {
         return dueDate;
     }
@@ -146,6 +168,18 @@ public class Task {
         return position;
     }
 
+    public boolean isPendingApproval() {
+        return pendingApproval;
+    }
+
+    public Map<String, String> getExtraFields() {
+        return extraFields;
+    }
+
+    public void setExtraFields(Map<String, String> extraFields) {
+        this.extraFields = extraFields;
+    }
+
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }
@@ -160,16 +194,43 @@ public class Task {
         this.position = position;
     }
 
+    /** 팀원이 완료 승인을 요청한다. status는 그대로 두고 대기 상태만 켠다. */
+    public void requestCompletion() {
+        this.pendingApproval = true;
+    }
+
+    /** 담당자가 본인이 올린 완료 승인 요청을 취소한다. */
+    public void cancelCompletionRequest() {
+        this.pendingApproval = false;
+    }
+
+    /** 팀장이 완료를 승인한다 — 실제로 완료 컬럼 맨 끝으로 옮긴다. */
+    public void approveCompletion(double position) {
+        this.status = "done";
+        this.position = position;
+        this.pendingApproval = false;
+    }
+
+    /** 팀장이 완료를 반려한다 — status는 그대로 두고 대기 상태만 끈다. */
+    public void rejectCompletion() {
+        this.pendingApproval = false;
+    }
+
     /**
      * null인 필드는 변경하지 않는다(부분 수정). updated_at은 DB 트리거(trg_tasks_updated_at)가 갱신한다.
      * 담당자 미배정/마감일 삭제처럼 "명시적으로 null로 비우기"는 아직 어떤 프론트 화면에서도 호출하지 않으므로 지원하지 않는다.
      */
-    public void applyUpdate(String title, String category, Long assigneeId, LocalDate dueDate, String priority, String description) {
+    public void applyUpdate(
+        String title, String category, Long assigneeId, LocalDate startDate, LocalDate dueDate, String priority,
+        String description, Map<String, String> extraFields
+    ) {
         if (title != null) this.title = title;
         if (category != null) this.category = category;
         if (assigneeId != null) this.assigneeId = assigneeId;
+        if (startDate != null) this.startDate = startDate;
         if (dueDate != null) this.dueDate = dueDate;
         if (priority != null) this.priority = priority;
         if (description != null) this.description = description;
+        if (extraFields != null) this.extraFields = extraFields;
     }
 }

@@ -192,7 +192,7 @@ export function Header({ onOpenMobileMenu }: { onOpenMobileMenu?: () => void }) 
                     <div key={n.id} className="px-4 py-2.5 border-b border-border last:border-0 text-xs text-foreground">
                       <div className="font-semibold">{n.title}</div>
                       {n.content && <div className="text-muted-foreground mt-0.5">{n.content}</div>}
-                      <div className="text-[10px] text-muted-foreground mt-0.5">{new Date(n.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })}</div>
+                      <div className="text-[10px] text-muted-foreground mt-0.5">{new Date(n.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Seoul" })}</div>
                     </div>
                   ))}
                 </div>

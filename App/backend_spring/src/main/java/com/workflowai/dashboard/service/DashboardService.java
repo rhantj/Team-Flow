@@ -1,6 +1,7 @@
 package com.workflowai.dashboard.service;
 
 import com.workflowai.common.DemoDataService;
+import com.workflowai.common.UtcTimeFormat;
 import com.workflowai.activity.Activity;
 import com.workflowai.activity.ActivityRepository;
 import com.workflowai.project.Project;
@@ -25,7 +26,6 @@ import com.workflowai.dashboard.entity.Milestone;
 import com.workflowai.dashboard.entity.MlPrediction;
 import com.workflowai.dashboard.repository.MilestoneRepository;
 import com.workflowai.dashboard.repository.MlPredictionRepository;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -339,7 +339,7 @@ public class DashboardService {
             task.getDueDate() == null ? null : task.getDueDate().toString(),
             prediction.getResult(),
             score,
-            prediction.getCreatedAt() == null ? null : prediction.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+            prediction.getCreatedAt() == null ? null : UtcTimeFormat.toIsoUtc(prediction.getCreatedAt())
         );
     }
 
@@ -350,7 +350,7 @@ public class DashboardService {
             resolveUserName(activity.getActorId()),
             activity.getMessage(),
             activity.getTargetId() == null ? null : String.valueOf(activity.getTargetId()),
-            activity.getCreatedAt() == null ? null : activity.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+            activity.getCreatedAt() == null ? null : UtcTimeFormat.toIsoUtc(activity.getCreatedAt())
         );
     }
 
@@ -367,8 +367,8 @@ public class DashboardService {
             task.getDescription(),
             task.getSourceType(),
             task.getPosition(),
-            task.getCreatedAt() == null ? null : task.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
-            task.getUpdatedAt() == null ? null : task.getUpdatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+            task.getCreatedAt() == null ? null : UtcTimeFormat.toIsoUtc(task.getCreatedAt()),
+            task.getUpdatedAt() == null ? null : UtcTimeFormat.toIsoUtc(task.getUpdatedAt())
         );
     }
 

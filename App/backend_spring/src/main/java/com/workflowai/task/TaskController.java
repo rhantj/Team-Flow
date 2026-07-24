@@ -134,7 +134,7 @@ public class TaskController {
         description = "업무보드에서 새 업무를 직접 생성합니다."
     )
     @PostMapping
-    @PreAuthorize("@projectAccess.isMember(#projectId)")
+    @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER')")
     @Transactional
     public ResponseEntity<ApiResponse<TaskListItem>> createTask(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
@@ -145,11 +145,20 @@ public class TaskController {
         }
 
         Long projectDbId = demoDataService.resolveProjectId(projectId);
+        LocalDate startDate;
+        try {
+            startDate = parseDate(request.startDate());
+        } catch (DateTimeParseException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_START_DATE", "startDate는 YYYY-MM-DD 형식이어야 합니다."));
+        }
         LocalDate dueDate;
         try {
             dueDate = parseDate(request.dueDate());
         } catch (DateTimeParseException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_DUE_DATE", "dueDate는 YYYY-MM-DD 형식이어야 합니다."));
+        }
+        if (!isValidDateRange(startDate, dueDate)) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_DATE_RANGE", "시작일은 마감일보다 늦을 수 없습니다."));
         }
 
         Long assigneeId;
@@ -163,7 +172,7 @@ public class TaskController {
         String status = request.status() == null ? "todo" : request.status();
         // category는 DB NOT NULL이라 누락 시 저장 단계에서 예외가 나기 전에 기본값으로 방어한다.
         String category = defaultString(request.category(), "other");
-        Task task = taskRepository.save(new Task(
+        Task newTask = new Task(
             projectDbId,
             request.title(),
             category,
@@ -176,7 +185,10 @@ public class TaskController {
             null,
             createdBy,
             nextAppendPosition(projectDbId, status)
-        ));
+        );
+        newTask.setStartDate(startDate);
+        newTask.setExtraFields(request.extraFields());
+        Task task = taskRepository.save(newTask);
         activityService.record(projectDbId, createdBy, "TASK_CREATED", task.getId(), "'" + task.getTitle() + "' 업무를 새로 추가했습니다.");
         if (task.getAssigneeId() != null && !task.getAssigneeId().equals(createdBy)) {
             notificationService.notify(
@@ -273,16 +285,29 @@ public class TaskController {
             return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
         }
 
+        LocalDate startDate;
+        try {
+            startDate = parseDate(request.startDate());
+        } catch (DateTimeParseException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_START_DATE", "startDate는 YYYY-MM-DD 형식이어야 합니다."));
+        }
         LocalDate dueDate;
         try {
             dueDate = parseDate(request.dueDate());
         } catch (DateTimeParseException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_DUE_DATE", "dueDate는 YYYY-MM-DD 형식이어야 합니다."));
         }
+        // applyUpdate는 null이면 기존값을 유지하므로, 검증도 "적용됐을 때의 실제 값" 기준으로 한다.
+        LocalDate effectiveStartDate = startDate != null ? startDate : task.getStartDate();
+        LocalDate effectiveDueDate = dueDate != null ? dueDate : task.getDueDate();
+        if (!isValidDateRange(effectiveStartDate, effectiveDueDate)) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_DATE_RANGE", "시작일은 마감일보다 늦을 수 없습니다."));
+        }
 
         String titleBefore = task.getTitle();
         String categoryBefore = task.getCategory();
         Long assigneeBefore = task.getAssigneeId();
+        LocalDate startDateBefore = task.getStartDate();
         LocalDate dueDateBefore = task.getDueDate();
         String priorityBefore = task.getPriority();
         String descriptionBefore = task.getDescription();
@@ -293,13 +318,17 @@ public class TaskController {
         } catch (NumberFormatException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_ASSIGNEE_ID", "assigneeId 형식이 올바르지 않습니다."));
         }
-        task.applyUpdate(request.title(), request.category(), newAssigneeId, dueDate, request.priority(), request.description());
+        task.applyUpdate(
+            request.title(), request.category(), newAssigneeId, startDate, dueDate, request.priority(),
+            request.description(), request.extraFields()
+        );
         taskRepository.save(task);
 
         Long actorId = currentActorId();
         boolean assigneeChanged = !Objects.equals(assigneeBefore, task.getAssigneeId());
         boolean otherFieldsChanged = !Objects.equals(titleBefore, task.getTitle())
             || !Objects.equals(categoryBefore, task.getCategory())
+            || !Objects.equals(startDateBefore, task.getStartDate())
             || !Objects.equals(dueDateBefore, task.getDueDate())
             || !Objects.equals(priorityBefore, task.getPriority())
             || !Objects.equals(descriptionBefore, task.getDescription());
@@ -441,14 +470,171 @@ public class TaskController {
         return ResponseEntity.ok(ApiResponse.ok(null));
     }
 
+    @Operation(
+        summary = "완료 승인 대기 목록 조회",
+        description = "팀원이 완료를 요청했고 아직 팀장이 승인/반려하지 않은 업무 목록을 조회합니다."
+    )
+    @GetMapping("/pending-approvals")
+    @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER')")
+    public ApiResponse<List<TaskListItem>> getPendingApprovals(
+        @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId
+    ) {
+        Long projectDbId = demoDataService.resolveProjectId(projectId);
+        List<TaskListItem> tasks = taskRepository.findByProjectIdAndPendingApprovalTrueOrderByUpdatedAtAsc(projectDbId).stream()
+            .map(TaskListItem::from)
+            .toList();
+        return ApiResponse.ok(tasks);
+    }
+
+    @Operation(
+        summary = "완료 승인 요청",
+        description = "담당자가 업무를 완료로 옮기기 전에 팀장에게 승인을 요청합니다. status는 바뀌지 않고 대기 상태만 켜집니다."
+    )
+    @PostMapping("/{taskId}/completion-request")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
+    @Transactional
+    public ResponseEntity<ApiResponse<TaskListItem>> requestCompletion(
+        @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
+        @Parameter(description = "업무 ID") @PathVariable Long taskId
+    ) {
+        Long projectDbId = demoDataService.resolveProjectId(projectId);
+        Task task = taskRepository.findById(taskId).orElse(null);
+        if (task == null || !task.getProjectId().equals(projectDbId)) {
+            return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
+        }
+        Long actorId = currentActorId();
+        if (!actorId.equals(task.getAssigneeId())) {
+            return ResponseEntity.status(403).body(ApiResponse.fail("FORBIDDEN_NOT_OWNER", "본인이 담당자인 업무만 완료를 요청할 수 있습니다."));
+        }
+        if (task.isPendingApproval()) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("ALREADY_PENDING", "이미 승인 대기 중인 업무입니다."));
+        }
+        task.requestCompletion();
+        taskRepository.save(task);
+        activityService.record(projectDbId, actorId, "COMPLETION_REQUESTED", task.getId(), "'" + task.getTitle() + "' 업무의 완료 승인을 요청했습니다.");
+        projectMemberRepository.findAllByProjectId(projectDbId).stream()
+            .filter(member -> member.getRole() == ProjectRole.LEADER)
+            .map(com.workflowai.project.ProjectMember::getUserId)
+            .forEach(leaderId -> notificationService.notify(
+                leaderId, "COMPLETION_REQUESTED", "완료 승인 요청이 도착했습니다.",
+                "'" + task.getTitle() + "' 업무의 완료 승인을 요청했습니다.", "task", task.getId()
+            ));
+        return ResponseEntity.ok(ApiResponse.ok(TaskListItem.from(task)));
+    }
+
+    @Operation(
+        summary = "완료 승인 요청 취소",
+        description = "담당자가 본인이 올린 완료 승인 요청을 취소합니다. status는 바뀌지 않습니다."
+    )
+    @PostMapping("/{taskId}/completion-cancel")
+    @PreAuthorize("@projectAccess.isMember(#projectId)")
+    @Transactional
+    public ResponseEntity<ApiResponse<TaskListItem>> cancelCompletionRequest(
+        @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
+        @Parameter(description = "업무 ID") @PathVariable Long taskId
+    ) {
+        Long projectDbId = demoDataService.resolveProjectId(projectId);
+        Task task = taskRepository.findById(taskId).orElse(null);
+        if (task == null || !task.getProjectId().equals(projectDbId)) {
+            return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
+        }
+        Long actorId = currentActorId();
+        if (!actorId.equals(task.getAssigneeId())) {
+            return ResponseEntity.status(403).body(ApiResponse.fail("FORBIDDEN_NOT_OWNER", "본인이 담당자인 업무만 취소할 수 있습니다."));
+        }
+        if (!task.isPendingApproval()) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("NOT_PENDING", "승인 대기 중인 업무가 아닙니다."));
+        }
+        task.cancelCompletionRequest();
+        taskRepository.save(task);
+        activityService.record(projectDbId, actorId, "COMPLETION_CANCELLED", task.getId(), "'" + task.getTitle() + "' 업무의 완료 승인 요청을 취소했습니다.");
+        projectMemberRepository.findAllByProjectId(projectDbId).stream()
+            .filter(member -> member.getRole() == ProjectRole.LEADER)
+            .map(com.workflowai.project.ProjectMember::getUserId)
+            .forEach(leaderId -> notificationService.notify(
+                leaderId, "COMPLETION_CANCELLED", "완료 승인 요청이 취소되었습니다.",
+                "'" + task.getTitle() + "' 업무의 완료 승인 요청이 취소되었습니다.", "task", task.getId()
+            ));
+        return ResponseEntity.ok(ApiResponse.ok(TaskListItem.from(task)));
+    }
+
+    @Operation(
+        summary = "완료 승인",
+        description = "팀장이 완료 승인 요청을 승인합니다. 업무가 실제로 완료 컬럼 맨 끝으로 이동합니다."
+    )
+    @PostMapping("/{taskId}/completion-approve")
+    @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER')")
+    @Transactional
+    public ResponseEntity<ApiResponse<TaskListItem>> approveCompletion(
+        @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
+        @Parameter(description = "업무 ID") @PathVariable Long taskId
+    ) {
+        Long projectDbId = demoDataService.resolveProjectId(projectId);
+        Task task = taskRepository.findById(taskId).orElse(null);
+        if (task == null || !task.getProjectId().equals(projectDbId)) {
+            return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
+        }
+        if (!task.isPendingApproval()) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("NOT_PENDING", "승인 대기 중인 업무가 아닙니다."));
+        }
+        task.approveCompletion(nextAppendPosition(projectDbId, "done"));
+        taskRepository.save(task);
+        Long approverId = currentActorId();
+        activityService.record(projectDbId, approverId, "COMPLETION_APPROVED", task.getId(), "'" + task.getTitle() + "' 업무의 완료를 승인했습니다.");
+        if (task.getAssigneeId() != null && !task.getAssigneeId().equals(approverId)) {
+            notificationService.notify(
+                task.getAssigneeId(), "COMPLETION_APPROVED", "완료 승인이 완료되었습니다.",
+                "'" + task.getTitle() + "' 업무가 완료로 승인되었습니다.", "task", task.getId()
+            );
+        }
+        return ResponseEntity.ok(ApiResponse.ok(TaskListItem.from(task)));
+    }
+
+    @Operation(
+        summary = "완료 반려",
+        description = "팀장이 완료 승인 요청을 반려합니다. status는 바뀌지 않고 대기 상태만 풀립니다."
+    )
+    @PostMapping("/{taskId}/completion-reject")
+    @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER')")
+    @Transactional
+    public ResponseEntity<ApiResponse<TaskListItem>> rejectCompletion(
+        @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
+        @Parameter(description = "업무 ID") @PathVariable Long taskId
+    ) {
+        Long projectDbId = demoDataService.resolveProjectId(projectId);
+        Task task = taskRepository.findById(taskId).orElse(null);
+        if (task == null || !task.getProjectId().equals(projectDbId)) {
+            return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
+        }
+        if (!task.isPendingApproval()) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("NOT_PENDING", "승인 대기 중인 업무가 아닙니다."));
+        }
+        task.rejectCompletion();
+        taskRepository.save(task);
+        Long rejecterId = currentActorId();
+        activityService.record(projectDbId, rejecterId, "COMPLETION_REJECTED", task.getId(), "'" + task.getTitle() + "' 업무의 완료 요청을 반려했습니다.");
+        if (task.getAssigneeId() != null && !task.getAssigneeId().equals(rejecterId)) {
+            notificationService.notify(
+                task.getAssigneeId(), "COMPLETION_REJECTED", "완료 요청이 반려되었습니다.",
+                "'" + task.getTitle() + "' 업무의 완료 요청이 반려되었습니다.", "task", task.getId()
+            );
+        }
+        return ResponseEntity.ok(ApiResponse.ok(TaskListItem.from(task)));
+    }
+
     private boolean isLeader(Long projectId, Long userId) {
         return projectMemberRepository.findByProjectIdAndUserId(projectId, userId)
             .map(member -> member.getRole() == ProjectRole.LEADER)
             .orElse(false);
     }
 
-    private static LocalDate parseDate(String dueDate) {
-        return dueDate == null || dueDate.isBlank() ? null : LocalDate.parse(dueDate);
+    private static LocalDate parseDate(String date) {
+        return date == null || date.isBlank() ? null : LocalDate.parse(date);
+    }
+
+    /** 시작일이 마감일보다 늦으면 안 된다. 둘 중 하나라도 없으면 검증하지 않는다. */
+    private static boolean isValidDateRange(LocalDate startDate, LocalDate dueDate) {
+        return startDate == null || dueDate == null || !startDate.isAfter(dueDate);
     }
 
     private static String defaultString(String value, String fallback) {

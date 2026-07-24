@@ -20,7 +20,7 @@ vi.mock("../../board/libs/utils/taskApi", () => ({
 }));
 
 function makeTask(id: string, assignee: string, status: Task["status"], dueDate: string): Task {
-  return { id, title: `업무 ${id}`, status, priority: "medium", assignee, dueDate, labels: [], category: "frontend", position: 0 };
+  return { id, title: `업무 ${id}`, status, priority: "medium", assignee, dueDate, labels: [], category: "frontend", position: 0, pendingApproval: false, startDate: "", extraFields: {} };
 }
 
 function renderMyPage() {
