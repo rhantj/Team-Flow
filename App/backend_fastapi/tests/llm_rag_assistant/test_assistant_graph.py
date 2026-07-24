@@ -8,6 +8,20 @@ from llm_rag_assistant.app.graph.state import Action
 from llm_rag_assistant.app.graph.task_resolver import TaskCandidate, TaskMatch
 
 
+@pytest.fixture(autouse=True)
+def use_memory_checkpointer(monkeypatch: pytest.MonkeyPatch) -> None:
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from llm_rag_assistant.app.graph import assistant_graph
+
+    compiled = assistant_graph._build().compile(checkpointer=InMemorySaver())
+
+    async def _get_graph():
+        return compiled
+
+    monkeypatch.setattr(assistant_graph, "get_graph", _get_graph)
+
+
 def _state(question: str, role: str = "MEMBER") -> dict:
     return {
         "question": question,

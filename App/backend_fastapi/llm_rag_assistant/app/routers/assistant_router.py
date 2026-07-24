@@ -5,9 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from requests.exceptions import HTTPError as RequestsHTTPError
 
 from core.db import get_pool
+from llm_rag_assistant.app.graph.assistant_graph import resume_command, start_command
 from llm_rag_assistant.app.schema.assistant_schema import (
+    ActionCard,
     AssistantCommandRequest,
     AssistantResponse,
+    AssistantResumeRequest,
 )
 from llm_rag_assistant.app.security import verify_internal_api_key
 from llm_rag_assistant.app.services.chat_service import answer_question
@@ -16,21 +19,36 @@ from llm_rag_assistant.app.services.generation_service import RagConfigurationEr
 
 router = APIRouter(prefix="/ai/assistant", tags=["assistant"], dependencies=[Depends(verify_internal_api_key)])
 
-# 2단계에서 그래프가 붙기 전까지의 안내. 명령을 인식했다는 사실 자체는 알려줘야
-# 사용자가 "왜 무시당했지"라고 느끼지 않는다.
-_COMMAND_NOT_READY_NOTE = (
-    "\n\n(업무를 직접 변경하는 기능은 아직 준비 중입니다. 지금은 업무 보드에서 직접 수정해주세요.)"
-)
+
+def _to_response(outcome) -> AssistantResponse:
+    card = ActionCard(**outcome.card.model_dump()) if outcome.card else None
+    return AssistantResponse(
+        type=outcome.type, message=outcome.message, thread_id=outcome.thread_id, card=card
+    )
 
 
 @router.post("/command", response_model=AssistantResponse)
 async def command(request: AssistantCommandRequest, pool=Depends(get_pool)) -> AssistantResponse:
     # project_id/user_id/user_role은 Spring AssistantController가 인증 세션 값으로 덮어써서 보낸다.
     # 대화 기록(history)에서는 어떤 권한값도 유도하지 않는다.
-    # RAG 호출은 분류기 판정 바깥에 둔다. 분류기가 질문을 명령으로 오탐해도 답변은
-    # 그대로 나오고 안내 문구만 덧붙으므로, 규칙의 정확도가 기존 질문 기능의
-    # 가용성을 좌우하지 않는다.
     history = [{"role": m.role, "content": m.content} for m in request.history]
+
+    # 명령으로 판정되면 그래프로 라우팅한다. 계획 노드가 실제 명령이 아니라고 보면(오탐)
+    # 빈 계획 → 되묻기 메시지로 안전하게 빠진다.
+    if is_command_candidate(request.question):
+        outcome = await start_command(
+            pool,
+            {
+                "question": request.question,
+                "history": history,
+                "project_id": request.project_id,
+                "user_id": request.user_id,
+                "user_role": request.user_role,
+            },
+        )
+        return _to_response(outcome)
+
+    # 질문 경로: 기존 RAG 파이프라인을 그대로 탄다.
     try:
         result = await answer_question(
             pool, request.project_id, request.question, request.user_id, history=history
@@ -39,7 +57,14 @@ async def command(request: AssistantCommandRequest, pool=Depends(get_pool)) -> A
         raise HTTPException(status_code=503, detail={"error": "llm_unavailable"}) from exc
     except RagConfigurationError as exc:
         raise HTTPException(status_code=503, detail={"error": "llm_unavailable"}) from exc
-    message = result.answer
-    if is_command_candidate(request.question):
-        message += _COMMAND_NOT_READY_NOTE
-    return AssistantResponse(type="answer", message=message, sources=result.sources)
+    return AssistantResponse(type="answer", message=result.answer, sources=result.sources)
+
+
+@router.post("/resume", response_model=AssistantResponse)
+async def resume(request: AssistantResumeRequest) -> AssistantResponse:
+    # thread 소유권은 Spring AssistantController가 검사한다(여기까지 오면 검증된 요청이다).
+    outcome = await resume_command(
+        request.thread_id,
+        {"step_id": request.step_id, "ok": request.ok, "error": request.error},
+    )
+    return _to_response(outcome)

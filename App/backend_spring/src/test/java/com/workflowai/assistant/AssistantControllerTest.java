@@ -36,6 +36,9 @@ class AssistantControllerTest {
     @Mock
     private ProjectMemberRepository projectMemberRepository;
 
+    @Mock
+    private AssistantThreadOwnership threadOwnership;
+
     private final RagRateLimiter rateLimiter = new RagRateLimiter(10, 60);
 
     @AfterEach
@@ -53,7 +56,7 @@ class AssistantControllerTest {
 
     private MockMvc mockMvc() {
         return MockMvcBuilders.standaloneSetup(
-            new AssistantController(fastApiAssistantClient, rateLimiter, projectMemberRepository)
+            new AssistantController(fastApiAssistantClient, rateLimiter, projectMemberRepository, threadOwnership)
         ).build();
     }
 
@@ -168,7 +171,7 @@ class AssistantControllerTest {
             .thenReturn(new AssistantResponse("answer", "답변", List.of(), null, null));
         RagRateLimiter oneShot = new RagRateLimiter(1, 60);
         MockMvc mockMvc = MockMvcBuilders.standaloneSetup(
-            new AssistantController(fastApiAssistantClient, oneShot, projectMemberRepository)
+            new AssistantController(fastApiAssistantClient, oneShot, projectMemberRepository, threadOwnership)
         ).build();
 
         // 잘못된 질문 3번 — 예산을 소모했다면 이후 정상 요청이 429가 된다.
@@ -183,6 +186,36 @@ class AssistantControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"project_id\":1,\"question\":\"정상 질문\",\"history\":[]}"))
             .andExpect(status().isOk());
+    }
+
+    @Test
+    void resumeIsRejectedWhenThreadBelongsToAnotherUser() throws Exception {
+        authenticateAs(5L);
+        when(threadOwnership.isOwnedBy("thread-1", 5L)).thenReturn(false);
+
+        String body = """
+            {"project_id":1,"thread_id":"thread-1","step_id":"0-abc","ok":true}""";
+
+        mockMvc().perform(post("/api/v1/ai/assistant/resume")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.error.code").value("THREAD_NOT_OWNED"));
+    }
+
+    @Test
+    void resumeForwardsResultWhenThreadIsOwned() throws Exception {
+        authenticateAs(5L);
+        when(threadOwnership.isOwnedBy("thread-1", 5L)).thenReturn(true);
+        when(fastApiAssistantClient.resume(any(FastApiAssistantResumeRequest.class)))
+            .thenReturn(new AssistantResponse("done", "1개 작업을 완료했습니다.", List.of(), null, null));
+
+        String body = """
+            {"project_id":1,"thread_id":"thread-1","step_id":"0-abc","ok":true}""";
+
+        mockMvc().perform(post("/api/v1/ai/assistant/resume")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.type").value("done"));
     }
 
     @Test

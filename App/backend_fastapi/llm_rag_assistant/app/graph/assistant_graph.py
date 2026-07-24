@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 import uuid
 
-from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel
 
+from core.config import get_settings
 from llm_rag_assistant.app.graph.planner import plan_actions
 from llm_rag_assistant.app.graph.state import Action, CommandState, requires_leader
 from llm_rag_assistant.app.graph.task_resolver import resolve_task_ref
@@ -172,8 +173,27 @@ def _build() -> StateGraph:
     return builder
 
 
-# 체크포인터는 Task 9에서 Redis로 교체한다. 그때까지는 단위 테스트가 돌 수 있도록 메모리 세이버를 쓴다.
-_graph = _build().compile(checkpointer=InMemorySaver())
+# 체크포인트는 승인 대기 중인 임시 상태다. 내구성이 필요 없고 TTL이 필요해 Redis를 쓴다
+# (유실되면 "요청이 만료되었습니다"로 안내하고 사용자가 다시 말하면 된다).
+_CHECKPOINT_TTL_MINUTES = 30
+
+_compiled = None
+_checkpointer_cm = None
+
+
+async def get_graph():
+    """그래프를 지연 생성한다. Redis 연결이 앱 기동을 막지 않도록 첫 요청에서 만든다."""
+    global _compiled, _checkpointer_cm
+    if _compiled is not None:
+        return _compiled
+    settings = get_settings()
+    _checkpointer_cm = AsyncRedisSaver.from_conn_string(
+        settings.redis_url, ttl={"default_ttl": _CHECKPOINT_TTL_MINUTES, "refresh_on_read": False}
+    )
+    checkpointer = await _checkpointer_cm.__aenter__()
+    await checkpointer.asetup()
+    _compiled = _build().compile(checkpointer=checkpointer)
+    return _compiled
 
 
 def _to_outcome(result: dict, thread_id: str) -> GraphOutcome:
@@ -195,16 +215,18 @@ def _to_outcome(result: dict, thread_id: str) -> GraphOutcome:
 
 async def start_command(pool, state: dict) -> GraphOutcome:
     _pool_holder["pool"] = pool
+    graph = await get_graph()
     thread_id = uuid.uuid4().hex
     config = {"configurable": {"thread_id": thread_id}}
-    result = await _graph.ainvoke(state, config=config)
+    result = await graph.ainvoke(state, config=config)
     return _to_outcome(result, thread_id)
 
 
 async def resume_command(thread_id: str, execution_result: dict) -> GraphOutcome:
+    graph = await get_graph()
     config = {"configurable": {"thread_id": thread_id}}
-    snapshot = await _graph.aget_state(config)
+    snapshot = await graph.aget_state(config)
     if not snapshot or not snapshot.next:
         return GraphOutcome(type="done", message=_THREAD_EXPIRED_MESSAGE, thread_id=thread_id)
-    result = await _graph.ainvoke(Command(resume=execution_result), config=config)
+    result = await graph.ainvoke(Command(resume=execution_result), config=config)
     return _to_outcome(result, thread_id)

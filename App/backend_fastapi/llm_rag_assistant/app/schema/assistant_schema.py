@@ -17,6 +17,13 @@ class AssistantCommandRequest(BaseModel):
     history: list[RagHistoryMessage] = []
 
 
+class AssistantResumeRequest(BaseModel):
+    thread_id: str
+    step_id: str
+    ok: bool
+    error: str | None = None
+
+
 class ActionCard(BaseModel):
     """실행 승인을 받기 위해 프론트에 보내는 확인 카드."""
 

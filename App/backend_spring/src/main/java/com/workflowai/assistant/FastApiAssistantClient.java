@@ -41,4 +41,13 @@ public class FastApiAssistantClient {
             .retrieve()
             .body(AssistantResponse.class);
     }
+
+    public AssistantResponse resume(FastApiAssistantResumeRequest request) {
+        return restClient.post()
+            .uri("/ai/assistant/resume")
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(request)
+            .retrieve()
+            .body(AssistantResponse.class);
+    }
 }

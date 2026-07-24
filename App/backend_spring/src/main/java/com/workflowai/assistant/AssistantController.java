@@ -30,15 +30,18 @@ public class AssistantController {
     private final FastApiAssistantClient fastApiAssistantClient;
     private final RagRateLimiter rateLimiter;
     private final ProjectMemberRepository projectMemberRepository;
+    private final AssistantThreadOwnership threadOwnership;
 
     public AssistantController(
         FastApiAssistantClient fastApiAssistantClient,
         RagRateLimiter rateLimiter,
-        ProjectMemberRepository projectMemberRepository
+        ProjectMemberRepository projectMemberRepository,
+        AssistantThreadOwnership threadOwnership
     ) {
         this.fastApiAssistantClient = fastApiAssistantClient;
         this.rateLimiter = rateLimiter;
         this.projectMemberRepository = projectMemberRepository;
+        this.threadOwnership = threadOwnership;
     }
 
     @Operation(
@@ -88,11 +91,43 @@ public class AssistantController {
             FastApiAssistantRequest upstream = new FastApiAssistantRequest(
                 request.project_id(), request.question(), userId, role, history
             );
-            return ResponseEntity.ok(ApiResponse.ok(fastApiAssistantClient.command(upstream)));
+            AssistantResponse response = fastApiAssistantClient.command(upstream);
+            // confirm 응답이면 이 스레드를 이 사용자 것으로 기록한다. resume 때 소유권 대조에 쓴다.
+            if (response.thread_id() != null) {
+                threadOwnership.remember(response.thread_id(), userId);
+            }
+            return ResponseEntity.ok(ApiResponse.ok(response));
         } catch (RestClientException ex) {
             // 다운스트림 장애만 503으로 눌러 담는다. 우리 쪽 버그는 GlobalExceptionHandler로 흘려
             // 500으로 드러내, "일시 장애"와 "코드 결함"이 뭉개지지 않게 한다.
             log.warn("어시스턴트 명령 처리 실패: project_id={}", request.project_id(), ex);
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(ApiResponse.fail("ASSISTANT_UNAVAILABLE", "일시적으로 처리할 수 없습니다."));
+        }
+    }
+
+    @Operation(summary = "확인 카드 실행 결과 전달", description = "프론트가 실제 API를 호출한 결과를 그래프에 돌려줍니다.")
+    @PostMapping("/resume")
+    @PreAuthorize("@projectAccess.isMember(#request.project_id())")
+    public ResponseEntity<ApiResponse<AssistantResponse>> resume(
+        @RequestBody AssistantResumeRequest request
+    ) {
+        Long userId = CurrentUser.id();
+        // threadId만 알면 남의 그래프를 재개할 수 있으면 안 된다.
+        if (request.thread_id() == null || !threadOwnership.isOwnedBy(request.thread_id(), userId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.fail("THREAD_NOT_OWNED", "만료되었거나 접근할 수 없는 요청입니다."));
+        }
+        try {
+            FastApiAssistantResumeRequest upstream = new FastApiAssistantResumeRequest(
+                request.thread_id(),
+                request.step_id(),
+                Boolean.TRUE.equals(request.ok()),
+                request.error()
+            );
+            return ResponseEntity.ok(ApiResponse.ok(fastApiAssistantClient.resume(upstream)));
+        } catch (RestClientException ex) {
+            log.warn("어시스턴트 재개 실패: thread_id={}", request.thread_id(), ex);
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(ApiResponse.fail("ASSISTANT_UNAVAILABLE", "일시적으로 처리할 수 없습니다."));
         }
