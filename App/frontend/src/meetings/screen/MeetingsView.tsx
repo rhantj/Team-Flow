@@ -2215,19 +2215,21 @@ export function MeetingsView() {
                   <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${m.status === "processed" ? "bg-emerald-100 text-emerald-600" : m.status === "processing" ? "bg-blue-100 text-blue-600" : m.status === "failed" ? "bg-red-100 text-red-600" : "bg-slate-100 text-slate-500"}`}>
                     {m.status === "processed" ? "AI 분석 완료" : m.status === "processing" ? "분석 중" : m.status === "failed" ? "분석 실패" : "예정"}
                   </span>
-                  <button
-                    type="button"
-                    onClick={event => {
-                      event.stopPropagation();
-                      setDeleteTarget(m);
-                    }}
-                    disabled={Boolean(deletingMeetingId)}
-                    className="p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                    title="회의록 삭제"
-                    aria-label={`${m.title} 회의록 삭제`}
-                  >
-                    {deletingMeetingId === m.id ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-600" /> : <Trash2 className="w-3.5 h-3.5" />}
-                  </button>
+                  {currentUserRole === "leader" && (
+                    <button
+                      type="button"
+                      onClick={event => {
+                        event.stopPropagation();
+                        setDeleteTarget(m);
+                      }}
+                      disabled={Boolean(deletingMeetingId)}
+                      className="p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      title="회의록 삭제"
+                      aria-label={`${m.title} 회의록 삭제`}
+                    >
+                      {deletingMeetingId === m.id ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-600" /> : <Trash2 className="w-3.5 h-3.5" />}
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="text-sm font-medium text-foreground leading-snug">{m.title}</div>

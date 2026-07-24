@@ -336,32 +336,34 @@ class MeetingAnalysisServiceTest {
     }
 
     @Test
-    void deleteRejectsWhenCurrentUserIsNotTheUploader() {
+    void deleteSucceedsWhenCurrentUserIsNotTheUploader() {
+        // 팀장은 본인이 업로드하지 않은 회의록도 삭제할 수 있다 — 업로더 일치 여부는 더 이상
+        // 서비스 레이어에서 검사하지 않고, 팀장 권한 자체는 컨트롤러의 @PreAuthorize가 강제한다.
         mockMember(1L);
         Long otherUploaderId = 999L;
         Meeting meeting = new Meeting(1L, "삭제 회의", "document", "/tmp/x.txt", "completed", LocalDate.now(), "정기회의", "notes.txt", otherUploaderId, 5L);
         when(meetingRepository.findByIdAndProjectId(10L, 1L)).thenReturn(Optional.of(meeting));
+        when(projectMemberRepository.findByProjectIdAndRole(1L, ProjectRole.LEADER)).thenReturn(Optional.empty());
         MeetingAnalysisService service = newService();
 
-        assertThatThrownBy(() -> service.delete("demo-project", "10", false))
-            .isInstanceOf(AccessDeniedException.class);
+        MeetingDeleteResponse response = service.delete("demo-project", "10", false);
 
-        verify(meetingRepository, never()).delete(any());
-        verify(meetingActionItemRepository, never()).deleteByMeetingId(any());
-        verify(meetingActionItemRepository, never()).clearMeetingId(any());
+        assertThat(response.status()).isEqualTo("DELETED");
+        verify(meetingRepository).delete(meeting);
     }
 
     @Test
-    void deleteRejectsWhenMeetingHasNoRecordedUploader() {
+    void deleteSucceedsWhenMeetingHasNoRecordedUploader() {
         mockMember(1L);
         Meeting meeting = new Meeting(1L, "삭제 회의", "document", "/tmp/x.txt", "completed", LocalDate.now(), "정기회의", "notes.txt", null, 5L);
         when(meetingRepository.findByIdAndProjectId(11L, 1L)).thenReturn(Optional.of(meeting));
+        when(projectMemberRepository.findByProjectIdAndRole(1L, ProjectRole.LEADER)).thenReturn(Optional.empty());
         MeetingAnalysisService service = newService();
 
-        assertThatThrownBy(() -> service.delete("demo-project", "11", false))
-            .isInstanceOf(AccessDeniedException.class);
+        MeetingDeleteResponse response = service.delete("demo-project", "11", false);
 
-        verify(meetingRepository, never()).delete(any());
+        assertThat(response.status()).isEqualTo("DELETED");
+        verify(meetingRepository).delete(meeting);
     }
 
     @Test

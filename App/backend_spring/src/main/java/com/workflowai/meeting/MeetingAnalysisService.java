@@ -398,7 +398,6 @@ public class MeetingAnalysisService {
     public MeetingDeleteResponse delete(String projectId, String meetingId, boolean deleteLinkedTasks) {
         Meeting meeting = requireProjectMeeting(projectId, meetingId);
         if (meeting == null) return null;
-        requireUploader(meeting);
 
         Long meetingDbId = parseLongOrNull(meetingId);
         if (meetingDbId == null) return null;
@@ -419,13 +418,14 @@ public class MeetingAnalysisService {
             .map(ProjectMember::getUserId)
             .orElse(null);
         String title = meeting.getTitle();
+        String actorName = defaultString(resolveNameById(actorId), "누군가");
 
         meetingRepository.delete(meeting);
         deleteUploadedFile(filePath);
 
         notificationService.notifyActorAndCounterpart(
             actorId, "MEETING_DELETED", "회의록을 삭제했습니다", "'" + title + "' 회의록을 삭제했습니다.",
-            leaderId, "MEETING_DELETED", "회의록이 삭제되었습니다", "'" + title + "' 회의록이 삭제되었습니다.",
+            leaderId, "MEETING_DELETED", "회의록이 삭제되었습니다", actorName + "님이 '" + title + "' 회의록을 삭제했습니다.",
             "meeting", meetingDbId
         );
         return new MeetingDeleteResponse(meetingId, "DELETED");
@@ -445,11 +445,12 @@ public class MeetingAnalysisService {
                 registeredCount++;
             }
         }
+        String registeredByName = defaultString(resolveNameById(registeredBy), "팀장");
         notificationService.notifyActorAndCounterpart(
             registeredBy, "MEETING_TASKS_REGISTERED", "역할분배 및 업무등록이 완료되었습니다",
             "'" + meeting.getTitle() + "' 회의록의 역할분배 및 업무등록이 완료되었습니다.",
             meeting.getUploadedBy(), "MEETING_TASKS_REGISTERED_NOTIFY_MEMBER", "역할분배가 완료되었습니다",
-            "'" + meeting.getTitle() + "' 회의록의 역할분배가 완료되었습니다. 확인해주세요.",
+            registeredByName + "님이 '" + meeting.getTitle() + "' 회의록의 역할분배를 완료했습니다. 확인해주세요.",
             "meeting", meetingDbId
         );
         return new TaskRegisterResponse(meetingId, registeredCount, "REGISTERED");
@@ -466,10 +467,11 @@ public class MeetingAnalysisService {
         Long leaderId = projectMemberRepository.findByProjectIdAndRole(meeting.getProjectId(), ProjectRole.LEADER)
             .map(ProjectMember::getUserId)
             .orElse(null);
+        String actorName = defaultString(resolveNameById(actorId), "누군가");
         notificationService.notifyActorAndCounterpart(
             actorId, "MEETING_SAVED", "회의록이 저장되었습니다", "'" + meeting.getTitle() + "' 회의록이 저장되었습니다.",
             leaderId, "MEETING_SAVED_NOTIFY_LEADER", "회의록이 저장되었습니다",
-            "'" + meeting.getTitle() + "' 회의록을 저장했습니다. 역할분배를 진행해주세요.",
+            actorName + "님이 '" + meeting.getTitle() + "' 회의록을 저장했습니다. 역할분배를 진행해주세요.",
             "meeting", parseLongOrNull(meetingId)
         );
         return new MeetingSaveResponse(meetingId, "SAVED");
@@ -520,11 +522,12 @@ public class MeetingAnalysisService {
             .map(ProjectMember::getUserId)
             .orElse(null);
         Long counterpartId = editorId != null && editorId.equals(leaderId) ? original.getUploadedBy() : leaderId;
+        String editorName = defaultString(resolveNameById(editorId), "누군가");
         notificationService.notifyActorAndCounterpart(
             editorId, "MEETING_EDITED", "회의록을 수정했습니다",
             "'" + original.getTitle() + "' 회의록을 수정했습니다.",
             counterpartId, "MEETING_EDITED", "회의록이 수정되었습니다",
-            "'" + original.getTitle() + "' 회의록이 수정되었습니다.",
+            editorName + "님이 '" + original.getTitle() + "' 회의록을 수정했습니다.",
             "meeting", version.getId()
         );
     }
@@ -613,14 +616,6 @@ public class MeetingAnalysisService {
         Long meetingDbId = parseLongOrNull(meetingIdParam);
         if (meetingDbId == null) return null;
         return meetingRepository.findByIdAndProjectId(meetingDbId, projectDbId).orElse(null);
-    }
-
-    /** 회의록을 업로드한 본인만 통과한다. 업로더가 아니거나 uploadedBy가 비어있으면 403. */
-    private void requireUploader(Meeting meeting) {
-        Long userId = CurrentUser.id();
-        if (meeting.getUploadedBy() == null || !meeting.getUploadedBy().equals(userId)) {
-            throw new AccessDeniedException("본인이 업로드한 회의록만 삭제할 수 있습니다.");
-        }
     }
 
     private void validateAttendeeIds(Long projectId, List<Long> attendeeIds) {

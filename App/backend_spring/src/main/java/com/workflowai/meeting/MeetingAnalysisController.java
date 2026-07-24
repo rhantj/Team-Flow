@@ -143,13 +143,13 @@ public class MeetingAnalysisController {
 
     @Operation(
         summary = "회의록 삭제",
-        description = "프로젝트에 업로드된 회의록을 삭제합니다. 본인이 업로드한 회의록만 삭제할 수 있습니다. "
+        description = "프로젝트에 업로드된 회의록을 삭제합니다. 팀장만 삭제할 수 있으며, 본인이 업로드하지 않은 회의록도 삭제할 수 있습니다. "
             + "회의록 원본 파일, 참석자 정보, AI 분석 결과, To-Do 후보가 함께 정리됩니다. "
             + "deleteLinkedTasks=true이면 업무보드에 등록된 연동 업무도 함께 삭제하고, false(기본값)이면 업무(meeting_action_items 등)는 유지한 채 원본 회의록 연결만 해제합니다. "
-            + "meetingId가 이 프로젝트 소속이 아니면 404를, 프로젝트 멤버가 아니거나 본인이 업로드한 회의록이 아니면 403을 반환합니다."
+            + "meetingId가 이 프로젝트 소속이 아니면 404를, 팀장이 아니면 403을 반환합니다."
     )
     @DeleteMapping("/{meetingId}")
-    @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER') || @projectAccess.hasRole(#projectId, 'MEMBER')")
+    @PreAuthorize("@projectAccess.hasRole(#projectId, 'LEADER')")
     public ResponseEntity<ApiResponse<MeetingDeleteResponse>> deleteMeeting(
         @Parameter(description = "프로젝트 ID", example = "demo-project") @PathVariable String projectId,
         @Parameter(description = "회의록 ID", example = "42") @PathVariable String meetingId,

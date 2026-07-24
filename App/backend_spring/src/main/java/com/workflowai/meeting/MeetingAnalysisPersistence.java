@@ -114,12 +114,13 @@ public class MeetingAnalysisPersistence {
             uploaderId, "MEETING_ANALYSIS_COMPLETED", "회의 분석이 완료되었습니다.",
             "'" + meeting.getTitle() + "' 회의록 분석이 완료되었습니다.", meetingId
         );
+        String uploaderName = userRepository.findById(uploaderId).map(User::getName).orElse("누군가");
         projectMemberRepository.findByProjectIdAndRole(meeting.getProjectId(), com.workflowai.project.ProjectRole.LEADER)
             .map(com.workflowai.project.ProjectMember::getUserId)
             .filter(leaderId -> !leaderId.equals(uploaderId))
             .ifPresent(leaderId -> notifyBestEffort(
                 leaderId, "MEETING_ANALYSIS_COMPLETED_NOTIFY_LEADER", "회의록 분석이 완료되었습니다.",
-                "'" + meeting.getTitle() + "' 회의록 분석을 완료했습니다. 역할분배 및 업무등록을 진행해주세요.", meetingId
+                uploaderName + "님이 '" + meeting.getTitle() + "' 회의록 분석을 완료했습니다. 역할분배 및 업무등록을 진행해주세요.", meetingId
             ));
     }
 
