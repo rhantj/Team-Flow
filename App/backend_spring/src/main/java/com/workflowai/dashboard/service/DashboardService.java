@@ -20,6 +20,7 @@ import com.workflowai.dashboard.DTO.MilestoneProgressDto;
 import com.workflowai.dashboard.DTO.ProgressDetailResponse;
 import com.workflowai.dashboard.DTO.UpcomingTaskDto;
 import com.workflowai.dashboard.DTO.WorkloadEntryDto;
+import com.workflowai.dashboard.DTO.WorkloadScoreResponseDto;
 import com.workflowai.dashboard.entity.Milestone;
 import com.workflowai.dashboard.entity.MlPrediction;
 import com.workflowai.dashboard.repository.MilestoneRepository;
@@ -54,6 +55,7 @@ public class DashboardService {
     private final ProjectMemberRepository projectMemberRepository;
     private final DemoDataService demoDataService;
     private final FastApiDashboardClient fastApiDashboardClient;
+    private final FastApiWorkloadScoreClient fastApiWorkloadScoreClient;
     private final ProjectRepository projectRepository;
 
     public DashboardService(
@@ -65,6 +67,7 @@ public class DashboardService {
         ProjectMemberRepository projectMemberRepository,
         DemoDataService demoDataService,
         FastApiDashboardClient fastApiDashboardClient,
+        FastApiWorkloadScoreClient fastApiWorkloadScoreClient,
         ProjectRepository projectRepository
     ) {
         this.taskRepository = taskRepository;
@@ -75,6 +78,7 @@ public class DashboardService {
         this.projectMemberRepository = projectMemberRepository;
         this.demoDataService = demoDataService;
         this.fastApiDashboardClient = fastApiDashboardClient;
+        this.fastApiWorkloadScoreClient = fastApiWorkloadScoreClient;
         this.projectRepository = projectRepository;
     }
 
@@ -199,6 +203,13 @@ public class DashboardService {
             log.warn("지연 위험도 재예측 요청 실패 (project_id={}): {}", projectId, e.getMessage());
         }
         return getProgressDetail(projectIdParam);
+    }
+
+    /** ml_workload_score(FastAPI)가 계산한 팀원별 업무 편중(과부하/저활동) 점수를 그대로 가져온다.
+     * ml_predictions처럼 DB에 저장해두고 읽는 게 아니라 호출 시점에 즉시 계산되는 라이브 조회다. */
+    public WorkloadScoreResponseDto getWorkloadScore(String projectIdParam) {
+        Long projectId = demoDataService.resolveProjectId(projectIdParam);
+        return fastApiWorkloadScoreClient.fetch(projectId);
     }
 
     private List<WorkloadEntryDto> buildWorkload(Long projectId, List<Task> tasks) {

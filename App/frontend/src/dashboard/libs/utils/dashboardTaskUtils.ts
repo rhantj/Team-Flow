@@ -100,12 +100,13 @@ export function formatRelativeDate(dateStr: string | null | undefined): string {
 
 export function sourceLabel(sourceType: string | null | undefined): string {
   if (!sourceType) return "직접 생성";
+
   const normalized = sourceType.toUpperCase();
-  if (normalized.includes("MEETING")) return "회의록";
-  if (normalized.includes("GITHUB")) return "GitHub";
-  if (normalized.includes("AI")) return "AI";
-  if (normalized.includes("MANUAL")) return "직접 생성";
-  return sourceType;
+  if (normalized.includes("MEETING")) return "회의록 AI";
+  // if (normalized.includes("MANUAL")) return "직접 생성";
+  // return sourceType;
+  
+  return "직접 생성";
 }
 
 export function taskAssignee(task: DashboardTaskDto, index: number) {

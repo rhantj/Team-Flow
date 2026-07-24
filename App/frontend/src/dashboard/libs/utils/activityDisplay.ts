@@ -1,46 +1,71 @@
+import {
+  CheckCircle2,
+  ListPlus,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+  UserCog,
+  type LucideIcon,
+} from "lucide-react";
 import type { ActivityItemDto } from "../types/dashboard";
 
+/**
+ * 실제로 backend_spring이 activities.type에 기록하는 값 (SCREAMING_SNAKE_CASE).
+ * TaskController/ChecklistController가 유일한 기록 주체 — ml_delay_risk/db.py의
+ * TASK_ACTIVITY_TYPES와 동일한 집합을 유지해야 한다.
+ */
 export type DashboardActivityType =
-  | "commit"
-  | "pr"
-  | "merge"
-  | "task_create"
-  | "task_update"
-  | "meeting"
-  | "ai"
-  | "deliverable"
-  | "comment"
-  | "file";
+  | "TASK_CREATED"
+  | "STATUS_CHANGED"
+  | "ASSIGNEE_CHANGED"
+  | "TASK_UPDATED"
+  | "TASK_DELETED"
+  | "CHECKLIST_CREATED"
+  | "CHECKLIST_COMPLETED";
+
+const KNOWN_ACTIVITY_TYPES = new Set<DashboardActivityType>([
+  "TASK_CREATED",
+  "STATUS_CHANGED",
+  "ASSIGNEE_CHANGED",
+  "TASK_UPDATED",
+  "TASK_DELETED",
+  "CHECKLIST_CREATED",
+  "CHECKLIST_COMPLETED",
+]);
 
 export function normalizeActivityType(type: string): DashboardActivityType {
-  const normalized = type.toLowerCase();
-  if (normalized.includes("commit")) return "commit";
-  if (normalized.includes("pull") || normalized.includes("pr")) return "pr";
-  if (normalized.includes("merge")) return "merge";
-  if (normalized.includes("meeting")) return "meeting";
-  if (normalized.includes("deliverable")) return "deliverable";
-  if (normalized.includes("comment")) return "comment";
-  if (normalized.includes("file")) return "file";
-  if (normalized.includes("ai")) return "ai";
-  if (normalized.includes("created") || normalized.includes("create")) return "task_create";
-  return "task_update";
+  const upper = type.toUpperCase();
+  return KNOWN_ACTIVITY_TYPES.has(upper as DashboardActivityType) ? (upper as DashboardActivityType) : "TASK_UPDATED";
 }
 
 export function activityTypeLabel(type: string): string {
   const normalized = normalizeActivityType(type);
   const labels: Record<DashboardActivityType, string> = {
-    commit: "커밋",
-    pr: "PR",
-    merge: "머지",
-    task_create: "업무 생성",
-    task_update: "업무 변경",
-    meeting: "회의록",
-    ai: "AI",
-    deliverable: "산출물",
-    comment: "댓글",
-    file: "파일",
+    TASK_CREATED: "업무 생성",
+    STATUS_CHANGED: "업무 상태 변경",
+    ASSIGNEE_CHANGED: "담당자 변경",
+    TASK_UPDATED: "업무 수정",
+    TASK_DELETED: "업무 삭제",
+    CHECKLIST_CREATED: "체크리스트 생성",
+    CHECKLIST_COMPLETED: "체크리스트 완료",
   };
   return labels[normalized];
+}
+
+/** activities.type 분류별 아이콘/색상 — ActivityPage(타임라인)와 DashboardView(요약 위젯)가 함께 쓴다. */
+export const ACTIVITY_ICONS: Record<DashboardActivityType, { icon: LucideIcon; color: string; bg: string }> = {
+  TASK_CREATED: { icon: Plus, color: "#7048E8", bg: "rgba(112,72,232,0.1)" },
+  STATUS_CHANGED: { icon: RefreshCw, color: "#3B5BDB", bg: "#EEF1FB" },
+  ASSIGNEE_CHANGED: { icon: UserCog, color: "#0EA5E9", bg: "#ECFEFF" },
+  TASK_UPDATED: { icon: Pencil, color: "#F59E0B", bg: "#FFFBEB" },
+  TASK_DELETED: { icon: Trash2, color: "#EF4444", bg: "#FEF2F2" },
+  CHECKLIST_CREATED: { icon: ListPlus, color: "#10B981", bg: "#ECFDF5" },
+  CHECKLIST_COMPLETED: { icon: CheckCircle2, color: "#059669", bg: "#ECFDF5" },
+};
+
+export function activityIconMeta(type: string) {
+  return ACTIVITY_ICONS[normalizeActivityType(type)];
 }
 
 export function formatRelativeTime(iso: string | null | undefined): string {

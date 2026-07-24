@@ -21,7 +21,7 @@ import {
   taskSearchText,
 } from "../../libs/utils/dashboardTaskUtils";
 import type { DashboardTaskDto } from "../../libs/types/dashboard";
-import type { TaskStatus } from "../../../board/libs/types/task";
+import type { Priority, TaskStatus } from "../../../board/libs/types/task";
 import { TaskDetailPopup } from "../../components/TaskDetailPopup";
 import { TaskStatusPopup } from "../../components/TaskStatusPopup";
 
@@ -38,6 +38,10 @@ const STATUS_FILTERS: Array<{ label: string; value: TaskStatus | "all" }> = [
   { label: "완료", value: "done" },
   { label: "블로커", value: "blocked" },
 ];
+
+/** 검색창이 '상태'/'우선순위' 컬럼에 표시되는 라벨 텍스트로도 매칭되도록 쓰는 맵. */
+const STATUS_SEARCH_LABEL: Record<TaskStatus, string> = { done: "완료", inprogress: "진행 중", todo: "대기", blocked: "블로커" };
+const PRIORITY_SEARCH_LABEL: Record<Priority, string> = { high: "높음", medium: "중간", low: "낮음" };
 
 export function AllTasksPage() {
   const navigate = useNavigate();
@@ -60,21 +64,6 @@ export function AllTasksPage() {
     [tasks]
   );
 
-  const filtered = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    const rows = tasks.filter(task => {
-      const matchesStatus = filterStatus === "all" || normalizeTaskStatus(task.status) === filterStatus;
-      const matchesQuery = !query || taskSearchText(task).includes(query);
-      const matchesMeetingPending = !showMeetingPendingOnly || (isMeetingGenerated(task) && normalizeTaskStatus(task.status) === "todo");
-      return matchesStatus && matchesQuery && matchesMeetingPending;
-    });
-    return [...rows].sort((a, b) => {
-      if (sortBy === "status") return normalizeTaskStatus(a.status).localeCompare(normalizeTaskStatus(b.status));
-      if (sortBy === "assignee") return (a.assigneeName ?? "").localeCompare(b.assigneeName ?? "");
-      return (a.dueDate ?? "9999-12-31").localeCompare(b.dueDate ?? "9999-12-31");
-    });
-  }, [filterStatus, search, sortBy, showMeetingPendingOnly, tasks]);
-
   const delayRiskByTaskId = useMemo(() => {
     const map = new Map<string, string>();
     (progress?.delayRisks ?? []).forEach(risk => map.set(risk.taskId, risk.result));
@@ -87,6 +76,35 @@ export function AllTasksPage() {
     if (result) return result;
     return progress?.hasPredictions ? "정상" : null;
   };
+
+  /** '액션' 컬럼을 제외한 리스트의 모든 컬럼(상태/우선순위/지연 위험도/마감일 라벨 포함) 값을 검색 대상으로 삼는다. */
+  const matchesSearchQuery = (task: DashboardTaskDto, query: string): boolean => {
+    if (!query) return true;
+    if (taskSearchText(task).includes(query)) return true;
+    const status = normalizeTaskStatus(task.status);
+    if (STATUS_SEARCH_LABEL[status].toLowerCase().includes(query)) return true;
+    if (PRIORITY_SEARCH_LABEL[normalizePriority(task.priority)].toLowerCase().includes(query)) return true;
+    const risk = delayRiskLabel(task.id, status);
+    if (risk && risk.toLowerCase().includes(query)) return true;
+    if (formatDashboardDueDate(task.dueDate).toLowerCase().includes(query)) return true;
+    return false;
+  };
+
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    const rows = tasks.filter(task => {
+      const matchesStatus = filterStatus === "all" || normalizeTaskStatus(task.status) === filterStatus;
+      const matchesQuery = matchesSearchQuery(task, query);
+      const matchesMeetingPending = !showMeetingPendingOnly || (isMeetingGenerated(task) && normalizeTaskStatus(task.status) === "todo");
+      return matchesStatus && matchesQuery && matchesMeetingPending;
+    });
+    return [...rows].sort((a, b) => {
+      if (sortBy === "status") return normalizeTaskStatus(a.status).localeCompare(normalizeTaskStatus(b.status));
+      if (sortBy === "assignee") return (a.assigneeName ?? "").localeCompare(b.assigneeName ?? "");
+      if (sortBy === "category") return (a.category ?? "").localeCompare(b.category ?? "");
+      return (a.dueDate ?? "9999-12-31").localeCompare(b.dueDate ?? "9999-12-31");
+    });
+  }, [filterStatus, search, sortBy, showMeetingPendingOnly, tasks, delayRiskByTaskId]);
 
   const dangerRiskTaskIds = new Set((progress?.delayRisks ?? []).filter(risk => isDangerDelayRisk(risk.result)).map(risk => risk.taskId));
   const longestStalledDangerTask = tasks
@@ -153,7 +171,7 @@ export function AllTasksPage() {
       <div className="flex items-center gap-2 flex-wrap">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="업무명, 담당자 검색"
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="검색어를 입력하세요."
             className="pl-9 pr-4 py-2 text-xs rounded-lg border border-border bg-card outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all w-56" />
         </div>
         <div className="flex items-center gap-1">
@@ -168,6 +186,7 @@ export function AllTasksPage() {
           <option value="dueDate">마감일순</option>
           <option value="status">상태순</option>
           <option value="assignee">담당자순</option>
+          <option value="category">카테고리순</option>
         </select>
         {selected.length > 0 && (
           <div className="px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-xs font-medium text-blue-600">
@@ -199,7 +218,7 @@ export function AllTasksPage() {
                   {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
                 </button>
               </th>
-              {["ID", "업무명", "담당자", "상태", "우선순위", "지연 위험도", "마감일", "출처", "액션"].map(h => (
+              {["ID", "업무명", "카테고리", "담당자", "상태", "우선순위", "지연 위험도", "마감일", "출처", "액션"].map(h => (
                 <th key={h} className="px-3 py-3 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{h}</th>
               ))}
             </tr>
@@ -225,6 +244,9 @@ export function AllTasksPage() {
                     {isMeetingGenerated(task) && status === "todo" && (
                       <div className="text-[10px] text-purple-600 mt-0.5">AI 생성 · 승인 대기</div>
                     )}
+                  </td>
+                  <td className="px-3 py-3">
+                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 whitespace-nowrap">{task.category ?? "미분류"}</span>
                   </td>
                   <td className="px-3 py-3">
                     <div className="flex items-center gap-1.5">

@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { AlertTriangle, Calendar, Clock, FileText, Plus, Sparkles, Target } from "lucide-react";
 import { AiInsightBox } from "../../../ai/components/AiInsightBox";
 import { openAIAssistant } from "../../../ai/libs/utils/openAIAssistant";
@@ -9,15 +9,27 @@ import { DetailStatCard } from "../../../global/component/DetailStatCard";
 import type { TaskStatus } from "../../../board/libs/types/task";
 import { useAuth } from "../../../global/hooks/useAuth";
 import { useDashboardProgress } from "../../libs/hooks/useDashboardProgress";
+import { useDashboardTasks } from "../../libs/hooks/useDashboardTasks";
 import { MilestoneAddPopup } from "../../components/MilestoneAddPopup";
+import {
+  ProgressFrequencyChart,
+  buildYTicks,
+  dateKeyOf,
+  CHART_MARGIN_BOTTOM,
+  CHART_MARGIN_TOP,
+  FREQUENCY_POINT_WIDTH,
+  FREQUENCY_WINDOW_DAYS,
+  Y_TICK_SEGMENTS,
+} from "../../components/ProgressFrequencyChart";
 import {
   expectedProgressPercent,
   formatDashboardDueDate,
   formatDDay,
   isDelayRisk,
+  normalizeTaskStatus,
 } from "../../libs/utils/dashboardTaskUtils";
-
-const CATEGORY_COLORS = ["#3B5BDB", "#7048E8", "#10B981", "#F59E0B", "#EF4444", "#06B6D4"];
+import { resolveMemberDisplay } from "../../libs/utils/memberDisplay";
+import type { DashboardTaskDto } from "../../libs/types/dashboard";
 
 const MILESTONE_STATUS_MAP: Record<TaskStatus, { cls: string; label: string }> = {
   done: { cls: "bg-emerald-100 text-emerald-700", label: "완료" },
@@ -26,16 +38,124 @@ const MILESTONE_STATUS_MAP: Record<TaskStatus, { cls: string; label: string }> =
   blocked: { cls: "bg-red-100 text-red-700", label: "지연" },
 };
 
-const STAGE_LEGEND = [
-  { label: "완료 (100%)", color: "#10B981" },
-  { label: "진행 중 (50%+)", color: "#3B5BDB" },
-  { label: "시작 (1~49%)", color: "#F59E0B" },
-  { label: "미착수 (0%)", color: "#C1C9D9" },
+const STATUS_LEGEND = [
+  { label: "완료·양호", color: "#10B981" },
+  { label: "진행 중", color: "#3B5BDB" },
+  { label: "지연 위험", color: "#F59E0B" },
+  { label: "미시작", color: "#C1C9D9" },
 ];
+
+/** 카테고리 상태 4단계 분류 기준.
+ * 1) 카테고리에 업무가 하나도 없으면 미시작(회색).
+ * 2-1) (1이 아니고) status='done'인 업무 비율이 100% → 완료·양호(초록)
+ * 2-2) (1이 아니고) ML 지연위험도 예측이 '주의' 또는 '위험'인 업무 비율이 50% 이상 → 지연 위험(주황)
+ * 3) 그 외 → 진행 중(파랑). 
+ */
+function categoryStatusColor(params: { total: number; done: number; riskRatio: number }): string {
+  // 1) 미시작
+  if (params.total === 0) return "#C1C9D9"; 
+  
+  // 2-1) 전체 완료 (우선순위 상향)
+  if (params.done === params.total) return "#10B981"; 
+  
+  // 2-2) 지연 위험
+  if (params.riskRatio >= 0.5) return "#F59E0B"; 
+  
+  // 3) 진행 중
+  return "#3B5BDB"; 
+}
 
 function normalizeMilestoneStatus(status: string): TaskStatus {
   const normalized = status.toLowerCase() as TaskStatus;
   return normalized in MILESTONE_STATUS_MAP ? normalized : "todo";
+}
+
+interface DailyCompletionPoint {
+  dateKey: string;
+  label: string;
+  [memberKey: string]: string | number;
+}
+
+interface DailyCompletionMember {
+  key: string;
+  name: string;
+  color: string;
+}
+
+/** '날짜별 완료 업무량' 막대그래프 데이터 — 완료된 날짜별로 담당자 완료 건수를 스택으로 합산한다.
+ * '계획 대비 실제 진행률' 선 그래프와 동일하게 오늘 완료가 없어도 '오늘'을 마지막 포인트로 포함시킨다. */
+function buildDailyCompletionChart(
+  tasks: DashboardTaskDto[],
+  projectStart: string | null,
+  projectDeadline: string | null
+): { points: DailyCompletionPoint[]; members: DailyCompletionMember[] } {
+  if (!projectStart) return { points: [], members: [] };
+  const rangeStart = dateKeyOf(projectStart);
+  const rangeEnd = projectDeadline ? dateKeyOf(projectDeadline) : dateKeyOf(new Date().toISOString());
+  const todayKey = dateKeyOf(new Date().toISOString());
+
+  const doneTasks = tasks.filter(task => normalizeTaskStatus(task.status) === "done" && task.updatedAt);
+
+  const memberMap = new Map<string, DailyCompletionMember>();
+  doneTasks.forEach(task => {
+    const key = task.assigneeId ?? task.assigneeName ?? "unassigned";
+    if (!memberMap.has(key)) {
+      const display = resolveMemberDisplay(task.assigneeName, memberMap.size, task.assigneeId);
+      memberMap.set(key, { key, name: display.name, color: display.color });
+    }
+  });
+  const members = Array.from(memberMap.values());
+
+  const changeDates = new Set<string>();
+  doneTasks.forEach(task => changeDates.add(dateKeyOf(task.updatedAt as string)));
+  if (todayKey >= rangeStart && todayKey <= rangeEnd) changeDates.add(todayKey);
+  const sortedDates = Array.from(changeDates).filter(dateKey => dateKey >= rangeStart && dateKey <= rangeEnd).sort();
+
+  const points = sortedDates.map(dateKey => {
+    const point: DailyCompletionPoint = { dateKey, label: dateKey === todayKey ? "오늘" : formatDashboardDueDate(dateKey) };
+    members.forEach(member => { point[member.key] = 0; });
+    doneTasks.forEach(task => {
+      if (dateKeyOf(task.updatedAt as string) === dateKey) {
+        const key = task.assigneeId ?? task.assigneeName ?? "unassigned";
+        point[key] = (point[key] as number) + 1;
+      }
+    });
+    return point;
+  });
+
+  return { points, members };
+}
+
+function DailyCompletionTooltip({
+  active,
+  payload,
+  label,
+  members,
+}: {
+  active?: boolean;
+  payload?: Array<{ dataKey?: string; value?: number }>;
+  label?: string;
+  members: DailyCompletionMember[];
+}) {
+  if (!active || !payload?.length) return null;
+  const entries = payload.filter(entry => (entry.value ?? 0) > 0);
+  const total = entries.reduce((sum, entry) => sum + (entry.value ?? 0), 0);
+  return (
+    <div className="rounded-lg bg-white shadow-lg border border-border px-3 py-2 text-[11px] space-y-1">
+      <div className="font-semibold text-foreground">{label} · 총 {total}개</div>
+      {entries.map(entry => {
+        const member = members.find(m => m.key === entry.dataKey);
+        return (
+          <div key={entry.dataKey} className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: member?.color }} />
+            <span className="text-muted-foreground">{member?.name}</span>
+            <span className="font-medium text-foreground">{entry.value}개</span>
+          </div>
+        );
+      })}
+      {entries.length === 0 && <div className="text-muted-foreground">완료된 업무가 없습니다.</div>}
+    </div>
+  );
 }
 
 export function DashProgressPage() {
@@ -44,31 +164,46 @@ export function DashProgressPage() {
   const onBack = () => navigate("/dashboard");
   const onGoUrgent = () => navigate("/dashboard/urgent");
   const { data: progress, loading, error, refetch } = useDashboardProgress(currentProjectId);
+  const { data: tasks, loading: tasksLoading } = useDashboardTasks(currentProjectId);
   const [showMilestonePopup, setShowMilestonePopup] = useState(false);
 
   const totalTasks = progress?.totalTasks ?? 0;
   const doneTasks = progress?.doneTasks ?? 0;
   const progressPercent = progress?.progressPercent ?? 0;
   const delayRisks = progress?.delayRisks.filter(risk => isDelayRisk(risk.result)) ?? [];
+  const delayRiskTaskIds = new Set(delayRisks.map(risk => risk.taskId));
   const categories = progress?.categoryBreakdown ?? [];
+  const tasksByCategory = new Map<string, DashboardTaskDto[]>();
+  tasks.forEach(task => {
+    const key = task.category ?? "";
+    const list = tasksByCategory.get(key);
+    if (list) list.push(task);
+    else tasksByCategory.set(key, [task]);
+  });
   const milestones = progress?.milestones ?? [];
   const projectCreatedAt = progress?.projectCreatedAt ?? null;
   const projectDeadline = progress?.projectDeadline ?? null;
   const expectedProgress = expectedProgressPercent(projectCreatedAt, projectDeadline);
-  const planGap = expectedProgress == null ? null : progressPercent - expectedProgress;
-  const planGapLabel = planGap == null ? "-" : `${planGap > 0 ? "+" : ""}${planGap}%p`;
-  const planGapColor = planGap == null ? "#8892A4" : planGap < 0 ? "#EF4444" : planGap > 0 ? "#10B981" : "#8892A4";
   const projectDDay = formatDDay(projectDeadline);
   const insightPrompt = `현재 프로젝트의 진행 상황을 분석해줘. 실제 완료율은 ${progressPercent}%, 계획상 예상 진행률은 ${expectedProgress ?? "미정"}%, 지연 주의·위험 업무는 ${delayRisks.length}개, 프로젝트 마감은 ${projectDDay}야. 계획 대비 차이와 주요 위험, 권장 조치를 정리해줘. 출력은 3문장 이내로 해.`;
   const insightFallback = "계획 대비 진행률과 지연 예측을 바탕으로 다음 액션을 추천받을 수 있습니다.";
 
-  const planVsActualChart: Array<{ label: string; 예상?: number; 실제: number | null }> = projectCreatedAt
-    ? [
-        { label: formatDashboardDueDate(projectCreatedAt), 예상: 0, 실제: 0 },
-        { label: "오늘", 예상: expectedProgress ?? undefined, 실제: progressPercent },
-        ...(projectDeadline ? [{ label: formatDashboardDueDate(projectDeadline), 예상: 100, 실제: null }] : []),
-      ]
-    : [];
+  const { points: dailyCompletionPoints, members: dailyCompletionMembers } = buildDailyCompletionChart(
+    tasks,
+    projectCreatedAt,
+    projectDeadline
+  );
+  // 실제 데이터 포인트 수가 7개 미만이면 빈 스크롤 여백 없이 카드 폭 전체를 채운다 (ProgressFrequencyChart와 동일한 기준).
+  const chartsFillFullWidth = dailyCompletionPoints.length < FREQUENCY_WINDOW_DAYS;
+  const dailyCompletionYMax = Math.max(
+    ...dailyCompletionPoints.map(point => dailyCompletionMembers.reduce((sum, member) => sum + (point[member.key] as number), 0)),
+    1
+  );
+  const dailyCompletionScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    dailyCompletionScrollRef.current?.scrollTo({ left: dailyCompletionScrollRef.current.scrollWidth });
+  }, [dailyCompletionPoints.length]);
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-4" style={{ fontFamily: "'Inter','Noto Sans KR',sans-serif" }}>
@@ -89,26 +224,10 @@ export function DashProgressPage() {
 
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{error}</div>}
 
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <DetailStatCard label="전체 완료율" value={loading ? "..." : `${progressPercent}%`} sub={loading ? "불러오는 중" : `${doneTasks} / ${totalTasks} 완료`} color="#3B5BDB" icon={Target} />
-        <DetailStatCard label="계획 대비" value={loading ? "..." : planGapLabel} sub={expectedProgress == null ? "프로젝트 일정 미정" : `예상 ${expectedProgress}% · 실제 ${progressPercent}%`} color={planGapColor} icon={Target} />
         <DetailStatCard label="지연 업무" value={loading ? "..." : `${delayRisks.length}개`} sub="즉시 검토 필요" color="#EF4444" icon={Clock} />
-        <DetailStatCard label="마감 D-day" value={loading ? "..." : projectDDay} sub={formatDashboardDueDate(projectDeadline)} color="#F59E0B" icon={Calendar} iconBorder />
-        <div className="bg-card rounded-xl p-4 shadow-sm border border-border">
-          <div className="text-xs font-medium text-foreground mb-2">상태 범례</div>
-          <div className="space-y-1.5">
-            {[
-              { label: "정상", color: "#10B981" },
-              { label: "주의", color: "#F59E0B" },
-              { label: "위험", color: "#EF4444" },
-            ].map(item => (
-              <div key={item.label} className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                <span className="w-2 h-2 rounded-full shrink-0" style={{ background: item.color }} />
-                <span>{item.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+        <DetailStatCard label="마감 D-day" value={loading ? "..." : projectDDay} sub={formatDashboardDueDate(projectDeadline)} color="#F59E0B" icon={Calendar} />
       </div>
 
       <AiInsightBox
@@ -120,50 +239,105 @@ export function DashProgressPage() {
 
       <div className="grid grid-cols-3 gap-4">
         <div className="col-span-2 bg-card rounded-xl p-5 border border-border shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div className="text-sm font-semibold text-foreground">계획 대비 실제 진행률</div>
-            <div className="text-xs text-muted-foreground">{projectDeadline ? "예상 vs 실제" : "마감일 미정 · 실제만 표시"}</div>
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <div className="text-sm font-semibold text-foreground">계획 대비 실제 진행률</div>
+            </div>
+            <div className="text-2xl font-bold" style={{ color: "var(--primary)" }}>{loading ? "..." : progressPercent}%</div>
           </div>
-          <div className="h-52">
-            {loading ? (
-              <div className="h-full flex items-center justify-center text-sm text-muted-foreground">데이터를 불러오는 중입니다</div>
-            ) : planVsActualChart.length ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={planVsActualChart} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.05)" />
-                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#8892A4" }} />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "#8892A4" }} />
-                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  {projectDeadline && <Line type="monotone" dataKey="예상" name="예상 진행률" stroke="#C1C9D9" strokeWidth={2} strokeDasharray="4 3" dot={{ r: 3 }} />}
-                  <Line type="monotone" dataKey="실제" name="실제 진행률" stroke="#7048E8" strokeWidth={2} dot={{ r: 3 }} />
-                </LineChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-full flex items-center justify-center text-sm text-muted-foreground">표시할 진행률 데이터가 없습니다.</div>
-            )}
+          <div className="text-right text-[10px] text-muted-foreground mb-1">기준: 주별 완료 업무 수</div>
+          <div className="h-40">
+            <ProgressFrequencyChart
+              tasks={tasks}
+              projectStart={projectCreatedAt}
+              projectDeadline={projectDeadline}
+              totalTasks={totalTasks}
+              loading={loading || tasksLoading}
+            />
+          </div>
+
+          <div className="mt-5 pt-4 border-t border-border">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm font-semibold text-foreground">날짜별 완료 업무량</div>
+              {dailyCompletionMembers.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap justify-end">
+                  {dailyCompletionMembers.map(member => (
+                    <div key={member.key} className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ background: member.color }} />
+                      <span>{member.name}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="h-40 flex">
+              {loading || tasksLoading ? (
+                <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">데이터를 불러오는 중입니다</div>
+              ) : dailyCompletionPoints.length ? (
+                <>
+                  <div className="w-10 shrink-0 relative">
+                    <span className="absolute top-0 left-0.5 text-[9px] leading-none text-muted-foreground">(개)</span>
+                    <div
+                      className="absolute left-0 right-1 flex flex-col justify-between text-right text-[10px] text-muted-foreground"
+                      style={{ top: CHART_MARGIN_TOP, bottom: CHART_MARGIN_BOTTOM }}
+                    >
+                      {buildYTicks(dailyCompletionYMax, Y_TICK_SEGMENTS).map(tick => <span key={tick}>{tick}</span>)}
+                    </div>
+                  </div>
+                  <div
+                    ref={dailyCompletionScrollRef}
+                    className={chartsFillFullWidth ? "flex-1 h-full relative overflow-hidden" : "flex-1 h-full overflow-x-auto overflow-y-hidden cursor-grab relative"}
+                  >
+                    <span className="absolute bottom-1 right-1 text-[9px] leading-none text-muted-foreground">(일)</span>
+                    <div
+                      style={{
+                        width: chartsFillFullWidth
+                          ? "100%"
+                          : Math.max(dailyCompletionPoints.length * FREQUENCY_POINT_WIDTH, FREQUENCY_WINDOW_DAYS * FREQUENCY_POINT_WIDTH),
+                        height: "100%",
+                      }}
+                    >
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={dailyCompletionPoints} margin={{ top: CHART_MARGIN_TOP, right: 8, left: 0, bottom: CHART_MARGIN_BOTTOM }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.05)" />
+                          <XAxis
+                            dataKey="label"
+                            tick={{ fontSize: 10, fill: "#8892A4" }}
+                            axisLine={{ stroke: "#94A3B8" }}
+                            tickLine={false}
+                          />
+                          <YAxis domain={[0, dailyCompletionYMax]} hide />
+                          <Tooltip content={<DailyCompletionTooltip members={dailyCompletionMembers} />} />
+                          {dailyCompletionMembers.map(member => (
+                            <Bar key={member.key} dataKey={member.key} name={member.name} stackId="daily" fill={member.color} radius={[2, 2, 0, 0]} />
+                          ))}
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">표시할 완료 업무 데이터가 없습니다.</div>
+              )}
+            </div>
           </div>
         </div>
 
         <div className="bg-card rounded-xl p-5 border border-border shadow-sm">
           <div className="text-sm font-semibold text-foreground mb-3">단계별 진행 상태</div>
-          <div className="flex flex-wrap gap-x-3 gap-y-1 mb-3">
-            {STAGE_LEGEND.map(item => (
-              <div key={item.label} className="flex items-center gap-1 text-[9px] text-muted-foreground">
-                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: item.color }} />
-                <span>{item.label}</span>
-              </div>
-            ))}
-          </div>
           <div className="space-y-3.5">
-            {categories.map((item, index) => {
+            {categories.map(item => {
               const pct = item.total === 0 ? 0 : Math.round((item.done / item.total) * 100);
-              const color = CATEGORY_COLORS[index % CATEGORY_COLORS.length];
+              const categoryTasks = tasksByCategory.get(item.category ?? "") ?? [];
+              const riskRatio = categoryTasks.length
+                ? categoryTasks.filter(task => delayRiskTaskIds.has(task.id)).length / categoryTasks.length
+                : 0;
+              const color = categoryStatusColor({ total: item.total, done: item.done, riskRatio });
               return (
                 <div key={item.category}>
                   <div className="flex items-center justify-between text-xs mb-1.5">
                     <span className="font-medium text-foreground">{item.category}</span>
-                    <span className={`font-semibold ${pct === 100 ? "text-emerald-600" : pct >= 50 ? "text-blue-600" : pct > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{pct}%</span>
+                    <span className="font-semibold" style={{ color }}>{pct}%</span>
                   </div>
                   <div className="w-full h-2 bg-muted rounded-full"><div className="h-2 rounded-full transition-all" style={{ width: `${pct}%`, background: color }} /></div>
                 </div>
@@ -174,6 +348,17 @@ export function DashProgressPage() {
                 {loading ? "데이터를 불러오는 중입니다" : "카테고리 데이터가 없습니다."}
               </div>
             )}
+          </div>
+          <div className="mt-4 pt-3 border-t border-border">
+            <div className="text-[10px] font-medium text-muted-foreground mb-2">상태 범례</div>
+            <div className="space-y-1.5">
+              {STATUS_LEGEND.map(item => (
+                <div key={item.label} className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ background: item.color }} />
+                  <span>{item.label}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>

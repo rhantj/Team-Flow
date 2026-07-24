@@ -9,7 +9,9 @@ from core.cache import get_async_redis_client
 from llm_rag_assistant.app.schema.chat_schema import RagQueryResponse, RagSource
 from llm_rag_assistant.app.services.embedding_service import embed_text
 from llm_rag_assistant.app.services.generation_service import generate_answer
+from llm_rag_assistant.app.services.query_rewrite_service import rewrite_question
 from llm_rag_assistant.app.services.retrieval_service import search_similar_chunks
+from llm_rag_assistant.app.services.task_facts_service import enrich_with_facts
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +20,9 @@ _SNIPPET_MAX_LEN = 200
 # 무효화된다. 응답 스키마뿐 아니라 프롬프트 구성이 바뀔 때도 올려야 한다. 그러지 않으면
 # 배포 뒤에도 이전 프롬프트로 만든 답변이 TTL(30분) 동안 계속 반환된다.
 # v2: 개인화 질문 컨텍스트에 담당자 필터 안내문 추가 (generation_service._PERSONAL_CONTEXT_NOTICE)
-_ANSWER_CACHE_SCHEMA_VERSION = "v2"
+# v3: 출처 줄에 마감일·상태·우선순위 추가 (task_facts_service.enrich_with_facts)
+# v4: 개인화 안내문 강화 + 생성 temperature 고정 (generation_service)
+_ANSWER_CACHE_SCHEMA_VERSION = "v4"
 _ANSWER_CACHE_TTL_SECONDS = 1800
 
 # "내 할 일 알려줘" 류 개인화 질문 판별용. 순수 벡터 유사도만으로는 "내"가 누구인지 구분할
@@ -119,8 +123,21 @@ async def _write_cached_response(redis_client, cache_key: str, response: RagQuer
         logger.warning("RAG 답변 캐시 저장 실패, 결과는 정상 반환합니다.")
 
 
-async def answer_question(pool, project_id: int, question: str, user_id: int | None = None) -> RagQueryResponse:
-    assignee_id = user_id if user_id is not None and _is_personal_intent(question) else None
+async def answer_question(
+    pool,
+    project_id: int,
+    question: str,
+    user_id: int | None = None,
+    history: list[dict] | None = None,
+) -> RagQueryResponse:
+    # 후속 질문("그 업무는 언제까지야?")은 재작성으로 독립 질문화한다. 이후 임베딩·개인화 판정·
+    # 캐시 키·생성은 전부 재작성된 질문(effective_question)을 기준으로 한다. 히스토리가 없으면
+    # 재작성 LLM을 호출하지 않아 첫 질문이 느려지지 않는다.
+    effective_question = question
+    if history:
+        effective_question = await rewrite_question(history, question)
+
+    assignee_id = user_id if user_id is not None and _is_personal_intent(effective_question) else None
     cache_key = None
     cache_epoch = None
 
@@ -133,7 +150,7 @@ async def answer_question(pool, project_id: int, question: str, user_id: int | N
     if redis_client is not None:
         cache_epoch = await _read_project_cache_epoch(redis_client, project_id)
         if cache_epoch is not None:
-            cache_key = _answer_cache_key(project_id, assignee_id, question, cache_epoch)
+            cache_key = _answer_cache_key(project_id, assignee_id, effective_question, cache_epoch)
             cached_response = await _read_cached_response(redis_client, cache_key)
             if cached_response is not None:
                 latest_epoch = await _read_project_cache_epoch(redis_client, project_id)
@@ -141,14 +158,16 @@ async def answer_question(pool, project_id: int, question: str, user_id: int | N
                     return cached_response
                 cache_epoch = latest_epoch
                 cache_key = (
-                    _answer_cache_key(project_id, assignee_id, question, cache_epoch)
+                    _answer_cache_key(project_id, assignee_id, effective_question, cache_epoch)
                     if cache_epoch is not None
                     else None
                 )
 
-    query_embedding = await embed_text(question)
+    query_embedding = await embed_text(effective_question)
     rows = await search_similar_chunks(pool, project_id, query_embedding, top_k=5, assignee_id=assignee_id)
-    answer = await generate_answer(question, rows, is_personal=assignee_id is not None)
+    # 청크 본문에 없는 마감일·상태·우선순위를 붙인다. 실패해도 facts만 비고 답변은 정상 진행된다.
+    enriched_rows = await enrich_with_facts(pool, project_id, rows)
+    answer = await generate_answer(effective_question, enriched_rows, is_personal=assignee_id is not None)
 
     sources = [
         RagSource(

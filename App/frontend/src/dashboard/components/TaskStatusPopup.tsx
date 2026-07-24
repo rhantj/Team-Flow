@@ -34,9 +34,10 @@ export function TaskStatusPopup({ task, tasks, projectId, onClose, onChanged }: 
       // 원래 있던 컬럼의 position을 그대로 넘기면 대상 컬럼(selected)의 기존 카드와
       // 값이 겹칠 수 있어, 보드 드래그앤드롭과 동일한 규칙으로 대상 컬럼 끝에 이어붙인다.
       await updateTaskPosition(task.id, selected, nextPositionForStatus(tasks, selected), projectId);
+      alert("변경이 완료되었습니다.");
       onChanged(selected);
     } catch {
-      setError("상태 변경에 실패했습니다. 잠시 후 다시 시도해주세요.");
+      setError("업무 상태 변경에 실패했습니다. 잠시 후 다시 시도해주세요.");
     } finally {
       setSubmitting(false);
     }
@@ -48,7 +49,7 @@ export function TaskStatusPopup({ task, tasks, projectId, onClose, onChanged }: 
       <div className="fixed inset-0 flex items-center justify-center z-50 p-4" onClick={e => e.stopPropagation()}>
         <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm" style={{ fontFamily: "'Inter','Noto Sans KR',sans-serif" }}>
           <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-            <h2 className="text-base font-bold text-foreground">상태 변경</h2>
+            <h2 className="text-base font-bold text-foreground">업무 상태 변경</h2>
             <button onClick={onClose} className="p-1.5 hover:bg-muted rounded-lg transition-colors"><X className="w-4 h-4 text-muted-foreground" /></button>
           </div>
           <div className="p-6 space-y-2">

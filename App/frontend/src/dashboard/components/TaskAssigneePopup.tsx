@@ -36,6 +36,7 @@ export function TaskAssigneePopup({ task, projectId, onClose, onChanged }: TaskA
     setError(null);
     try {
       await updateTask(task.id, { assigneeId }, projectId);
+      alert("변경이 완료되었습니다.");
       onChanged();
     } catch {
       setError("담당자 변경에 실패했습니다. 잠시 후 다시 시도해주세요.");

@@ -25,9 +25,9 @@ import {
 } from "../../libs/utils/dashboardTaskUtils";
 
 const LEGEND = [
-  { label: "지연 위험", color: "#EF4444" },
+  { label: "지연 위험(주의/위험)", color: "#EF4444" },
   { label: "업데이트 필요 (3일↑)", color: "#F59E0B" },
-  { label: "정상 진행", color: "#3B5BDB" },
+  { label: "정상 진행", color: "#ccc" },
 ];
 
 const STATUS_CHANGE_LABEL: Record<"done" | "blocked", string> = {
@@ -60,6 +60,7 @@ export function InProgressPage() {
     setPendingTaskId(taskId);
     try {
       await updateTaskPosition(taskId, status, nextPositionForStatus(tasks, status), currentProjectId);
+      alert("변경이 완료되었습니다.");
       refetch();
     } catch {
       setActionError("상태 변경에 실패했습니다. 잠시 후 다시 시도해주세요.");
@@ -92,7 +93,7 @@ export function InProgressPage() {
       <div className="grid grid-cols-4 gap-3">
         <DetailStatCard label="진행 중" value={loading ? "..." : inProgressTasks.length} sub="활성 업무" color="#3B5BDB" icon={Clock} />
         <DetailStatCard label="업데이트 필요" value={loading ? "..." : updateNeededCount} sub="3일 이상 미업데이트" color="#F59E0B" icon={RefreshCw} />
-        <DetailStatCard label="지연 위험" value={loading ? "..." : dangerCount} sub="고위험 업무" color="#EF4444" icon={AlertTriangle} />
+        <DetailStatCard label="지연 위험" value={loading ? "..." : dangerCount} sub="고위험 업무(주의/위험)" color="#EF4444" icon={AlertTriangle} />
         <DetailStatCard label="D-Day" value={loading ? "..." : projectDDay} sub={formatDashboardDueDate(progress?.projectDeadline)} color="#7048E8" icon={Calendar} />
       </div>
 
@@ -119,8 +120,10 @@ export function InProgressPage() {
           const isRisk = riskTaskIds.has(task.id);
           const isDanger = dangerTaskIds.has(task.id);
           const isUpdateNeeded = statusDays >= 3;
-          const borderColor = isDanger ? "#EF4444" : isUpdateNeeded ? "#F59E0B" : "#3B5BDB";
-          const bgColor = isDanger ? "rgba(239,68,68,0.03)" : isUpdateNeeded ? "rgba(245,158,11,0.03)" : "rgba(59,91,219,0.03)";
+          // LEGEND는 '지연 위험' 한 범주만 두고 있어(주의/위험 구분 없음), ML 예측이 주의든 위험이든
+          // 모두 지연 위험(빨강)으로 묶는다 — 그래야 "AI 지연 위험" 배지(isRisk 기준)와 카드 색이 일치한다.
+          const borderColor = isRisk ? "#EF4444" : isUpdateNeeded ? "#F59E0B" : "#ccc";
+          const bgColor = isRisk ? "rgba(239,68,68,0.03)" : isUpdateNeeded ? "rgba(245,158,11,0.03)" : "#fff";
 
           return (
             <div key={task.id} className="rounded-xl shadow-sm overflow-hidden border" style={{ borderColor, borderLeftWidth: 4, background: bgColor }}>

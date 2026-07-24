@@ -95,6 +95,7 @@ export function UrgentTasksPage() {
     setPendingTaskId(taskId);
     try {
       await updateTaskPosition(taskId, status, nextPositionForStatus(tasks, status), currentProjectId);
+      alert("변경이 완료되었습니다.");
       refetch();
     } catch {
       setActionError("상태 변경에 실패했습니다. 잠시 후 다시 시도해주세요.");
@@ -242,9 +243,9 @@ export function UrgentTasksPage() {
               )}
               <div className="space-y-2 pt-2 border-t border-border">
                 <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">빠른 액션</div>
-                <button className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium bg-blue-50 border border-blue-200 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors"><Bell className="w-3.5 h-3.5" />리마인드 알림 보내기</button>
+                <button onClick={() => alert("미구현된 기능입니다.")} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium bg-blue-50 border border-blue-200 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors"><Bell className="w-3.5 h-3.5" />리마인드 알림 보내기</button>
                 <button onClick={() => setAssigneeTarget(selectedRow.task.id)} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><UserCog className="w-3.5 h-3.5" />담당자 변경</button>
-                <button onClick={() => setDueDateTarget(selectedRow.task.id)} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><Calendar className="w-3.5 h-3.5" />마감일 수정</button>
+                <button onClick={() => setDueDateTarget(selectedRow.task.id)} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><Calendar className="w-3.5 h-3.5" />마감일 조정</button>
                 <button
                   onClick={() => changeStatus(selectedRow.task.id, selectedRow.task.title, "done")}
                   disabled={pendingTaskId === selectedRow.task.id}

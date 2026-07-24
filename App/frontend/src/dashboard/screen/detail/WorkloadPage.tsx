@@ -10,6 +10,8 @@ import { TaskStatusPill } from "../../../board/components/TaskStatusPill";
 import { useAuth } from "../../../global/hooks/useAuth";
 import { useDashboardSummary } from "../../libs/hooks/useDashboardSummary";
 import { useDashboardTasks } from "../../libs/hooks/useDashboardTasks";
+import { useWorkloadScore } from "../../libs/hooks/useWorkloadScore";
+import type { WorkloadScoreMemberDto } from "../../libs/utils/workloadScoreApi";
 import {
   formatDashboardDueDate,
   normalizePriority,
@@ -17,23 +19,59 @@ import {
 } from "../../libs/utils/dashboardTaskUtils";
 import { resolveMemberDisplay } from "../../libs/utils/memberDisplay";
 
+const ANOMALY_BADGE: Record<string, { label: string; color: string; bg: string }> = {
+  "과부하 의심": { label: "과부하 의심", color: "#DC2626", bg: "#FEF2F2" },
+  "저활동 의심": { label: "저활동 의심", color: "#D97706", bg: "#FFFBEB" },
+};
+
 export function WorkloadPage() {
   const { currentProjectId } = useAuth();
   const { data: summary, loading: summaryLoading, error: summaryError } = useDashboardSummary(currentProjectId);
   const { data: tasks, loading: tasksLoading, error: tasksError, refetch } = useDashboardTasks(currentProjectId);
+  const { data: workloadScore, loading: workloadScoreLoading } = useWorkloadScore(currentProjectId);
   const navigate = useNavigate();
   const onBack = () => navigate("/dashboard");
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
 
   const workload = summary?.workload ?? [];
   const memberCount = workload.length;
-  const assignedTotal = workload.reduce((sum, member) => sum + member.total, 0);
-  const averageTasks = memberCount === 0 ? 0 : Math.round((assignedTotal / memberCount) * 10) / 10;
   const assignedInProgressTotal = workload.reduce((sum, member) => sum + member.inProgress, 0);
   const averageInProgressTasks = memberCount === 0 ? 0 : Math.round((assignedInProgressTotal / memberCount) * 10) / 10;
-  const maxWorkload = workload.reduce((max, member) => Math.max(max, member.total), 0);
-  const overloaded = workload.filter(member => member.blocked > 0 || member.total >= Math.max(averageTasks * 1.5, averageTasks + 2));
-  const balanceLabel = overloaded.length === 0 ? "양호" : "점검 필요";
+
+  // "과부하 위험" 판정은 ml_workload_score(FastAPI)의 실제 이상치 탐지 결과만 신뢰한다.
+  // 점수를 못 불러왔을 때 휴리스틱으로 조용히 대체하면, "N명 과부하"라고 카운트/배지는 뜨는데
+  // AI 추천 액션이나 최고 위험 팀원 이름은 "데이터 없음"이라고 나오는 모순이 생긴다(실제 발생 사례).
+  const workloadScoreByAssignee = new Map<string, WorkloadScoreMemberDto>(
+    (workloadScore?.members ?? []).map(member => [member.assigneeId, member])
+  );
+  const isMemberOverloaded = (member: (typeof workload)[number]) =>
+    workloadScoreByAssignee.get(member.assigneeId)?.isAnomaly ?? false;
+  const overloaded = workload.filter(isMemberOverloaded);
+  const balanceLabel = overloaded.length === 0 ? "양호" : "과부하 위험";
+
+  const overloadedByMl = (workloadScore?.members ?? []).filter(member => member.anomalyType === "과부하 의심");
+  const underloadedByMl = (workloadScore?.members ?? []).filter(member => member.anomalyType === "저활동 의심");
+  const memberNameFor = (assigneeId: string) => {
+    const index = workload.findIndex(entry => entry.assigneeId === assigneeId);
+    const assigneeName = index >= 0 ? workload[index].assigneeName : null;
+    return resolveMemberDisplay(assigneeName, index >= 0 ? index : 0, assigneeId).name;
+  };
+  // "과부하 위험" 카드의 서브텍스트용 - 팀원 중 AI 과부하 점수(overload_score)가 가장 높은 사람.
+  const topOverloadedMember = (workloadScore?.members ?? []).reduce<WorkloadScoreMemberDto | null>(
+    (top, member) => (!top || member.overloadScore > top.overloadScore ? member : top),
+    null
+  );
+  const topOverloadedName = topOverloadedMember ? memberNameFor(topOverloadedMember.assigneeId) : null;
+  const workloadInsightText = workloadScoreLoading
+    ? "AI가 팀원별 업무 편중도를 분석하고 있습니다..."
+    : !workloadScore || workloadScore.members.length === 0
+      ? (workloadScore?.note ?? "편중 점수를 계산할 업무 데이터가 없습니다.")
+      : overloadedByMl.length === 0 && underloadedByMl.length === 0
+        ? "AI 분석 결과 팀원 간 뚜렷한 업무 편중은 감지되지 않았습니다."
+        : [
+            ...overloadedByMl.map(member => `${memberNameFor(member.assigneeId)}님 과부하 의심(${Math.round(member.overloadScore)}점)`),
+            ...underloadedByMl.map(member => `${memberNameFor(member.assigneeId)}님 저활동 의심(${Math.round(member.overloadScore)}점)`),
+          ].join(", ") + " — 업무 재배분을 검토해보세요.";
   const barData = workload.map((entry, index) => ({
     id: entry.assigneeId,
     name: resolveMemberDisplay(entry.assigneeName, index, entry.assigneeId).name,
@@ -65,11 +103,17 @@ export function WorkloadPage() {
       <div className="grid grid-cols-4 gap-3">
         <DetailStatCard label="팀원 수" value={summaryLoading ? "..." : `${memberCount}명`} sub="프로젝트 멤버" color="#3B5BDB" icon={Users} />
         <DetailStatCard label="1인 평균 업무" value={summaryLoading ? "..." : `${averageInProgressTasks}개`} sub="진행 중 배정 기준" color="#7048E8" icon={Layers} />
-        <DetailStatCard label="점검 필요" value={summaryLoading ? "..." : `${overloaded.length}명`} sub="블로커 또는 과부하" color="#EF4444" icon={AlertTriangle} />
+        <DetailStatCard
+          label="과부하 위험"
+          value={summaryLoading ? "..." : `${overloaded.length}명`}
+          sub={workloadScoreLoading ? "분석 중" : topOverloadedName ? `${topOverloadedName}님` : "위험 팀원 없음"}
+          color="#EF4444"
+          icon={AlertTriangle}
+        />
         <DetailStatCard label="업무 균형" value={summaryLoading ? "..." : balanceLabel} sub="실제 배정 기준" color="#F59E0B" icon={BarChart3} />
       </div>
 
-      <AIBox text="미구현된 기능입니다." />
+      <AIBox text={workloadInsightText} />
 
       <div className="grid grid-cols-3 gap-4">
         <div className="col-span-2 bg-card rounded-xl p-5 border border-border shadow-sm">
@@ -109,14 +153,14 @@ export function WorkloadPage() {
             {workload.map((entry, index) => {
               const member = resolveMemberDisplay(entry.assigneeName, index, entry.assigneeId);
               const pct = entry.total === 0 ? 0 : Math.round((entry.done / entry.total) * 100);
-              const isOverload = entry.blocked > 0 || entry.total === maxWorkload && maxWorkload > averageTasks;
+              const isOverload = isMemberOverloaded(entry);
               return (
                 <div key={entry.assigneeId}>
                   <div className="flex items-center justify-between text-xs mb-1.5">
                     <div className="flex items-center gap-1.5">
                       <div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold" style={{ background: member.color }}>{member.initials}</div>
                       <span className="font-medium text-foreground">{member.name}</span>
-                      {isOverload && <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-red-100 text-red-600">점검</span>}
+                      {isOverload && <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-red-100 text-red-600">과부하</span>}
                     </div>
                     <span className={`font-semibold ${pct >= 60 ? "text-emerald-600" : pct >= 40 ? "text-amber-600" : "text-red-500"}`}>{pct}%</span>
                   </div>
@@ -139,7 +183,9 @@ export function WorkloadPage() {
           const member = resolveMemberDisplay(entry.assigneeName, index, entry.assigneeId);
           const pct = entry.total === 0 ? 0 : Math.round((entry.done / entry.total) * 100);
           const isSelected = selectedMember === entry.assigneeId;
-          const isOverload = entry.blocked > 0 || entry.total === maxWorkload && maxWorkload > averageTasks;
+          const scoreEntry = workloadScoreByAssignee.get(entry.assigneeId);
+          const isOverload = isMemberOverloaded(entry);
+          const anomalyBadge = scoreEntry ? ANOMALY_BADGE[scoreEntry.anomalyType] : undefined;
           return (
             <button key={entry.assigneeId} onClick={() => setSelectedMember(isSelected ? null : entry.assigneeId)} className={`bg-card rounded-xl p-5 border-2 cursor-pointer transition-all shadow-sm hover:shadow-md text-left ${isSelected ? "border-blue-400" : isOverload ? "border-red-200" : "border-border"}`}>
               <div className="flex items-center justify-between mb-3">
@@ -148,10 +194,24 @@ export function WorkloadPage() {
                   <div><div className="text-sm font-semibold text-foreground">{member.name}</div><div className="text-xs text-muted-foreground">{member.role}</div></div>
                 </div>
                 <div className="flex flex-col items-end gap-1">
-                  {isOverload && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200">점검 필요</span>}
+                  {isOverload && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200">과부하 위험</span>}
                   <span className={`text-lg font-bold ${pct >= 60 ? "text-emerald-600" : pct >= 40 ? "text-amber-600" : "text-red-500"}`}>{pct}%</span>
                 </div>
               </div>
+              {scoreEntry && (
+                <div className="flex items-center justify-between gap-2 mb-3 px-2.5 py-1.5 rounded-lg bg-muted/60">
+                  {anomalyBadge ? (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ color: anomalyBadge.color, background: anomalyBadge.bg }}>
+                      {anomalyBadge.label}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-semibold text-muted-foreground">편중 없음</span>
+                  )}
+                  <span className="text-[10px] text-muted-foreground">
+                    AI 과부하 점수 <span className="font-bold text-foreground">{Math.round(scoreEntry.overloadScore)}</span>/100
+                  </span>
+                </div>
+              )}
               <div className="grid grid-cols-4 gap-2 mb-3">
                 {[{ label: "전체", value: entry.total, color: "#3B5BDB" }, { label: "완료", value: entry.done, color: "#10B981" }, { label: "진행", value: entry.inProgress, color: "#3B5BDB" }, { label: "블로커", value: entry.blocked, color: "#EF4444" }].map(item => (
                   <div key={item.label} className="text-center p-1.5 rounded-lg bg-muted">

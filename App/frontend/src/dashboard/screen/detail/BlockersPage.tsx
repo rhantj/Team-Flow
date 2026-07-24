@@ -95,6 +95,7 @@ export function BlockersPage() {
     setResolvingTaskId(taskId);
     try {
       await updateTaskPosition(taskId, "done", nextPositionForStatus(tasks, "done"), currentProjectId);
+      alert("변경이 완료되었습니다.");
       refetch();
     } catch {
       setActionError("블로커 해결 처리에 실패했습니다. 잠시 후 다시 시도해주세요.");

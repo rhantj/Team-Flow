@@ -11,6 +11,8 @@ import com.workflowai.dashboard.DTO.DashboardTaskDto;
 import com.workflowai.dashboard.DTO.DelayRiskDto;
 import com.workflowai.dashboard.DTO.MilestoneProgressDto;
 import com.workflowai.dashboard.DTO.ProgressDetailResponse;
+import com.workflowai.dashboard.DTO.WorkloadScoreMemberDto;
+import com.workflowai.dashboard.DTO.WorkloadScoreResponseDto;
 import com.workflowai.dashboard.entity.Milestone;
 import com.workflowai.dashboard.entity.MlPrediction;
 import com.workflowai.dashboard.repository.MilestoneRepository;
@@ -43,13 +45,14 @@ class DashboardServiceTest {
     @Mock private ProjectMemberRepository projectMemberRepository;
     @Mock private DemoDataService demoDataService;
     @Mock private FastApiDashboardClient fastApiDashboardClient;
+    @Mock private FastApiWorkloadScoreClient fastApiWorkloadScoreClient;
     @Mock private ProjectRepository projectRepository;
 
     private DashboardService newService() {
         return new DashboardService(
             taskRepository, milestoneRepository, activityRepository, mlPredictionRepository,
             userRepository, projectMemberRepository, demoDataService, fastApiDashboardClient,
-            projectRepository
+            fastApiWorkloadScoreClient, projectRepository
         );
     }
 
@@ -189,5 +192,22 @@ class DashboardServiceTest {
         assertThat(result.dueDate()).isEqualTo("2026-08-15");
         assertThat(result.taskCount()).isEqualTo(0);
         assertThat(result.progressPercent()).isEqualTo(0);
+    }
+
+    @Test
+    void getWorkloadScoreDelegatesToFastApiWorkloadScoreClient() {
+        when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        WorkloadScoreResponseDto response = new WorkloadScoreResponseDto(
+            "1.0", 1L, "db", "MAD (소규모 팀)",
+            List.of(new WorkloadScoreMemberDto("5", 12, 0.4, 88.5, true, "과부하 의심", 1.8, 1.2, 3)),
+            null, 0.62
+        );
+        when(fastApiWorkloadScoreClient.fetch(1L)).thenReturn(response);
+
+        WorkloadScoreResponseDto result = newService().getWorkloadScore("demo-project");
+
+        assertThat(result.members()).hasSize(1);
+        assertThat(result.members().get(0).anomaly_type()).isEqualTo("과부하 의심");
+        assertThat(result.team_mean_completion()).isEqualTo(0.62);
     }
 }
