@@ -70,7 +70,6 @@ class MeetingAnalysisServiceTest {
     @Mock private ProjectRepository projectRepository;
     @Mock private RagIngestService ragIngestService;
     @Mock private MeetingAnalysisPersistence meetingAnalysisPersistence;
-    @Mock private FastApiMeetingClient fastApiMeetingClient;
 
     @BeforeEach
     void authenticateAsCurrentUser() {
@@ -93,7 +92,7 @@ class MeetingAnalysisServiceTest {
             meetingAnalysisJobPublisher, demoDataService, meetingRepository, meetingAttendeeRepository,
             meetingAnalysisRepository, meetingActionItemRepository, taskRepository, notificationRepository,
             notificationService, userRepository, projectMemberRepository, projectRepository, ragIngestService,
-            meetingAnalysisPersistence, fastApiMeetingClient, "/tmp/workflow-uploads"
+            meetingAnalysisPersistence, "/tmp/workflow-uploads"
         );
     }
 
@@ -185,33 +184,24 @@ class MeetingAnalysisServiceTest {
     }
 
     @Test
-    void analyzeExtractsAudioTextViaFastApiBeforeDispatchingAnalysisRequest() throws Exception {
+    void analyzeSkipsSynchronousExtractionForAudioAndEnqueuesWithBlankText() {
+        // STT는 수 초~수십 초 걸릴 수 있어 업로드 요청 안에서 동기 처리하면 타임아웃 위험이 크므로,
+        // analyze()는 오디오 파일의 텍스트 추출을 하지 않고 빈 텍스트로 큐에 넘긴다.
+        // 실제 STT는 MeetingAnalysisRunner가 비동기 큐 실행 시점에 수행한다.
         mockMember(1L);
         MeetingAnalysisService service = newService();
         when(meetingRepository.save(any(Meeting.class))).thenAnswer(invocation -> invocation.getArgument(0));
         MockMultipartFile file = new MockMultipartFile("file", "meeting.wav", "audio/wav", "fake-audio-bytes".getBytes());
-        when(fastApiMeetingClient.transcribeAudio(file.getBytes(), "meeting.wav"))
-            .thenReturn("음성 회의록에서 추출된 발언 내용");
 
-        service.analyze(
+        MeetingAnalysisResponse response = service.analyze(
             "demo-project", file, "음성 회의록", "2026-07-24", "정기회의", "audio", List.of("김민준"), null
         );
 
+        assertThat(response.transcript()).isEmpty();
         ArgumentCaptor<AiAnalyzeRequest> requestCaptor = ArgumentCaptor.forClass(AiAnalyzeRequest.class);
         verify(meetingAnalysisJobPublisher).enqueue(any(), requestCaptor.capture(), any(UUID.class));
-        assertThat(requestCaptor.getValue().text()).isEqualTo("음성 회의록에서 추출된 발언 내용");
-    }
-
-    @Test
-    void analyzeThrowsWhenAudioTranscriptionIsBlank() throws Exception {
-        mockMember(1L);
-        MeetingAnalysisService service = newService();
-        MockMultipartFile file = new MockMultipartFile("file", "silent.wav", "audio/wav", "fake-audio-bytes".getBytes());
-        when(fastApiMeetingClient.transcribeAudio(file.getBytes(), "silent.wav")).thenReturn("   ");
-
-        assertThatThrownBy(() -> service.analyze(
-            "demo-project", file, "음성 회의록", "2026-07-24", "정기회의", "audio", List.of("김민준"), null
-        )).isInstanceOf(IllegalArgumentException.class);
+        assertThat(requestCaptor.getValue().text()).isEmpty();
+        assertThat(requestCaptor.getValue().source_type()).isEqualTo("audio");
     }
 
     @Test

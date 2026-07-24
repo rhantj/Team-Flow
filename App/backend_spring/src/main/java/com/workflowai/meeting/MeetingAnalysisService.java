@@ -63,7 +63,6 @@ public class MeetingAnalysisService {
     private final ProjectRepository projectRepository;
     private final RagIngestService ragIngestService;
     private final MeetingAnalysisPersistence meetingAnalysisPersistence;
-    private final FastApiMeetingClient fastApiMeetingClient;
     private final String uploadsDir;
 
     public MeetingAnalysisService(
@@ -81,7 +80,6 @@ public class MeetingAnalysisService {
         ProjectRepository projectRepository,
         RagIngestService ragIngestService,
         MeetingAnalysisPersistence meetingAnalysisPersistence,
-        FastApiMeetingClient fastApiMeetingClient,
         @Value("${workflow.uploads.dir}") String uploadsDir
     ) {
         this.meetingAnalysisJobPublisher = meetingAnalysisJobPublisher;
@@ -98,7 +96,6 @@ public class MeetingAnalysisService {
         this.projectRepository = projectRepository;
         this.ragIngestService = ragIngestService;
         this.meetingAnalysisPersistence = meetingAnalysisPersistence;
-        this.fastApiMeetingClient = fastApiMeetingClient;
         this.uploadsDir = uploadsDir;
     }
 
@@ -122,7 +119,10 @@ public class MeetingAnalysisService {
         }
 
         String fileName = file == null ? null : file.getOriginalFilename();
-        String text = extractText(file);
+        // 음성 파일은 STT에 수 초~수십 초가 걸려 업로드 요청 안에서 동기 처리하면 타임아웃 위험이 크다.
+        // 여기서는 텍스트를 비워두고, 실제 추출은 비동기 분석 큐(MeetingAnalysisRunner)에서 수행한다.
+        boolean isAudioUpload = fileName != null && isAudioFile(fileName.toLowerCase());
+        String text = isAudioUpload ? "" : extractText(file);
         String resolvedTitle = defaultString(title, "회의록 AI 분석 회의");
         String resolvedDate = defaultString(meetingDate, LocalDate.now().toString());
         String resolvedSourceType = defaultString(sourceType, "document");
@@ -945,9 +945,6 @@ public class MeetingAnalysisService {
         if (name.endsWith(".pdf") || contentType.equals("application/pdf")) {
             return extractPdfText(file);
         }
-        if (isAudioFile(name)) {
-            return extractAudioText(file);
-        }
         if (!textLike) {
             return "업로드 파일명: " + file.getOriginalFilename() + ". 바이너리 문서는 FastAPI 문서 파서 또는 STT 단계에서 텍스트 추출 예정.";
         }
@@ -958,28 +955,9 @@ public class MeetingAnalysisService {
         }
     }
 
+    /** 음성 파일은 analyze()에서 STT를 건너뛰고 비동기 큐(MeetingAnalysisRunner)로 넘기므로 extractText()가 호출되지 않는다. */
     private boolean isAudioFile(String lowerCaseFileName) {
         return AUDIO_FILE_EXTENSIONS.stream().anyMatch(lowerCaseFileName::endsWith);
-    }
-
-    private String extractAudioText(MultipartFile file) {
-        byte[] bytes;
-        try {
-            bytes = file.getBytes();
-        } catch (IOException e) {
-            throw new IllegalArgumentException("음성 회의록 파일을 읽을 수 없습니다.");
-        }
-        String text;
-        try {
-            text = fastApiMeetingClient.transcribeAudio(bytes, file.getOriginalFilename());
-        } catch (Exception e) {
-            log.warn("음성 회의록 STT 실패: fileName={}", file.getOriginalFilename(), e);
-            throw new IllegalArgumentException("음성 파일 분석에 실패했습니다. 잠시 후 다시 시도해주세요.");
-        }
-        if (text == null || text.isBlank()) {
-            throw new IllegalArgumentException("음성 파일에서 텍스트를 추출하지 못했습니다.");
-        }
-        return text;
     }
 
     private String extractTextFromStoredFile(Meeting meeting) {
