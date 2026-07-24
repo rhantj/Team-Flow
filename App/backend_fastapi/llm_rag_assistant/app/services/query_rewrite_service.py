@@ -27,6 +27,11 @@ _SYSTEM_PROMPT = (
 # 캐시가 사실상 동작하지 않는다.
 _REWRITE_TEMPERATURE = 0.1
 
+# "독립적인 한 문장"을 벗어난 비정상 출력(모델이 대화 기록을 그대로 반복하거나 여러 문장을
+# 늘어놓는 경우)이 그대로 effective_question이 되어 임베딩·생성 단계로 흘러가지 않도록 상한을
+# 둔다. 실제 질문은 이보다 훨씬 짧으므로 충분히 넉넉한 값이다.
+_MAX_REWRITTEN_QUESTION_LENGTH = 500
+
 _ROLE_LABELS = {"user": "사용자", "assistant": "어시스턴트"}
 
 
@@ -61,10 +66,15 @@ async def rewrite_question(history: list[dict], question: str) -> str:
         )
         rewritten = (response.content or "").strip()
     except Exception:
-        logger.warning("질문 재작성 실패, 원문 질문으로 검색합니다.")
+        # 원문 폴백으로 서비스는 계속 응답하되, 원인(설정 오류·타입 오류 등 우리 쪽 버그 포함)을
+        # 로그에 남겨야 조용히 매번 폴백만 타는 상태를 운영에서 알아챌 수 있다.
+        logger.warning("질문 재작성 실패, 원문 질문으로 검색합니다.", exc_info=True)
         return question
 
     if not rewritten:
         logger.warning("질문 재작성 결과가 비어 있어 원문 질문으로 검색합니다.")
+        return question
+    if len(rewritten) > _MAX_REWRITTEN_QUESTION_LENGTH:
+        logger.warning("질문 재작성 결과가 비정상적으로 길어 원문 질문으로 검색합니다.")
         return question
     return rewritten

@@ -116,6 +116,46 @@ async def test_falls_back_when_model_returns_blank(bad_output: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_falls_back_when_model_output_is_abnormally_long() -> None:
+    """비정상적으로 긴 출력(대화 기록 반복 등)이 그대로 임베딩·생성으로 흘러가지 않도록
+    상한을 넘기면 원문 질문으로 폴백한다."""
+    model = _mock_chat_model("가" * 501)
+    endpoint_patch, chat_patch = _patched(model)
+
+    with endpoint_patch, chat_patch:
+        result = await rewrite_question(_HISTORY, "그 업무는 언제까지야?")
+
+    assert result == "그 업무는 언제까지야?"
+
+
+@pytest.mark.asyncio
+async def test_accepts_rewritten_question_at_length_limit() -> None:
+    model = _mock_chat_model("가" * 500)
+    endpoint_patch, chat_patch = _patched(model)
+
+    with endpoint_patch, chat_patch:
+        result = await rewrite_question(_HISTORY, "그 업무는 언제까지야?")
+
+    assert result == "가" * 500
+
+
+@pytest.mark.asyncio
+async def test_logs_exception_details_when_rewrite_fails() -> None:
+    """AttributeError 같은 우리 쪽 버그가 로그 없이 조용히 원문 폴백에 묻히면 운영에서
+    후속 질문 재작성이 매번 실패하고 있다는 걸 알아챌 방법이 없다."""
+    model = MagicMock()
+    model.ainvoke = AsyncMock(side_effect=RuntimeError("HF 응답 실패"))
+    endpoint_patch, chat_patch = _patched(model)
+
+    with endpoint_patch, chat_patch, patch(
+        "llm_rag_assistant.app.services.query_rewrite_service.logger"
+    ) as mock_logger:
+        await rewrite_question(_HISTORY, "그 업무는 언제까지야?")
+
+    assert mock_logger.warning.call_args.kwargs.get("exc_info") is True
+
+
+@pytest.mark.asyncio
 async def test_strips_surrounding_whitespace_from_rewritten_question() -> None:
     model = _mock_chat_model("  로그인 API 구현 업무의 마감일은?  \n")
     endpoint_patch, chat_patch = _patched(model)
