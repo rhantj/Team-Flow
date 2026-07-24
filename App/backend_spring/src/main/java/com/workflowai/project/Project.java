@@ -2,6 +2,8 @@ package com.workflowai.project;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -56,6 +58,10 @@ public class Project {
 
     @Column(name = "created_by")
     private Long createdBy;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "eval_status", nullable = false, length = 20)
+    private EvalStatus evalStatus = EvalStatus.PENDING;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -193,6 +199,10 @@ public class Project {
 
     public Long getCreatedBy() {
         return createdBy;
+    }
+
+    public EvalStatus getEvalStatus() {
+        return evalStatus;
     }
 
     public LocalDate getDeadline() {
