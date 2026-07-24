@@ -50,6 +50,14 @@ public class AssistantController {
     public ResponseEntity<ApiResponse<AssistantResponse>> command(
         @RequestBody AssistantCommandRequest request
     ) {
+        // 빈/공백/null 질문은 클라이언트 잘못이다. FastAPI로 넘기면 무의미한 LLM 호출을 태우거나,
+        // null이면 FastAPI가 422로 거부해 RestClientException → 503("일시 장애")으로 위장된다.
+        // rate limit 소모 전에 400으로 먼저 끊는다.
+        if (request.question() == null || request.question().isBlank()) {
+            return ResponseEntity.badRequest()
+                .body(ApiResponse.fail("INVALID_QUESTION", "질문을 입력해주세요."));
+        }
+
         if (!rateLimiter.tryAcquire(request.project_id())) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                 .body(ApiResponse.fail("RATE_LIMITED", "요청이 너무 많습니다. 잠시 후 다시 시도하세요."));

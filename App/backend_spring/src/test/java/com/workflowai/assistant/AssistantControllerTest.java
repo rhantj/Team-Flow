@@ -132,6 +132,33 @@ class AssistantControllerTest {
     }
 
     @Test
+    void rejectsBlankQuestionInsteadOfCallingLlm() throws Exception {
+        // 빈/공백 질문은 클라이언트 잘못이다. FastAPI로 넘기면 무의미한 LLM 호출을 태우거나
+        // (null이면) FastAPI 422 → RestClientException → 503으로 위장된다. 400으로 먼저 끊는다.
+        authenticateAs(5L);
+        String body = """
+            {"project_id":1,"question":"   ","history":[]}""";
+
+        mockMvc().perform(post("/api/v1/ai/assistant/command")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_QUESTION"));
+        verify(fastApiAssistantClient, org.mockito.Mockito.never()).command(any());
+    }
+
+    @Test
+    void rejectsNullQuestionAsBadRequestNot503() throws Exception {
+        authenticateAs(5L);
+        String body = """
+            {"project_id":1,"question":null,"history":[]}""";
+
+        mockMvc().perform(post("/api/v1/ai/assistant/command")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_QUESTION"));
+    }
+
+    @Test
     void returns503WhenFastApiCallFails() throws Exception {
         authenticateAs(5L);
         stubRole(5L, ProjectRole.MEMBER);
