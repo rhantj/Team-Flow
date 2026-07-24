@@ -1,6 +1,16 @@
 import type { RagSource } from "../types/chat";
 import { apiFetch } from "../../../global/api/apiClient";
 
+// 재작성 프롬프트에 실리는 대화 기록 상한. Spring RagController.MAX_HISTORY_MESSAGES와 같은 값이라야
+// 프론트에서 자른 크기가 서버 검증(초과 시 400 INVALID_HISTORY)에 걸리지 않는다.
+export const MAX_HISTORY_MESSAGES = 6;
+
+// 후속 질문 재작성에 필요한 최소 필드만. sources 등 부가 필드는 서버로 보내지 않는다.
+export interface RagHistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 // Spring 응답은 FastAPI 스키마를 그대로 통과시키므로 snake_case로 온다 (source_type 등).
 interface RawRagSource {
   source_type: "meeting" | "task" | "action_item";
@@ -19,10 +29,18 @@ interface RagQueryResult {
   sources: RagSource[];
 }
 
-export async function queryRag(projectId: number, question: string, signal?: AbortSignal): Promise<RagQueryResult> {
+export async function queryRag(
+  projectId: number,
+  question: string,
+  history: readonly RagHistoryMessage[] = [],
+  signal?: AbortSignal
+): Promise<RagQueryResult> {
+  const trimmedHistory = history
+    .slice(-MAX_HISTORY_MESSAGES)
+    .map(({ role, content }) => ({ role, content }));
   const data = await apiFetch<RawRagQueryResult>("/ai/rag/query", {
     method: "POST",
-    body: JSON.stringify({ project_id: projectId, question }),
+    body: JSON.stringify({ project_id: projectId, question, history: trimmedHistory }),
     signal,
   });
   return {

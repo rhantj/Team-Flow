@@ -29,11 +29,57 @@ describe("useRagQuery", () => {
     await waitFor(() => expect(result.current.status).toBe("success"));
     expect(apiFetch).toHaveBeenCalledWith("/ai/rag/query", {
       method: "POST",
-      body: JSON.stringify({ project_id: 1, question: "질문입니다" }),
+      body: JSON.stringify({ project_id: 1, question: "질문입니다", history: [] }),
       signal: expect.any(AbortSignal),
     });
     expect(result.current.answer?.content).toBe("테스트 답변");
     expect(result.current.answer?.sources).toHaveLength(1);
+  });
+
+  it("sends only the last 6 history messages and strips non-conversational fields", async () => {
+    vi.mocked(apiFetch).mockResolvedValue({ answer: "답변", sources: [] });
+
+    const history = Array.from({ length: 10 }, (_, i) => ({
+      role: i % 2 === 0 ? ("user" as const) : ("assistant" as const),
+      content: `메시지${i}`,
+      sources: [{ sourceType: "task" as const, sourceId: i, contentSnippet: "x", similarity: 0.5 }],
+    }));
+
+    const { result } = renderHook(() => useRagQuery());
+
+    act(() => {
+      result.current.ask(1, "그 업무는 언제까지야?", history);
+    });
+
+    await waitFor(() => expect(result.current.status).toBe("success"));
+
+    const sentBody = JSON.parse(vi.mocked(apiFetch).mock.calls[0][1]!.body as string);
+    expect(sentBody).toEqual({
+      project_id: 1,
+      question: "그 업무는 언제까지야?",
+      history: [
+        { role: "user", content: "메시지4" },
+        { role: "assistant", content: "메시지5" },
+        { role: "user", content: "메시지6" },
+        { role: "assistant", content: "메시지7" },
+        { role: "user", content: "메시지8" },
+        { role: "assistant", content: "메시지9" },
+      ],
+    });
+  });
+
+  it("sends an empty history array when there is no prior conversation", async () => {
+    vi.mocked(apiFetch).mockResolvedValue({ answer: "답변", sources: [] });
+
+    const { result } = renderHook(() => useRagQuery());
+
+    act(() => {
+      result.current.ask(1, "내 업무가 뭐야?", []);
+    });
+
+    await waitFor(() => expect(result.current.status).toBe("success"));
+    const sentBody = JSON.parse(vi.mocked(apiFetch).mock.calls[0][1]!.body as string);
+    expect(sentBody).toEqual({ project_id: 1, question: "내 업무가 뭐야?", history: [] });
   });
 
   it("sets error state when request fails", async () => {

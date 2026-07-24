@@ -43,6 +43,30 @@ def test_query_endpoint_returns_answer_with_sources() -> None:
     assert called_args[1] == 1
 
 
+def test_query_endpoint_forwards_history_to_service() -> None:
+    """멀티턴: 요청의 history가 answer_question까지 그대로 전달되고, 없어도 200이다."""
+    _override_pool()
+    fake_result = RagQueryResponse(answer="답변", sources=[])
+    history = [
+        {"role": "user", "content": "내 업무가 뭐야?"},
+        {"role": "assistant", "content": "로그인 API 구현 업무가 있습니다"},
+    ]
+    with patch(
+        "llm_rag_assistant.app.routers.chat_router.answer_question",
+        new=AsyncMock(return_value=fake_result),
+    ) as mock_answer:
+        client = TestClient(app)
+        response = client.post(
+            "/ai/rag/query",
+            json={"project_id": 1, "question": "그 업무는 언제까지야?", "history": history},
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    passed_history = mock_answer.await_args.kwargs["history"]
+    assert [{"role": m.role, "content": m.content} for m in passed_history] == history
+
+
 def test_query_endpoint_returns_503_when_connection_fails() -> None:
     _override_pool()
     with patch(
