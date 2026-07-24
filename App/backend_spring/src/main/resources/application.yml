@@ -44,30 +44,16 @@ spring:
     open-in-view: false
     database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:
+      # Flyway를 쓰지 않는다 — 스키마는 배포 전에 사람이 직접 psql로 ALTER TABLE을 실행해
+      # 반영한다(App/DEPLOY_OCI.md 8절 참고). validate는 그 수동 절차가 빠졌을 때 애플리케이션이
+      # 틀린 스키마로 조용히 기동하는 대신, 매핑과 실제 DB 컬럼이 다르면 기동 자체를 막아주는
+      # 마지막 안전판이다 — update로 바꾸지 말 것. update는 Hibernate가 실제 운영 DB에 대해
+      # 예측 불가능한 DDL을 자동 생성/실행할 수 있어(컬럼 삭제/타입 변경 오판단 등) 데이터
+      # 손실 위험이 있다.
       ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:validate}
     properties:
       hibernate:
         format_sql: true
-  flyway:
-    enabled: ${SPRING_FLYWAY_ENABLED:false}
-    # Flyway는 기본 비활성화다. 명시적으로 켠 기존 DB에서는 schema_history 부재로 기동 실패하지 않게 baseline을 기본 허용한다.
-    baseline-on-migrate: ${SPRING_FLYWAY_BASELINE_ON_MIGRATE:true}
-    # baseline-on-migrate=true만으로는 "기존 DB=최신 상태"가 보장되지 않는다 — baseline-version을
-    # 명시하지 않으면 Flyway 기본값(1)이 쓰이는데, db/migration에 이미 있는 V20260721_1은 그보다
-    # 버전이 높아 "아직 미적용"으로 간주돼 baseline 직후 실제로 실행돼 버린다. 그 SQL 자체는
-    # ADD COLUMN IF NOT EXISTS 등으로 idempotent하게 짜여 있지만, 검증되지 않은 운영 DB의 실제
-    # 상태(예: 같은 컬럼이 다른 타입/제약으로 이미 존재)와 충돌하면 기동 실패로 이어질 수 있다.
-    # baseline-version을 Flyway 도입 시점에 저장소에 있던 마이그레이션 버전으로 명시적으로
-    # 고정해, 그 이하 버전은 전부 "이미 처리된 이력"으로 취급하고 baseline 시점에 실행하지
-    # 않게 한다. 이 값은 한 번 정하면 그대로 영구 고정한다 — 절대 새 마이그레이션 버전으로
-    # 따라 올리면 안 된다. 새 마이그레이션은 이 고정값보다 버전이 높기만 하면, Flyway를 언제
-    # 켰든(오늘 막 켠 DB든 예전부터 켜져 있던 DB든) 정상적으로 한 번 적용된다 — baseline-version을
-    # 새 마이그레이션 버전으로 올려버리면 그 마이그레이션 자체가 "baseline 이하 = 이미 적용됨"으로
-    # 오분류돼 건너뛰어지고, 그 결과 스키마 누락과 애플리케이션 기동 실패(JPA validate 불일치)로
-    # 이어진다. FlywayBaselineStrategyTest가 이 두 시나리오(고정 baseline은 새 마이그레이션을
-    # 정상 적용, baseline을 새 버전으로 올리면 그 마이그레이션이 스킵됨)를 직접 검증한다.
-    baseline-version: ${SPRING_FLYWAY_BASELINE_VERSION:20260721_1}
-    locations: classpath:db/migration
 
 workflow:
   ai:

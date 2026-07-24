@@ -21,7 +21,11 @@ spring:
       initialization-fail-timeout: ${SPRING_DATASOURCE_INIT_FAIL_TIMEOUT:0}
   jpa:
     hibernate:
-      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:none}
+      # Flyway를 쓰지 않으므로(App/DEPLOY_OCI.md 8절 참고), 배포 전 수동 ALTER TABLE이 빠지면
+      # 앱이 틀린 스키마로 기동하는 대신 여기서 막혀야 한다 — update로 바꾸지 말 것(운영 DB에
+      # 예측 불가능한 DDL을 자동 실행해 데이터 손실 위험이 있다). base(application.yml)와
+      # 같은 기본값이지만, 운영 프로필에서 의도를 명확히 하기 위해 여기서도 명시한다.
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:validate}
 
 workflow:
   demo:

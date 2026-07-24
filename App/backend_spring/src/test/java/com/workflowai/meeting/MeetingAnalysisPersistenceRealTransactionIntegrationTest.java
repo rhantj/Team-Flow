@@ -38,8 +38,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Import(MeetingAnalysisPersistence.class)
 @TestPropertySource(properties = {
     "spring.jpa.hibernate.ddl-auto=create-drop",
-    "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect",
-    "spring.flyway.enabled=false"
+    "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect"
 })
 class MeetingAnalysisPersistenceRealTransactionIntegrationTest {
 

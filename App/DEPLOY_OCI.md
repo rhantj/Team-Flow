@@ -159,11 +159,12 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 첫 빌드는 2 OCPU에서 **10~20분** 걸린다 (Gradle + pnpm + pip).
 
-## 8. DB 마이그레이션 적용 (신규 앱 기동 전 필수, 이후엔 Flyway가 대신한다)
+## 8. DB 마이그레이션 적용 (신규 앱 기동 전 필수, 이후 스키마 변경도 항상 수동 적용)
 
 compose는 `backend_spring/src/main/resources/db/init`만 자동 실행한다. `docs/db/migrations`는
-과거(Flyway 도입 전)에 쓰던 방식으로, 이 환경을 **아직 한 번도 001~010까지 못 따라잡았다면**
-아래 for 루프로 캐치업시켜야 한다. 이미 001~010이 적용된 환경(기존 운영 서버 재배포 등)이라면
+운영 DB에 스키마 변경을 수동으로 적용하는 방식으로, 이 환경을 **아직 한 번도 001~010까지
+못 따라잡았다면** 아래 for 루프로 캐치업시켜야 한다. 이미 001~010이 적용된 환경(기존 운영
+서버 재배포 등)이라면
 대부분은 이 루프를 다시 돌릴 필요가 없지만, 아래 두 파일만은 예외다 — 신규 Spring 이미지를
 기동하기 전에 실제 DB에 이 스키마가 있는지 **반드시 먼저 확인**할 것:
 
@@ -216,98 +217,40 @@ cd work-flow/App/backend_fastapi
 python -m llm_rag_assistant.scripts.reembed_document_chunks
 ```
 
-**이제부터 새 스키마 변경은 위 for 루프에 파일을 추가하는 대신 Flyway로 관리한다.** 이미 이
-저장소에 Flyway 의존성·설정은 준비돼 있었고, `docker-compose.yml`은 로컬 개발에서
-`SPRING_FLYWAY_ENABLED=true`를 기본값으로 켜둔다. 앱이 기동할 때마다
-`backend_spring/src/main/resources/db/migration/V<날짜>_<순번>__설명.sql` 형식의 파일을 찾아
-`flyway_schema_history` 테이블에 기록해가며 **baseline-version보다 버전이 높은 것만, 딱 한
-번씩** 적용한다.
+**이 저장소는 Flyway 등 자동 마이그레이션 도구를 쓰지 않는다.** 한때 Flyway를 도입했다가
+운영 활성화 여부(`true`/`false`)를 둘러싸고 설정·문서·커밋 메시지가 반복적으로 어긋나는
+문제가 계속 발생해, 자동화 자체를 걷어내고 "배포 전 사람이 직접 psql로 적용" 방식으로
+되돌렸다. 대신 `spring.jpa.hibernate.ddl-auto=validate`(`application.yml`/
+`application-prod.yml`)를 항상 켜둔다 — 이 수동 절차를 빠뜨리면 애플리케이션이 틀린
+스키마로 기동하는 대신, Hibernate가 매핑과 실제 DB 컬럼 불일치를 감지해 기동 자체를
+막아준다. **`ddl-auto=update`로 바꾸지 말 것** — Hibernate가 운영 DB에 대해 예측 불가능한
+DDL을 자동 생성/실행할 수 있어(컬럼 삭제·타입 변경 오판단 등) 데이터 손실 위험이 있다.
 
-> ⚠️ **`baseline-on-migrate=true`만으로는 "기존 DB에는 이후 마이그레이션만 적용"이 보장되지
-> 않는다.** baseline-version을 명시하지 않으면 Flyway 기본값(1)이 쓰이는데,
-> `db/migration/`에 이미 있는 `V20260721_1__auth_and_project_onboarding.sql`은 그보다 버전이
-> 높아서 "아직 미적용"으로 간주돼 baseline 직후 실제로 실행된다 — 그 SQL 자체는
-> `ADD COLUMN IF NOT EXISTS` 등으로 idempotent하게 짜여 있지만, 검증되지 않은 운영 DB의 실제
-> 상태와 우연히 충돌하면(예: 같은 이름의 컬럼이 다른 타입/제약으로 이미 있는 경우) 기동
-> 실패로 이어질 수 있다. 그래서 `application.yml`에 `spring.flyway.baseline-version`을 Flyway
-> 도입 시점에 저장소에 있던 마이그레이션 버전(`20260721_1`)으로 명시적으로 고정해뒀다 — 이
-> 값 이하 버전은 전부 "이미 처리된 이력"으로 취급되어 baseline 시점에 실행되지 않는다.
->
-> **이 값은 한 번 정하면 영구 고정이며, 새 마이그레이션을 추가할 때마다 따라 올리면 안
-> 된다.** 새 마이그레이션은 이 고정값보다 버전이 높기만 하면 되고, 그러면 Flyway를 오늘 막
-> 켠 DB든 예전부터 켜져 있던 DB든 상관없이 정상적으로 한 번 적용된다. 만약 baseline-version을
-> 실수로 새 마이그레이션의 버전으로 올려버리면, 그 마이그레이션이 "baseline 이하 = 이미
-> 적용됨"으로 오분류돼 조용히 건너뛰어지고, 결과적으로 스키마 누락과 애플리케이션 기동
-> 실패(JPA `ddl-auto=validate` 불일치)로 이어진다 — `FlywayBaselineStrategyTest`가 이 두
-> 시나리오(고정 baseline은 새 마이그레이션을 정상 적용 / baseline을 새 버전으로 올리면 그
-> 마이그레이션이 스킵됨)를 직접 재현해 검증한다.
+**새 스키마 변경 체크리스트 (필수, 배포 전에 순서대로):**
 
-`V20260721_1` 이후 실제로 두 개가 더 추가됐다: `V20260723_1__avatar_and_field_tags_columns.sql`
-(`users.field_tags`/`users.profile_image_path`)과
-`V20260723_2__profile_affiliation_and_github_columns.sql`(`users.affiliation`/
-`users.github_username`). 이 컬럼들은 그동안 db/init·docs/db/migrations로만 적용돼 왔고
-Flyway 마이그레이션에는 없었다 — db/init을 거치지 않았거나 docs/db/migrations의 관련 파일을
-아직 수동 적용 못 한 DB에서 Flyway만으로 baseline을 잡으면, Flyway는 그 부재를 알아채지
-못하고 "이미 완료"로 취급해버려 JPA `ddl-auto=validate`가 해당 컬럼을 찾지 못하고 기동에
-실패할 수 있었다. 이미 db/init이나 docs/db/migrations로 이 컬럼들이 있는 환경에서는
-`IF NOT EXISTS`/존재 확인으로 안전하게 스킵된다.
+1. `docs/db/migrations/`에 다음 번호로 `NNN_설명.sql` 파일을 추가한다(예:
+   `013_추가내용.sql`) — 운영(Supabase/OCI) DB에 실제로 적용한 이력을 남기는 곳이다.
+2. `backend_spring/src/main/resources/db/init/`에도 같은 내용의 파일을 다음 번호로 추가한다
+   (예: `11_추가내용.sql`) — 완전히 새로 만드는 DB(로컬 최초 기동, 신규 환경)의 유일한
+   스키마 소스이므로, 여기 반영하지 않으면 새 DB에서는 그 컬럼이 영원히 생기지 않는다.
+3. **코드를 머지/배포하기 전에** 1번 파일을 실제 운영 DB에 `psql`로 직접 실행한다:
+   ```bash
+   docker exec -i workflow-db psql -U postgres -d workflow < docs/db/migrations/013_추가내용.sql
+   ```
+   (Supabase라면 `supabase db push --linked` 또는 해당 SQL을 직접 실행.) **순서가 중요하다**
+   — 새 컬럼을 참조하는 코드가 먼저 배포되면 `ddl-auto=validate`가 기동을 막는다.
+4. 적용 후 `\d <테이블명>`으로 컬럼이 실제로 생겼는지 확인한 뒤에만 코드를 배포한다.
 
-> 📌 **아래 검증 절차의 파일명은 이 문서를 쓴 시점 기준이다 — 항상 최신 상태와 대조할
-> 것.** `db/migration/`에 파일이 추가될 때마다 이 문서를 일일이 갱신하는 걸 잊을 수 있으니,
-> 검증할 때는 이 문서에 적힌 특정 파일명만 믿지 말고 반드시
-> `ls backend_spring/src/main/resources/db/migration/`로 **그 시점의 실제 파일 목록**을
-> 확인해서, `flyway_schema_history`에 그 목록 전부가 `SUCCESS`로 남아있는지 대조할 것.
-
-> ⚠️ 이 저장소의 base 스키마(`01_base_schema.sql`/`001_...`가 만드는 `users`/`projects` 등
-> 테이블 자체)는 아직 Flyway 마이그레이션으로 옮겨지지 않았다. 즉 Flyway는 여전히 "테이블은
-> 이미 있다"고 가정하고 컬럼만 추가/보정한다 — db/init도 docs/db/migrations도 전혀 거치지
-> 않은 완전히 빈 DB에 Flyway만으로 처음부터 스키마를 만들 수는 없다. 모든 환경은 반드시
-> db/init(로컬/OCI compose) 또는 docs/db/migrations 001~010(기존 운영 DB) 중 하나로 base
-> 테이블을 먼저 갖춘 뒤에 Flyway를 켤 것.
-
-> 🚨 **`.github/workflows/deploy-oci.yml`의 스키마 사전검사는 마이그레이션 009/010
-> (`rag_assignee_sync_failures` 테이블 / `meetings.analysis_job_id` 컬럼)만 확인한다.** 그
-> 이후 Flyway로만 추가된 컬럼(`users.field_tags`/`profile_image_path`/`affiliation`/
-> `github_username`/`terms_agreed_at` 등, `db/migration/V20260723_*`)은 이 사전검사가 전혀
-> 확인하지 않는다. 즉 이 컬럼들이 아직 없는 기존 운영 DB에 (Flyway를 켠 채) 새 백엔드를
-> 배포하면 자동 사전검사는 통과하지만, 컨테이너 교체 직후 JPA `ddl-auto=validate`가 컬럼
-> 부재로 기동에 실패하고 자동 롤백까지 이어질 수 있다. **자동 사전검사 통과를 "스키마가
-> 준비됐다"는 신호로 믿지 말 것** — 아래 절차로 직접 검증해야 한다.
-
-**운영(OCI) DB에서 최초로 켜기 전 검증 절차 (필수):** `docker-compose.prod.yml`은
-`SPRING_FLYWAY_ENABLED`를 다시 기본 `false`로 되돌려서, 로컬에서 기본으로 켜지는 것과 달리
-운영에서는 자동으로 켜지지 않는다. 아래를 거친 뒤에만 `.env`에 `SPRING_FLYWAY_ENABLED=true`를
-추가해 명시적으로 켤 것.
-
-1. `ls backend_spring/src/main/resources/db/migration/`로 이 시점에 실제로 존재하는
-   마이그레이션 파일 전체 목록을 뽑고, 그중 **baseline-version(현재 `20260721_1`)보다
-   버전이 높은 파일만** 따로 적어둔다 — `V20260721_1` 자신은 baseline 대상이라 "적용"되는
-   게 아니라 baseline 행 하나로만 기록되므로, 이 목록에서는 제외한다.
-2. 운영 DB의 최근 스냅샷(또는 동등한 복제본)에 로컬/스테이징에서 `SPRING_FLYWAY_ENABLED=true`로
-   앱을 한 번 기동해본다.
-3. 시작 로그에서 Flyway가 `Successfully baselined schema with version: 20260721_1`을 남기고
-   (`V20260721_1`은 여기서만 언급되고 별도의 `Successfully applied` 로그는 남기지 않는다),
-   그 뒤에 1번에서 적어둔 baseline 초과 버전 파일들이 **전부** `Successfully applied`로
-   적용되는지 확인한다 — 그 DB에 해당 컬럼들이 없었다는 뜻이니 정상이다. 1번 목록에 없는
-   마이그레이션이 적용된다면 원인을 먼저 파악할 것.
-4. `SELECT * FROM flyway_schema_history ORDER BY installed_rank;`로 baseline 행(version
-   `20260721_1`, type `BASELINE`) 정확히 하나와, 1번에서 적어둔 파일들이 type은 `SQL`로, success는 `true`(또는 `1`)로
-   기록돼 있는지, 그 외 예상 못한 행이 없는지 눈으로 확인한다.
-5. `\d users`(또는 동등한 방법)로 `field_tags`/`profile_image_path`/`affiliation`/
-   `github_username`/`terms_agreed_at` 컬럼이 실제로 생겼는지 확인한다.
-6. 위 확인이 끝난 뒤에만 실제 운영 `.env`에 `SPRING_FLYWAY_ENABLED=true`를 추가하고
-   재배포한다.
-
-새 스키마 변경이 필요하면 `docs/db/migrations`에 번호를 추가하지 말고 `db/migration/`에
-`V20260723_1__avatar_and_field_tags_columns.sql`처럼 `V<날짜>_<순번>__설명.sql` 형식으로
-추가할 것 — `baseline-version`은 건드리지 않는다.
+파괴적 변경(컬럼/테이블 삭제, 타입 변경 등)은 8-1절의 `011_drop_legacy_field.sql` 패턴처럼
+RENAME으로 먼저 보관하고, 실제 DROP은 최소 한 배포 주기 이상 문제 없음을 확인한 뒤 별도로
+실행할 것 — 무중단 배포 중에는 구버전 인스턴스가 아직 옛 컬럼명을 참조하고 있을 수 있다.
 
 ## 8-1. (보류) 레거시 users.field 정리
 
 > [!WARNING]
 > **하위 호환성 유지 및 롤백 안전성을 위해 이번 배포 주기에서는 `011_drop_legacy_field.sql`을 실행하지 않고 보류합니다.**
 > 새 애플리케이션 코드는 `field_tags`만 사용하고 레거시 `field` 컬럼은 전혀 참조하지 않지만, 배포 도중 구버전 인스턴스가 기동되어 있거나 장애 시 구버전으로 즉시 롤백해야 하는 경우 `field` 컬럼이 없으면 구버전 인스턴스가 오작동하여 전체 서비스 장애로 이어집니다.
-> 두 컬럼(`field`, `field_tags`)이 DB에 공존하는 상태가 가장 안전하며, 신규 버전 배포 완료 및 안정성이 검증된 다음 릴리스 주기에서 Flyway 마이그레이션 등을 통해 자동 정리할 예정입니다.
+> 두 컬럼(`field`, `field_tags`)이 DB에 공존하는 상태가 가장 안전하며, 신규 버전 배포 완료 및 안정성이 검증된 다음 릴리스 주기에서 `011_drop_legacy_field.sql`의 주석을 해제해 수동으로 정리할 예정입니다.
 > **이중 안전장치:** "실행하지 않는다"는 운영 절차뿐 아니라, `011_drop_legacy_field.sql` 자체에서도
 > `ALTER TABLE ... RENAME/DROP` 구문을 주석 처리해뒀다 — 누군가 실수로 이 파일을 돌려도 아무
 > 컬럼도 바뀌지 않는 안전한 no-op이다. 모든 인스턴스가 `field_tags` 기반 코드로 교체됐다고

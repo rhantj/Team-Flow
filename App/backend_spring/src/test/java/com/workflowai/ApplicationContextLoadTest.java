@@ -50,7 +50,6 @@ class ApplicationContextLoadTest {
         // create-drop이 아니라 create인 이유: 컨테이너가 Spring 컨텍스트보다 먼저 종료되므로
         // 종료 시 drop DDL이 연결을 얻지 못해 30초를 대기하다 실패한다. 컨테이너는 어차피 폐기된다.
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "create");
-        registry.add("spring.flyway.enabled", () -> "false");
 
         // 기본값이 없는 필수 프로퍼티. 값이 없으면 플레이스홀더 해석 단계에서 기동이 실패한다.
         registry.add("workflow.jwt.secret", () -> "test-secret-key-for-context-load-test-32bytes-minimum-length");

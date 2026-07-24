@@ -52,10 +52,6 @@ services:
       # nginx가 TLS를 종료하므로 Spring은 평문으로 받는다. 이 설정이 있어야
       # X-Forwarded-Proto를 보고 리다이렉트 URL을 https로 만든다.
       SERVER_FORWARD_HEADERS_STRATEGY: framework
-      # base(docker-compose.yml)는 로컬 개발 편의를 위해 기본 true인데, 운영 DB에서는 검증
-      # 전까지 자동으로 켜지면 안 되므로 여기서 다시 기본 false로 되돌린다. DEPLOY_OCI.md
-      # 8절의 검증 절차를 마친 뒤에만 .env에서 SPRING_FLYWAY_ENABLED=true로 명시적으로 켤 것.
-      SPRING_FLYWAY_ENABLED: ${SPRING_FLYWAY_ENABLED:-false}
       REDIS_USERNAME: spring
       REDIS_PASSWORD: ${REDIS_SPRING_PASSWORD:?REDIS_SPRING_PASSWORD is required}
     ports: !override

@@ -39,7 +39,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @TestPropertySource(properties = {
     "spring.jpa.hibernate.ddl-auto=create-drop",
     "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect",
-    "spring.flyway.enabled=false",
     "workflow.uploads.dir=/tmp/workflow-analysis-service-after-commit-it"
 })
 class MeetingAnalysisServiceAfterCommitFailureIntegrationTest {

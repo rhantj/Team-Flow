@@ -26,8 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @TestPropertySource(properties = {
     "spring.jpa.hibernate.ddl-auto=create-drop",
-    "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect",
-    "spring.flyway.enabled=false"
+    "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect"
 })
 class UserRepositoryAvatarUpdateIntegrationTest {
 
