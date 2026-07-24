@@ -63,7 +63,10 @@ async def query(request: RagQueryRequest, pool=Depends(get_pool)) -> RagQueryRes
     #     요청자가 해당 프로젝트 멤버가 아니면 컨트롤러 진입 전에 403으로 차단한다.
     #   - user_id: RagController.query()가 요청 바디 값을 무시하고 CurrentUser.id()(인증 세션)로 덮어써서 보낸다.
     try:
-        return await answer_question(pool, request.project_id, request.question, request.user_id)
+        history = [{"role": m.role, "content": m.content} for m in request.history]
+        return await answer_question(
+            pool, request.project_id, request.question, request.user_id, history=history
+        )
     except (aiohttp.ClientError, RequestsHTTPError) as exc:
         raise HTTPException(status_code=503, detail={"error": "llm_unavailable"}) from exc
     except RagConfigurationError as exc:

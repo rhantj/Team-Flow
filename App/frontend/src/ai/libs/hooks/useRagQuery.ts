@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { queryRag } from "../utils/ragApi";
+import { queryRag, type RagHistoryMessage } from "../utils/ragApi";
 import type { RagSource } from "../types/chat";
 
 type RagQueryStatus = "idle" | "loading" | "error" | "success";
@@ -15,14 +15,18 @@ export function useRagQuery() {
   const [error, setError] = useState<string | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
 
-  const ask = useCallback(async (projectId: number, question: string) => {
+  const ask = useCallback(async (
+    projectId: number,
+    question: string,
+    history: readonly RagHistoryMessage[] = [],
+  ) => {
     controllerRef.current?.abort();
     const controller = new AbortController();
     controllerRef.current = controller;
     setStatus("loading");
     setError(null);
     try {
-      const result = await queryRag(projectId, question, controller.signal);
+      const result = await queryRag(projectId, question, history, controller.signal);
       if (controller.signal.aborted) return;
       setAnswer({ content: result.answer, sources: result.sources });
       setStatus("success");

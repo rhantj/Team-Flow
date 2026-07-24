@@ -17,10 +17,18 @@ function buildSessionKey(userId: number | undefined, projectId: number | null): 
   return `${CHAT_SESSION_KEY_PREFIX}:${userId ?? "anon"}:${projectId ?? "none"}`;
 }
 
+// 타입 가드와 화면 라벨이 같은 목록을 보게 해서, 출처 종류가 늘 때 한쪽만 고쳐
+// 세션이 폐기되는 일을 막는다.
+const SOURCE_TYPE_LABELS: Record<RagSource["sourceType"], string> = {
+  meeting: "회의록",
+  task: "업무",
+  action_item: "액션아이템",
+};
+
 function isRagSource(value: unknown): value is RagSource {
   if (typeof value !== "object" || value === null) return false;
   const source = value as Record<string, unknown>;
-  if (source.sourceType !== "meeting" && source.sourceType !== "task") return false;
+  if (!SOURCE_TYPE_LABELS[source.sourceType as RagSource["sourceType"]]) return false;
   if (typeof source.sourceId !== "number") return false;
   if (typeof source.contentSnippet !== "string") return false;
   if (typeof source.similarity !== "number") return false;
@@ -144,7 +152,10 @@ export function AIAssistant({ onClose, pendingQuestion }: AIAssistantProps) {
       return;
     }
     askedForKeyRef.current = sessionKey;
-    ask(currentProjectId, text);
+    // 후속 질문 재작성용 대화 기록. buildChatInit이 만든 첫 인사말(index 0)은 대화가 아니므로
+    // 제외하고, 방금 추가한 사용자 질문은 question으로 따로 넘어가므로 여기엔 포함하지 않는다
+    // (setMessages는 비동기라 messagesRef.current에는 아직 반영되지 않았다). 6개 상한은 queryRag가 건다.
+    ask(currentProjectId, text, messagesRef.current.slice(1));
     // 한글 등 IME 조합 완료 이벤트가 keydown 이후 뒤늦게 들어와 입력창을 다시 채우는 것을 피하기 위해
     // 조합 이벤트가 먼저 처리되도록 한 틱 미뤄서 비운다.
     setTimeout(() => setInput(""), 0);
@@ -203,7 +214,7 @@ export function AIAssistant({ onClose, pendingQuestion }: AIAssistantProps) {
                 <div className="flex flex-wrap gap-1.5 mt-1.5">
                   {m.sources.map((s, si) => (
                     <span key={si} className="text-[10px] px-2 py-0.5 rounded-full bg-secondary text-muted-foreground border border-border">
-                      출처: {s.sourceType === "meeting" ? "회의록" : "업무"} #{s.sourceId}
+                      출처: {SOURCE_TYPE_LABELS[s.sourceType]} #{s.sourceId}
                     </span>
                   ))}
                 </div>
