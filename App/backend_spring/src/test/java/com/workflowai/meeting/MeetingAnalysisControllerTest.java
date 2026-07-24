@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
+import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -149,7 +150,7 @@ class MeetingAnalysisControllerTest {
         when(meetingAnalysisService.createVersion(eq("demo-project"), eq("42"), any()))
             .thenThrow(new DataIntegrityViolationException(
                 "insert failed",
-                new RuntimeException("duplicate key value violates unique constraint \"uq_meetings_original_id_title\"")
+                new ConstraintViolationException("constraint violation", null, "uq_meetings_original_id_title")
             ));
         MeetingAnalysisController controller = new MeetingAnalysisController(meetingAnalysisService);
         MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
@@ -166,8 +167,22 @@ class MeetingAnalysisControllerTest {
         when(meetingAnalysisService.createVersion(eq("demo-project"), eq("42"), any()))
             .thenThrow(new DataIntegrityViolationException(
                 "insert failed",
-                new RuntimeException("insert or update on table \"meetings\" violates foreign key constraint \"fk_meetings_edited_by\"")
+                new ConstraintViolationException("constraint violation", null, "fk_meetings_edited_by")
             ));
+        MeetingAnalysisController controller = new MeetingAnalysisController(meetingAnalysisService);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        assertThatThrownBy(() -> mockMvc.perform(post("/api/v1/projects/demo-project/meetings/42/versions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"transcript\":\"내용\",\"triggerAnalysis\":false}")))
+            .hasCauseInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void createVersionPropagatesDataIntegrityViolationWithoutConstraintName() {
+        // 드라이버가 제약 이름을 구조적으로 노출하지 못하는 경우, 안전하게 제목 충돌이 아닌 것으로 처리한다.
+        when(meetingAnalysisService.createVersion(eq("demo-project"), eq("42"), any()))
+            .thenThrow(new DataIntegrityViolationException("insert failed", new RuntimeException("unknown db error")));
         MeetingAnalysisController controller = new MeetingAnalysisController(meetingAnalysisService);
         MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
 

@@ -840,7 +840,6 @@ class MeetingAnalysisServiceTest {
         ReflectionTestUtils.setField(original, "id", 5L);
         when(meetingRepository.findByIdAndProjectId(5L, 1L)).thenReturn(Optional.of(original));
         when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(original));
-        when(meetingRepository.countByOriginalMeetingId(5L)).thenReturn(0L);
         when(meetingRepository.save(any(Meeting.class))).thenAnswer(inv -> inv.getArgument(0));
         when(projectMemberRepository.findByProjectIdAndRole(1L, ProjectRole.LEADER))
             .thenReturn(Optional.of(new ProjectMember(1L, 99L, ProjectRole.LEADER)));
@@ -866,7 +865,7 @@ class MeetingAnalysisServiceTest {
         ReflectionTestUtils.setField(original, "id", 5L);
         when(meetingRepository.findByIdAndProjectId(5L, 1L)).thenReturn(Optional.of(original));
         when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(original));
-        when(meetingRepository.countByOriginalMeetingId(5L)).thenReturn(1L);
+        when(meetingRepository.existsByOriginalMeetingIdAndTitle(5L, "정기회의_수정본")).thenReturn(true);
         when(meetingRepository.save(any(Meeting.class))).thenAnswer(inv -> inv.getArgument(0));
         MeetingAnalysisService service = newService();
 
@@ -877,6 +876,29 @@ class MeetingAnalysisServiceTest {
         Meeting savedVersion = captor.getAllValues().stream()
             .filter(m -> m.getOriginalMeetingId() != null).findFirst().orElseThrow();
         assertThat(savedVersion.getTitle()).isEqualTo("정기회의_수정본2");
+    }
+
+    @Test
+    void createVersionSkipsExistingTitleWhenGapExistsFromDeletedVersion() {
+        // "_수정본"이 삭제되고 "_수정본2"만 남은 상황(과거 count 기반이면 count=1이라 "_수정본2"를
+        // 다시 생성해 유니크 인덱스와 충돌한다). 존재 확인 루프는 실제로 비어 있는 "_수정본" 자리를 찾아낸다.
+        mockMember(1L);
+        Meeting original = new Meeting(1L, "정기회의", "document", null, "completed", LocalDate.now(), "정기회의", "a.txt", 10L, 10L);
+        ReflectionTestUtils.setField(original, "id", 5L);
+        when(meetingRepository.findByIdAndProjectId(5L, 1L)).thenReturn(Optional.of(original));
+        when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(original));
+        when(meetingRepository.existsByOriginalMeetingIdAndTitle(5L, "정기회의_수정본")).thenReturn(false);
+        when(meetingRepository.save(any(Meeting.class))).thenAnswer(inv -> inv.getArgument(0));
+        MeetingAnalysisService service = newService();
+
+        service.createVersion("demo-project", "5", new MeetingVersionRequest("본문", false));
+
+        verify(meetingRepository, never()).existsByOriginalMeetingIdAndTitle(5L, "정기회의_수정본2");
+        ArgumentCaptor<Meeting> captor = ArgumentCaptor.forClass(Meeting.class);
+        verify(meetingRepository, atLeastOnce()).save(captor.capture());
+        Meeting savedVersion = captor.getAllValues().stream()
+            .filter(m -> m.getOriginalMeetingId() != null).findFirst().orElseThrow();
+        assertThat(savedVersion.getTitle()).isEqualTo("정기회의_수정본");
     }
 
     @Test
@@ -892,14 +914,15 @@ class MeetingAnalysisServiceTest {
 
         when(meetingRepository.findByIdAndProjectId(6L, 1L)).thenReturn(Optional.of(pathMeeting));
         when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(rootOriginal));
-        when(meetingRepository.countByOriginalMeetingId(5L)).thenReturn(2L);
+        when(meetingRepository.existsByOriginalMeetingIdAndTitle(5L, "정기회의_수정본")).thenReturn(true);
+        when(meetingRepository.existsByOriginalMeetingIdAndTitle(5L, "정기회의_수정본2")).thenReturn(true);
         when(meetingRepository.save(any(Meeting.class))).thenAnswer(inv -> inv.getArgument(0));
         MeetingAnalysisService service = newService();
 
         service.createVersion("demo-project", "6", new MeetingVersionRequest("본문", false));
 
-        verify(meetingRepository).countByOriginalMeetingId(5L);
-        verify(meetingRepository, never()).countByOriginalMeetingId(6L);
+        verify(meetingRepository, atLeastOnce()).existsByOriginalMeetingIdAndTitle(eq(5L), any());
+        verify(meetingRepository, never()).existsByOriginalMeetingIdAndTitle(eq(6L), any());
         ArgumentCaptor<Meeting> captor = ArgumentCaptor.forClass(Meeting.class);
         verify(meetingRepository, atLeastOnce()).save(captor.capture());
         Meeting savedVersion = captor.getAllValues().stream()
@@ -915,7 +938,6 @@ class MeetingAnalysisServiceTest {
         ReflectionTestUtils.setField(original, "id", 5L);
         when(meetingRepository.findByIdAndProjectId(5L, 1L)).thenReturn(Optional.of(original));
         when(meetingRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(original));
-        when(meetingRepository.countByOriginalMeetingId(5L)).thenReturn(0L);
         when(meetingRepository.save(any(Meeting.class))).thenAnswer(inv -> inv.getArgument(0));
         MeetingAnalysisService service = newService();
 

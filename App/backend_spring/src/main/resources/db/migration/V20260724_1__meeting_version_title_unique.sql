@@ -4,17 +4,36 @@
 
 -- 유니크 인덱스 생성이 기존 중복 데이터 때문에 배포 자체를 실패시키지 않도록,
 -- 인덱스를 걸기 전에 이미 존재하는 중복 제목을 행별로 유일하게 보정한다.
--- (데이터를 지우지 않고 제목 뒤에 회의록 id를 붙여서만 구분한다.)
-WITH duplicates AS (
-    SELECT id,
-           ROW_NUMBER() OVER (PARTITION BY original_meeting_id, title ORDER BY id) AS rn
-    FROM meetings
-    WHERE original_meeting_id IS NOT NULL
-)
-UPDATE meetings m
-SET title = m.title || '_' || m.id
-FROM duplicates d
-WHERE m.id = d.id AND d.rn > 1;
+-- 단순히 title에 id를 붙이면 그 결과 문자열이 우연히 다른 행의 제목과 같을 수 있으므로,
+-- 후보 제목이 (original_meeting_id, title) 기준으로 실제 비어 있는지 확인하며 순차 증가시킨다.
+-- 데이터는 지우지 않고 제목만 보정한다.
+DO $$
+DECLARE
+    dup RECORD;
+    candidate TEXT;
+    dup_suffix INT;
+BEGIN
+    FOR dup IN
+        SELECT id, original_meeting_id, title,
+               ROW_NUMBER() OVER (PARTITION BY original_meeting_id, title ORDER BY id) AS rn
+        FROM meetings
+        WHERE original_meeting_id IS NOT NULL
+    LOOP
+        IF dup.rn > 1 THEN
+            dup_suffix := 1;
+            LOOP
+                candidate := dup.title || '_dup' || dup_suffix;
+                EXIT WHEN NOT EXISTS (
+                    SELECT 1 FROM meetings
+                    WHERE original_meeting_id = dup.original_meeting_id
+                      AND title = candidate
+                );
+                dup_suffix := dup_suffix + 1;
+            END LOOP;
+            UPDATE meetings SET title = candidate WHERE id = dup.id;
+        END IF;
+    END LOOP;
+END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_meetings_original_id_title
     ON meetings (original_meeting_id, title)

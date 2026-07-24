@@ -530,17 +530,16 @@ public class MeetingAnalysisService {
         Meeting original = requireProjectMeeting(projectId, meetingId);
         if (original == null) return null;
 
-        // 경로 파라미터로 받은 회의록이 이미 버전(originalMeetingId != null)이면 최초 원본을 기준으로 제목/카운트를 계산한다.
+        // 경로 파라미터로 받은 회의록이 이미 버전(originalMeetingId != null)이면 최초 원본을 기준으로 제목을 계산한다.
         // 루트를 비관적 락(FOR UPDATE)으로 조회해서, 같은 원본에 대한 동시 수정본 생성 요청을
-        // 트랜잭션 단위로 직렬화한다 — 그래야 count 기반 제목 접미사가 동시 요청에서 중복되지 않는다.
+        // 트랜잭션 단위로 직렬화한다.
         Long rootId = original.getOriginalMeetingId() != null ? original.getOriginalMeetingId() : original.getId();
         // 락 없이 계속 진행하면 동시성 보장이 깨지므로, 루트 조회 실패는 폴백하지 않고 즉시 실패시킨다.
         Meeting lockedRoot = meetingRepository.findByIdForUpdate(rootId)
             .orElseThrow(() -> new IllegalStateException("원본 회의록을 찾을 수 없습니다: " + rootId));
         String rootTitle = lockedRoot.getTitle();
 
-        long existingVersions = meetingRepository.countByOriginalMeetingId(rootId);
-        String versionTitle = rootTitle + (existingVersions == 0 ? "_수정본" : "_수정본" + (existingVersions + 1));
+        String versionTitle = nextAvailableVersionTitle(rootId, rootTitle);
 
         Long editorId = CurrentUser.id();
         Meeting version = meetingRepository.save(Meeting.newVersion(original, request.transcript(), editorId, versionTitle));
@@ -569,6 +568,18 @@ public class MeetingAnalysisService {
         meetingRepository.save(version);
         runAnalysisAfterCommit(version.getId(), aiRequest, jobId);
         return new MeetingVersionResponse(String.valueOf(version.getId()), "PROCESSING");
+    }
+
+    // count 기반 접미사는 중간 버전이 삭제돼 번호에 공백이 생기면 이미 존재하는 제목을 다시 만들어낼 수 있으므로,
+    // 루트 락으로 직렬화된 상태에서 실제로 존재하지 않는 제목을 찾을 때까지 순차 확인한다.
+    private String nextAvailableVersionTitle(Long rootId, String rootTitle) {
+        String candidate = rootTitle + "_수정본";
+        int suffix = 2;
+        while (meetingRepository.existsByOriginalMeetingIdAndTitle(rootId, candidate)) {
+            candidate = rootTitle + "_수정본" + suffix;
+            suffix++;
+        }
+        return candidate;
     }
 
     /** 수정본 저장/분석 시 수정한 본인 + 반대편(팀장 또는 원본 업로더)에게 알린다. */
