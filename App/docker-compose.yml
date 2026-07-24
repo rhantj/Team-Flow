@@ -28,8 +28,24 @@ services:
   redis:
     image: redis:7-alpine
     container_name: workflow-redis
+    command:
+      - redis-server
+      - --appendonly
+      - 'yes'
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-512mb}
+      - --maxmemory-policy
+      - noeviction
+      - --auto-aof-rewrite-percentage
+      - '50'
+      - --auto-aof-rewrite-min-size
+      - 16mb
     ports:
-      - '6379:6379'
+      - '127.0.0.1:${REDIS_HOST_PORT:-6379}:6379'
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
@@ -67,6 +83,8 @@ services:
       SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:-jdbc:postgresql://db:5432/workflow}
       SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-root}
+      SPRING_FLYWAY_ENABLED: ${SPRING_FLYWAY_ENABLED:-true}
+      SPRING_FLYWAY_BASELINE_VERSION: ${SPRING_FLYWAY_BASELINE_VERSION:-20260721.1}
       WORKFLOW_AI_FASTAPI_URL: http://backend-fastapi:8000
       RAG_INTERNAL_API_KEY: ${RAG_INTERNAL_API_KEY}
       JWT_SECRET: ${JWT_SECRET}
@@ -97,7 +115,12 @@ services:
       dockerfile: App/backend_fastapi/Dockerfile
     container_name: workflow-backend-fastapi
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      # 기본은 backend-spring과 동일하게 compose 안의 로컬 db 서비스에 연결한다.
+      # 컨테이너 안에서는 "localhost"가 컨테이너 자기 자신을 가리키므로, 로컬 개발용 .env에
+      # DATABASE_URL=postgresql://...@localhost:5432/workflow처럼 host 실행 기준 값을 넣어뒀다면
+      # ml_workload_score 등 FastAPI DB 조회가 전부 연결 실패로 죽는다(2026-07-24 실측).
+      # Supabase(원격)에 직접 연결하려면 .env의 DATABASE_URL 값으로 이 기본값을 덮어쓴다.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:root@db:5432/workflow}
       REDIS_URL: redis://redis:6379/0
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       # Spring(RagController) 외의 직접 호출로부터 /ai/rag/* 를 보호하는 서비스 간 공유 시크릿.
@@ -164,3 +187,4 @@ services:
 
 volumes:
   db-data:
+  redis-data:

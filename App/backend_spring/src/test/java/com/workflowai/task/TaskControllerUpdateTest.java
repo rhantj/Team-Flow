@@ -3,7 +3,6 @@ package com.workflowai.task;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -14,7 +13,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.workflowai.activity.ActivityService;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.NotificationService;
+import com.workflowai.project.Project;
 import com.workflowai.project.ProjectMemberRepository;
+import com.workflowai.project.ProjectRepository;
 import com.workflowai.rag.RagIngestService;
 import com.workflowai.security.UserPrincipal;
 import com.workflowai.user.UserRepository;
@@ -55,6 +56,9 @@ class TaskControllerUpdateTest {
     private ProjectMemberRepository projectMemberRepository;
 
     @Mock
+    private ProjectRepository projectRepository;
+
+    @Mock
     private RagIngestService ragIngestService;
 
     private MockMvc mockMvc;
@@ -64,7 +68,7 @@ class TaskControllerUpdateTest {
         mockMvc = MockMvcBuilders
             .standaloneSetup(new TaskController(
                 taskRepository, userRepository, demoDataService, activityService,
-                notificationService, projectMemberRepository, ragIngestService
+                notificationService, projectMemberRepository, projectRepository, ragIngestService
             ))
             .build();
         SecurityContextHolder.getContext().setAuthentication(
@@ -91,6 +95,8 @@ class TaskControllerUpdateTest {
     void updatesTaskFields() throws Exception {
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(anyLong())).thenReturn(Optional.of(existingTask()));
+        when(projectRepository.findById(1L))
+            .thenReturn(Optional.of(new Project("프로젝트", "team", LocalDate.of(2026, 8, 7), "")));
         when(taskRepository.save(any(Task.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         mockMvc.perform(patch("/api/v1/projects/demo-project/tasks/42")
@@ -183,10 +189,8 @@ class TaskControllerUpdateTest {
                 .content("{\"assigneeId\":\"5\"}"))
             .andExpect(status().isOk());
 
-        // existingTask()는 id를 명시적으로 설정하지 않는 픽스처라 getId()가 null이다
-        // (Task 생성자의 첫 인자는 projectId). 이 테스트는 task.getId() 값 자체가 아니라
-        // syncAssigneeBestEffort가 새 담당자(5L)와 함께 실제로 호출되는지만 검증한다.
-        verify(ragIngestService).syncAssigneeBestEffort(eq(1L), eq("task"), isNull(), eq(5L));
+        verify(ragIngestService).recordAssigneeSyncIntent(1L, "task", 42L, 5L);
+        verify(ragIngestService).syncAssigneeBestEffort(1L, "task", 42L, 5L);
     }
 
     @Test
@@ -202,6 +206,7 @@ class TaskControllerUpdateTest {
 
         // existingTask()의 담당자는 3L
         verify(notificationService).notify(eq(3L), eq("TASK_UPDATED"), any(), any(), eq("task"), any());
+        verify(ragIngestService).ingestBestEffort(1L, "task", null, "새 제목 - 원래 설명", 3L);
     }
 
     @Test

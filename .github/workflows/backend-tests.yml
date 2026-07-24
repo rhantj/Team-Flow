@@ -1,0 +1,47 @@
+name: Backend tests
+
+# main push가 곧바로 운영 배포로 이어지는데 그 앞에 테스트를 실행하는 CI가 없었다.
+# 테스트 45개가 레포에 있어도 아무도 실행하지 않아 방어선이 아니었고, 컨텍스트 기동
+# 실패가 운영에서야 드러났다(2026-07-23 장애). 머지 전에 잡는다.
+on:
+  pull_request:
+    paths:
+      - 'App/backend_spring/**'
+      - '.github/workflows/backend-tests.yml'
+  push:
+    branches: [dev, main]
+    paths:
+      - 'App/backend_spring/**'
+      - '.github/workflows/backend-tests.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: App/backend_spring
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Run tests
+        run: ./gradlew test --no-daemon
+
+      # ApplicationContextLoadTest는 Docker가 없으면 조용히 건너뛴다(로컬 개발 편의).
+      # CI에서까지 건너뛰면 방어선이 사라지므로, 실제로 실행됐는지 명시적으로 확인한다.
+      - name: Verify context load test actually ran
+        if: always()
+        run: python3 ci/verify-context-test-ran.py
+
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-report
+          path: App/backend_spring/build/reports/tests/test
+          retention-days: 7

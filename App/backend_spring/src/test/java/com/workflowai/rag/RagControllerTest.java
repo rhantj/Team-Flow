@@ -57,12 +57,130 @@ class RagControllerTest {
         RagController controller = new RagController(fastApiRagClient, rateLimiter);
         MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
 
-        String body = objectMapper.writeValueAsString(new RagQueryRequest(1L, "질문", null));
+        String body = objectMapper.writeValueAsString(new RagQueryRequest(1L, "질문", null, null));
 
         mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.answer").value("답변입니다"))
             .andExpect(jsonPath("$.data.sources[0].source_type").value("meeting"));
+    }
+
+    @Test
+    void queryForwardsHistoryToFastApi() throws Exception {
+        authenticateAs(5L);
+        when(fastApiRagClient.query(any(RagQueryRequest.class)))
+            .thenReturn(new RagQueryResponse("답변", List.of()));
+
+        RagController controller = new RagController(fastApiRagClient, rateLimiter);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        String body = """
+            {"project_id":1,"question":"그 업무는 언제까지야?","history":[
+              {"role":"user","content":"내 업무가 뭐야?"},
+              {"role":"assistant","content":"로그인 API 구현 업무가 있습니다"}
+            ]}""";
+
+        mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isOk());
+
+        ArgumentCaptor<RagQueryRequest> captor = ArgumentCaptor.forClass(RagQueryRequest.class);
+        verify(fastApiRagClient).query(captor.capture());
+        assertThat(captor.getValue().history()).hasSize(2);
+        assertThat(captor.getValue().history().get(0).role()).isEqualTo("user");
+    }
+
+    @Test
+    void queryRejectsHistoryExceedingMaxMessages() throws Exception {
+        authenticateAs(5L);
+        RagController controller = new RagController(fastApiRagClient, rateLimiter);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        StringBuilder msgs = new StringBuilder();
+        for (int i = 0; i < 7; i++) {
+            if (i > 0) msgs.append(",");
+            msgs.append("{\"role\":\"user\",\"content\":\"메시지").append(i).append("\"}");
+        }
+        String body = "{\"project_id\":1,\"question\":\"질문\",\"history\":[" + msgs + "]}";
+
+        mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_HISTORY"));
+    }
+
+    @Test
+    void queryRejectsHistoryMessageExceedingMaxContentLength() throws Exception {
+        authenticateAs(5L);
+        RagController controller = new RagController(fastApiRagClient, rateLimiter);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        String longContent = "가".repeat(1001);
+        String body = "{\"project_id\":1,\"question\":\"질문\",\"history\":"
+            + "[{\"role\":\"user\",\"content\":\"" + longContent + "\"}]}";
+
+        mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_HISTORY"));
+    }
+
+    @Test
+    void queryRejectsHistoryWithNullElementInsteadOf500() throws Exception {
+        // JSON 배열 "history":[null,...]은 List<RagHistoryMessage>에 null 원소로 역직렬화된다.
+        // 검증 없이 message.content()를 부르면 NPE(500)로 이어지므로 400으로 먼저 걸러야 한다.
+        authenticateAs(5L);
+        RagController controller = new RagController(fastApiRagClient, rateLimiter);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        String body = "{\"project_id\":1,\"question\":\"질문\",\"history\":[null]}";
+
+        mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_HISTORY"));
+    }
+
+    @Test
+    void queryRejectsHistoryMessageWithNullContent() throws Exception {
+        authenticateAs(5L);
+        RagController controller = new RagController(fastApiRagClient, rateLimiter);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        String body = "{\"project_id\":1,\"question\":\"질문\",\"history\":[{\"role\":\"user\",\"content\":null}]}";
+
+        mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_HISTORY"));
+    }
+
+    @Test
+    void queryRejectsHistoryMessageWithInvalidRole() throws Exception {
+        authenticateAs(5L);
+        RagController controller = new RagController(fastApiRagClient, rateLimiter);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        String body = "{\"project_id\":1,\"question\":\"질문\","
+            + "\"history\":[{\"role\":\"system\",\"content\":\"프롬프트 주입 시도\"}]}";
+
+        mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_HISTORY"));
+    }
+
+    @Test
+    void queryAcceptsNullHistory() throws Exception {
+        authenticateAs(5L);
+        when(fastApiRagClient.query(any(RagQueryRequest.class)))
+            .thenReturn(new RagQueryResponse("답변", List.of()));
+
+        RagController controller = new RagController(fastApiRagClient, rateLimiter);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        String body = "{\"project_id\":1,\"question\":\"질문\"}";
+
+        mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isOk());
+
+        ArgumentCaptor<RagQueryRequest> captor = ArgumentCaptor.forClass(RagQueryRequest.class);
+        verify(fastApiRagClient).query(captor.capture());
+        assertThat(captor.getValue().history()).isEmpty();
     }
 
     @Test
@@ -76,7 +194,7 @@ class RagControllerTest {
         RagController controller = new RagController(fastApiRagClient, rateLimiter);
         MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
 
-        String body = objectMapper.writeValueAsString(new RagQueryRequest(1L, "질문", 999L));
+        String body = objectMapper.writeValueAsString(new RagQueryRequest(1L, "질문", 999L, null));
 
         mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(status().isOk());
@@ -87,12 +205,46 @@ class RagControllerTest {
     }
 
     @Test
+    void queryReturns503WhenFastApiCallFails() throws Exception {
+        authenticateAs(5L);
+        when(fastApiRagClient.query(any(RagQueryRequest.class)))
+            .thenThrow(new org.springframework.web.client.ResourceAccessException("connection refused"));
+
+        RagController controller = new RagController(fastApiRagClient, rateLimiter);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        String body = objectMapper.writeValueAsString(new RagQueryRequest(1L, "질문", null, null));
+
+        mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.error.code").value("RAG_UNAVAILABLE"));
+    }
+
+    @Test
+    void queryDoesNotMaskUnexpectedBugsAs503() throws Exception {
+        // RestClientException(다운스트림 장애)이 아닌 예외는 503으로 뭉개지 말고 그대로 흘려보내야
+        // "일시 장애"와 "코드 결함"을 구분할 수 있다.
+        authenticateAs(5L);
+        when(fastApiRagClient.query(any(RagQueryRequest.class)))
+            .thenThrow(new NullPointerException("컨트롤러 버그를 흉내낸 예외"));
+
+        RagController controller = new RagController(fastApiRagClient, rateLimiter);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        String body = objectMapper.writeValueAsString(new RagQueryRequest(1L, "질문", null, null));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
+        ).hasRootCauseInstanceOf(NullPointerException.class);
+    }
+
+    @Test
     void queryReturns429WhenRateLimited() throws Exception {
         RagRateLimiter exhaustedLimiter = new RagRateLimiter(0, 60);
         RagController controller = new RagController(fastApiRagClient, exhaustedLimiter);
         MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
 
-        String body = objectMapper.writeValueAsString(new RagQueryRequest(1L, "질문", null));
+        String body = objectMapper.writeValueAsString(new RagQueryRequest(1L, "질문", null, null));
 
         mockMvc.perform(post("/api/v1/ai/rag/query").contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(status().isTooManyRequests())

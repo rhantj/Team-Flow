@@ -62,7 +62,7 @@ export function ProjectSettingsSection() {
   };
 
   return (
-    <section className="bg-card border border-border rounded-xl p-5 shadow-sm">
+    <section id="project-settings" className="bg-card border border-border rounded-xl p-5 shadow-sm scroll-mt-20">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-sm font-bold text-foreground">프로젝트 정보</h2>
         {isLeader && !editing && (

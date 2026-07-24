@@ -16,6 +16,12 @@ server:
 spring:
   application:
     name: workflow-ai-backend
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      username: ${REDIS_USERNAME:}
+      password: ${REDIS_PASSWORD:}
   servlet:
     multipart:
       max-file-size: 100MB
@@ -46,11 +52,14 @@ spring:
     enabled: ${SPRING_FLYWAY_ENABLED:false}
     # Flyway는 기본 비활성화다. 명시적으로 켠 기존 DB에서는 schema_history 부재로 기동 실패하지 않게 baseline을 기본 허용한다.
     baseline-on-migrate: ${SPRING_FLYWAY_BASELINE_ON_MIGRATE:true}
+    baseline-version: ${SPRING_FLYWAY_BASELINE_VERSION:20260721.1}
     locations: classpath:db/migration
 
 workflow:
   ai:
     base-url: ${WORKFLOW_AI_FASTAPI_URL:http://localhost:8000}
+    connect-timeout-seconds: ${WORKFLOW_AI_CONNECT_TIMEOUT_SECONDS:5}
+    read-timeout-seconds: ${WORKFLOW_AI_READ_TIMEOUT_SECONDS:45}
     internal-key: ${RAG_INTERNAL_API_KEY}
   cors:
     allowed-origins: ${WORKFLOW_CORS_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}

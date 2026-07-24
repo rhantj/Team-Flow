@@ -3,6 +3,7 @@ from __future__ import annotations
 import aiohttp
 from fastapi import APIRouter, Depends, HTTPException
 from requests.exceptions import HTTPError as RequestsHTTPError
+from typing import Literal
 
 from core.db import get_pool
 from llm_rag_assistant.app.schema.chat_schema import (
@@ -15,7 +16,12 @@ from llm_rag_assistant.app.schema.chat_schema import (
 from llm_rag_assistant.app.security import verify_internal_api_key
 from llm_rag_assistant.app.services.chat_service import answer_question
 from llm_rag_assistant.app.services.generation_service import RagConfigurationError
-from llm_rag_assistant.app.services.ingestion_service import ingest_content, sync_assignee
+from llm_rag_assistant.app.services.ingestion_service import (
+    delete_project_sources,
+    delete_source,
+    ingest_content,
+    sync_assignee,
+)
 
 router = APIRouter(prefix="/ai/rag", tags=["rag"], dependencies=[Depends(verify_internal_api_key)])
 
@@ -34,6 +40,21 @@ async def assignee_sync(request: RagAssigneeSyncRequest, pool=Depends(get_pool))
     await sync_assignee(pool, request.project_id, request.source_type, request.source_id, request.assignee_id)
 
 
+@router.delete("/projects/{project_id}/sources/{source_type}/{source_id}", status_code=204)
+async def remove_source(
+    project_id: int,
+    source_type: Literal["meeting", "task", "action_item"],
+    source_id: int,
+    pool=Depends(get_pool),
+) -> None:
+    await delete_source(pool, project_id, source_type, source_id)
+
+
+@router.delete("/projects/{project_id}/sources", status_code=204)
+async def remove_project_sources(project_id: int, pool=Depends(get_pool)) -> None:
+    await delete_project_sources(pool, project_id)
+
+
 @router.post("/query", response_model=RagQueryResponse)
 async def query(request: RagQueryRequest, pool=Depends(get_pool)) -> RagQueryResponse:
     # 라우터 레벨의 verify_internal_api_key 의존성이 Spring(RagController) 외의 직접 호출을
@@ -42,7 +63,10 @@ async def query(request: RagQueryRequest, pool=Depends(get_pool)) -> RagQueryRes
     #     요청자가 해당 프로젝트 멤버가 아니면 컨트롤러 진입 전에 403으로 차단한다.
     #   - user_id: RagController.query()가 요청 바디 값을 무시하고 CurrentUser.id()(인증 세션)로 덮어써서 보낸다.
     try:
-        return await answer_question(pool, request.project_id, request.question, request.user_id)
+        history = [{"role": m.role, "content": m.content} for m in request.history]
+        return await answer_question(
+            pool, request.project_id, request.question, request.user_id, history=history
+        )
     except (aiohttp.ClientError, RequestsHTTPError) as exc:
         raise HTTPException(status_code=503, detail={"error": "llm_unavailable"}) from exc
     except RagConfigurationError as exc:

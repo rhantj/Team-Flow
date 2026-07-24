@@ -1,0 +1,24 @@
+name: Lint workflows
+
+# 배포 워크플로의 run 블록은 실패 경로(롤백 등)에서만 실행되므로, 문법 오류가 있어도
+# 정상 배포에서는 드러나지 않는다. 실제로 롤백 스텝이 bash 문법 오류로 한 번도 동작하지
+# 못한 채 방치된 적이 있다. actionlint는 run 블록을 shellcheck로 검사해 이를 잡는다.
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - '.github/workflows/**'
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run actionlint
+        uses: docker://rhysd/actionlint:1.7.7
+        with:
+          args: -color

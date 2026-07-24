@@ -4,8 +4,11 @@ import com.workflowai.activity.ActivityService;
 import com.workflowai.common.ApiResponse;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.NotificationService;
+import com.workflowai.project.Project;
 import com.workflowai.project.ProjectMemberRepository;
+import com.workflowai.project.ProjectRepository;
 import com.workflowai.project.ProjectRole;
+import com.workflowai.project.ProjectSchedulePolicy;
 import com.workflowai.rag.RagIngestService;
 import com.workflowai.security.CurrentUser;
 import com.workflowai.user.User;
@@ -18,9 +21,13 @@ import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -34,6 +41,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/projects/{projectId}/tasks")
 public class TaskController {
+    private static final Logger log = LoggerFactory.getLogger(TaskController.class);
     private static final Map<String, String> STATUS_LABELS = Map.of(
         "todo", "할 일",
         "inprogress", "진행 중",
@@ -58,6 +66,7 @@ public class TaskController {
     private final ActivityService activityService;
     private final NotificationService notificationService;
     private final ProjectMemberRepository projectMemberRepository;
+    private final ProjectRepository projectRepository;
     private final RagIngestService ragIngestService;
 
     public TaskController(
@@ -67,6 +76,7 @@ public class TaskController {
         ActivityService activityService,
         NotificationService notificationService,
         ProjectMemberRepository projectMemberRepository,
+        ProjectRepository projectRepository,
         RagIngestService ragIngestService
     ) {
         this.taskRepository = taskRepository;
@@ -75,6 +85,7 @@ public class TaskController {
         this.activityService = activityService;
         this.notificationService = notificationService;
         this.projectMemberRepository = projectMemberRepository;
+        this.projectRepository = projectRepository;
         this.ragIngestService = ragIngestService;
     }
 
@@ -140,11 +151,22 @@ public class TaskController {
         }
 
         Long projectDbId = demoDataService.resolveProjectId(projectId);
+        LocalDate startDate;
+        try {
+            startDate = parseDate(request.startDate());
+        } catch (DateTimeParseException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_START_DATE", "startDate는 YYYY-MM-DD 형식이어야 합니다."));
+        }
         LocalDate dueDate;
         try {
             dueDate = parseDate(request.dueDate());
         } catch (DateTimeParseException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_DUE_DATE", "dueDate는 YYYY-MM-DD 형식이어야 합니다."));
+        }
+        if (startDate != null || dueDate != null) {
+            Project project = projectRepository.findById(projectDbId)
+                .orElseThrow(() -> new IllegalArgumentException("프로젝트를 찾을 수 없습니다."));
+            ProjectSchedulePolicy.validate(project, startDate, dueDate, "업무");
         }
 
         Long assigneeId;
@@ -160,10 +182,12 @@ public class TaskController {
         String category = defaultString(request.category(), "other");
         Task task = taskRepository.save(new Task(
             projectDbId,
+            null,
             request.title(),
             category,
             status,
             assigneeId,
+            startDate,
             dueDate,
             request.priority(),
             request.description(),
@@ -179,6 +203,19 @@ public class TaskController {
                 "'" + task.getTitle() + "' 업무가 배정되었습니다.", "task", task.getId()
             );
         }
+        String ragContent = buildRagContent(task);
+        ragIngestService.recordIngestIntent(
+            projectDbId, "task", task.getId(), ragContent, task.getAssigneeId()
+        );
+        runAfterCommit(() ->
+            ragIngestService.ingestBestEffort(
+                projectDbId,
+                "task",
+                task.getId(),
+                ragContent,
+                task.getAssigneeId()
+            )
+        );
         return ResponseEntity.ok(ApiResponse.ok(TaskListItem.from(task)));
     }
 
@@ -255,16 +292,30 @@ public class TaskController {
             return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
         }
 
+        LocalDate startDate;
+        try {
+            startDate = parseDate(request.startDate());
+        } catch (DateTimeParseException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_START_DATE", "startDate는 YYYY-MM-DD 형식이어야 합니다."));
+        }
         LocalDate dueDate;
         try {
             dueDate = parseDate(request.dueDate());
         } catch (DateTimeParseException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_DUE_DATE", "dueDate는 YYYY-MM-DD 형식이어야 합니다."));
         }
+        LocalDate effectiveStartDate = startDate != null ? startDate : task.getStartDate();
+        LocalDate effectiveDueDate = dueDate != null ? dueDate : task.getDueDate();
+        if (request.startDate() != null || request.dueDate() != null) {
+            Project project = projectRepository.findById(projectDbId)
+                .orElseThrow(() -> new IllegalArgumentException("프로젝트를 찾을 수 없습니다."));
+            ProjectSchedulePolicy.validate(project, effectiveStartDate, effectiveDueDate, "업무");
+        }
 
         String titleBefore = task.getTitle();
         String categoryBefore = task.getCategory();
         Long assigneeBefore = task.getAssigneeId();
+        LocalDate startDateBefore = task.getStartDate();
         LocalDate dueDateBefore = task.getDueDate();
         String priorityBefore = task.getPriority();
         String descriptionBefore = task.getDescription();
@@ -275,20 +326,32 @@ public class TaskController {
         } catch (NumberFormatException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_ASSIGNEE_ID", "assigneeId 형식이 올바르지 않습니다."));
         }
-        task.applyUpdate(request.title(), request.category(), newAssigneeId, dueDate, request.priority(), request.description());
+        task.applyUpdate(
+            request.title(),
+            request.category(),
+            newAssigneeId,
+            startDate,
+            dueDate,
+            request.priority(),
+            request.description()
+        );
         taskRepository.save(task);
 
         Long actorId = currentActorId();
         boolean assigneeChanged = !Objects.equals(assigneeBefore, task.getAssigneeId());
         boolean otherFieldsChanged = !Objects.equals(titleBefore, task.getTitle())
             || !Objects.equals(categoryBefore, task.getCategory())
+            || !Objects.equals(startDateBefore, task.getStartDate())
             || !Objects.equals(dueDateBefore, task.getDueDate())
             || !Objects.equals(priorityBefore, task.getPriority())
             || !Objects.equals(descriptionBefore, task.getDescription());
         if (assigneeChanged) {
             // RAG 검색에서 "내가 담당한 업무"가 재배정 이후에도 옛 담당자에게 계속 잡히지
             // 않도록, 이미 인제스트된 청크의 assignee_id 메타데이터를 동기화한다.
-            ragIngestService.syncAssigneeBestEffort(projectDbId, "task", task.getId(), task.getAssigneeId());
+            ragIngestService.recordAssigneeSyncIntent(projectDbId, "task", taskId, task.getAssigneeId());
+            runAfterCommit(() ->
+                ragIngestService.syncAssigneeBestEffort(projectDbId, "task", taskId, task.getAssigneeId())
+            );
             activityService.record(
                 projectDbId, actorId, "ASSIGNEE_CHANGED", task.getId(),
                 "담당자를 '" + userName(task.getAssigneeId()) + "'(으)로 변경했습니다."
@@ -301,6 +364,19 @@ public class TaskController {
             }
         }
         if (otherFieldsChanged) {
+            String ragContent = buildRagContent(task);
+            ragIngestService.recordIngestIntent(
+                projectDbId, "task", task.getId(), ragContent, task.getAssigneeId()
+            );
+            runAfterCommit(() ->
+                ragIngestService.ingestBestEffort(
+                    projectDbId,
+                    "task",
+                    task.getId(),
+                    ragContent,
+                    task.getAssigneeId()
+                )
+            );
             activityService.record(projectDbId, actorId, "TASK_UPDATED", task.getId(), "'" + task.getTitle() + "' 업무 정보를 수정했습니다.");
             if (task.getAssigneeId() != null && !task.getAssigneeId().equals(actorId)) {
                 notificationService.notify(
@@ -310,6 +386,34 @@ public class TaskController {
             }
         }
         return ResponseEntity.ok(ApiResponse.ok(TaskListItem.from(task)));
+    }
+
+    private String buildRagContent(Task task) {
+        if (task.getDescription() == null || task.getDescription().isBlank()) {
+            return task.getTitle();
+        }
+        return task.getTitle() + " - " + task.getDescription();
+    }
+
+    private void runAfterCommit(Runnable operation) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    runAfterCommitOperationSafely(operation);
+                }
+            });
+            return;
+        }
+        runAfterCommitOperationSafely(operation);
+    }
+
+    private void runAfterCommitOperationSafely(Runnable operation) {
+        try {
+            operation.run();
+        } catch (RuntimeException exception) {
+            log.warn("RAG after-commit 작업 제출 실패. errorType={}", exception.getClass().getSimpleName());
+        }
     }
 
     @Operation(
@@ -340,7 +444,9 @@ public class TaskController {
                 "'" + task.getTitle() + "' 업무가 삭제되었습니다.", "task", task.getId()
             );
         }
+        ragIngestService.recordDeleteSourceIntent(projectDbId, "task", taskId);
         taskRepository.delete(task);
+        runAfterCommit(() -> ragIngestService.deleteSourceBestEffort(projectDbId, "task", taskId));
         return ResponseEntity.ok(ApiResponse.ok(null));
     }
 

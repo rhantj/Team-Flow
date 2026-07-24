@@ -1,5 +1,6 @@
 package com.workflowai.common;
 
+import com.workflowai.project.ProjectScheduleException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -8,6 +9,11 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(ProjectScheduleException.class)
+    public ResponseEntity<ApiResponse<Void>> handleProjectSchedule(ProjectScheduleException e) {
+        return ResponseEntity.badRequest().body(ApiResponse.fail(e.getCode(), e.getMessage()));
+    }
 
     /** spring.servlet.multipart.max-file-size/max-request-size(application.yml) 초과 시 친절한 응답으로 바꾼다. */
     @ExceptionHandler(MaxUploadSizeExceededException.class)

@@ -7,10 +7,12 @@ export const DEMO_PROJECT_ID = 1;
 
 interface TaskListItemDto {
   id: string;
+  milestoneId: string | null;
   title: string;
   category: string | null;
   status: string;
   assigneeId: string | null;
+  startDate: string | null;
   dueDate: string | null;
   priority: string | null;
   position: number;
@@ -34,10 +36,12 @@ function normalizePriority(raw: string | null): Priority {
 function toTask(dto: TaskListItemDto): Task {
   return {
     id: dto.id,
+    milestoneId: dto.milestoneId ?? undefined,
     title: dto.title,
     status: normalizeStatus(dto.status),
     priority: normalizePriority(dto.priority),
     assignee: dto.assigneeId ?? "",
+    startDate: dto.startDate ?? undefined,
     dueDate: dto.dueDate ?? "",
     category: dto.category ?? "other",
     labels: [],
@@ -56,6 +60,7 @@ export interface CreateTaskInput {
   category: string;
   status: TaskStatus;
   assigneeId: string | null;
+  startDate?: string | null;
   dueDate: string | null;
   priority: Priority;
   description?: string;
@@ -86,6 +91,7 @@ export interface UpdateTaskInput {
   title?: string;
   category?: string;
   assigneeId?: string;
+  startDate?: string;
   dueDate?: string;
   priority?: Priority;
   description?: string;

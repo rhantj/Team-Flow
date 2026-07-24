@@ -230,10 +230,14 @@ public class MeetingAnalysisController {
         @Parameter(description = "원본 회의록 ID", example = "demo-project-1") @PathVariable String meetingId,
         @RequestBody MeetingVersionRequest request
     ) {
-        MeetingVersionResponse response = meetingAnalysisService.createVersion(projectId, meetingId, request);
-        if (response == null) {
-            return ResponseEntity.status(404).body(ApiResponse.fail("MEETING_NOT_FOUND", "회의록을 찾을 수 없습니다."));
+        try {
+            MeetingVersionResponse response = meetingAnalysisService.createVersion(projectId, meetingId, request);
+            if (response == null) {
+                return ResponseEntity.status(404).body(ApiResponse.fail("MEETING_NOT_FOUND", "회의록을 찾을 수 없습니다."));
+            }
+            return ResponseEntity.ok(ApiResponse.ok(response));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(400).body(ApiResponse.fail("INVALID_TRANSCRIPT", e.getMessage()));
         }
-        return ResponseEntity.ok(ApiResponse.ok(response));
     }
 }

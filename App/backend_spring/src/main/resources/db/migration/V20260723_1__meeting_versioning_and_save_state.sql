@@ -3,7 +3,8 @@
 ALTER TABLE meetings
     ADD COLUMN IF NOT EXISTS original_meeting_id BIGINT NULL,
     ADD COLUMN IF NOT EXISTS edited_by            BIGINT NULL,
-    ADD COLUMN IF NOT EXISTS saved_at             TIMESTAMP NULL;
+    ADD COLUMN IF NOT EXISTS saved_at             TIMESTAMP NULL,
+    ADD COLUMN IF NOT EXISTS transcript           TEXT NULL;
 
 DO $$
 BEGIN

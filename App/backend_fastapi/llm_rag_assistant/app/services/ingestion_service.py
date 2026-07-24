@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from core import cache
 from llm_rag_assistant.app.schema.chat_schema import RagIngestResponse
 from llm_rag_assistant.app.services.chunking import chunk_text
 from llm_rag_assistant.app.services.embedding_service import embed_text
@@ -17,28 +18,49 @@ SET assignee_id = $1
 WHERE project_id = $2 AND source_type = $3 AND source_id = $4
 """
 
+_DELETE_SOURCE_SQL = """
+DELETE FROM document_chunks
+WHERE project_id = $1 AND source_type = $2 AND source_id = $3
+"""
+
+_DELETE_PROJECT_SOURCES_SQL = """
+DELETE FROM document_chunks
+WHERE project_id = $1
+"""
+
+_LOCK_PROJECT_SQL = """
+SELECT pg_advisory_xact_lock(hashtextextended($1, 0))
+"""
+
+
+async def _lock_project(conn, project_id: int) -> None:
+    await conn.execute(_LOCK_PROJECT_SQL, f"project:{project_id}")
+
 
 async def ingest_content(
     pool, project_id: int, source_type: str, source_id: int, content: str, assignee_id: int | None = None
 ) -> RagIngestResponse:
     chunks = chunk_text(content)
-    if not chunks:
-        return RagIngestResponse(chunk_ids=[], chunk_count=0)
+    embeddings = [await embed_text(chunk) for chunk in chunks]
 
+    await cache.advance_rag_project_epoch(project_id)
     chunk_ids: list[int] = []
     async with pool.acquire() as conn:
-        for chunk in chunks:
-            embedding = await embed_text(chunk)
-            row = await conn.fetchrow(
-                _INSERT_CHUNK_SQL,
-                project_id,
-                source_type,
-                source_id,
-                chunk,
-                to_vector_literal(embedding),
-                assignee_id,
-            )
-            chunk_ids.append(row["id"])
+        async with conn.transaction():
+            await _lock_project(conn, project_id)
+            await conn.execute(_DELETE_SOURCE_SQL, project_id, source_type, source_id)
+            for chunk, embedding in zip(chunks, embeddings, strict=True):
+                row = await conn.fetchrow(
+                    _INSERT_CHUNK_SQL,
+                    project_id,
+                    source_type,
+                    source_id,
+                    chunk,
+                    to_vector_literal(embedding),
+                    assignee_id,
+                )
+                chunk_ids.append(row["id"])
+    await cache.advance_rag_project_epoch(project_id)
 
     return RagIngestResponse(chunk_ids=chunk_ids, chunk_count=len(chunk_ids))
 
@@ -46,5 +68,27 @@ async def ingest_content(
 async def sync_assignee(pool, project_id: int, source_type: str, source_id: int, assignee_id: int | None) -> None:
     """담당자가 바뀐 뒤에도 document_chunks.assignee_id가 낡은 채로 남아있지 않도록,
     기존 청크(내용/임베딩은 그대로) 메타데이터만 갱신한다. 재임베딩이 필요 없어 저렴하다."""
+    await cache.advance_rag_project_epoch(project_id)
     async with pool.acquire() as conn:
-        await conn.execute(_UPDATE_ASSIGNEE_SQL, assignee_id, project_id, source_type, source_id)
+        async with conn.transaction():
+            await _lock_project(conn, project_id)
+            await conn.execute(_UPDATE_ASSIGNEE_SQL, assignee_id, project_id, source_type, source_id)
+    await cache.advance_rag_project_epoch(project_id)
+
+
+async def delete_source(pool, project_id: int, source_type: str, source_id: int) -> None:
+    await cache.advance_rag_project_epoch(project_id)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _lock_project(conn, project_id)
+            await conn.execute(_DELETE_SOURCE_SQL, project_id, source_type, source_id)
+    await cache.advance_rag_project_epoch(project_id)
+
+
+async def delete_project_sources(pool, project_id: int) -> None:
+    await cache.advance_rag_project_epoch(project_id)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _lock_project(conn, project_id)
+            await conn.execute(_DELETE_PROJECT_SOURCES_SQL, project_id)
+    await cache.advance_rag_project_epoch(project_id)

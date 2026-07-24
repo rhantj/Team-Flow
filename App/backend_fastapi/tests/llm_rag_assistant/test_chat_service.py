@@ -1,10 +1,44 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+import logging
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from llm_rag_assistant.app.services.chat_service import _is_personal_intent, answer_question
+from llm_rag_assistant.app.schema.chat_schema import RagQueryResponse, RagSource
+from llm_rag_assistant.app.services.chat_service import (
+    _ANSWER_CACHE_SCHEMA_VERSION,
+    _answer_cache_key,
+    _is_personal_intent,
+    answer_question,
+)
+
+
+class _FakeAsyncRedis:
+    def __init__(self, initial: dict[str, str] | None = None) -> None:
+        self.store = dict(initial or {})
+        self.set_calls: list[tuple[str, str, int | None]] = []
+        self.deleted_keys: list[str] = []
+
+    async def get(self, key: str) -> str | None:
+        return self.store.get(key)
+
+    async def set(self, key: str, value: str, ex: int | None = None) -> None:
+        self.store[key] = value
+        self.set_calls.append((key, value, ex))
+
+    async def delete(self, key: str) -> None:
+        self.store.pop(key, None)
+        self.deleted_keys.append(key)
+
+
+@pytest.fixture(autouse=True)
+def default_cache_miss() -> object:
+    with patch(
+        "llm_rag_assistant.app.services.chat_service.get_async_redis_client",
+        return_value=_FakeAsyncRedis(),
+    ):
+        yield
 
 
 @pytest.mark.asyncio
@@ -80,11 +114,14 @@ async def test_answer_question_filters_by_assignee_when_personal_intent_and_user
         patch(
             "llm_rag_assistant.app.services.chat_service.generate_answer",
             new=AsyncMock(return_value="답변"),
-        ),
+        ) as mock_generate,
     ):
         await answer_question(pool, project_id=5, question="내가 담당한 업무 알려줘", user_id=42)
 
     mock_search.assert_awaited_once_with(pool, 5, [0.1], top_k=5, assignee_id=42)
+    # 담당자 필터를 걸었다는 사실이 생성 단계까지 전달돼야 한다. 전달하지 않으면 모델이
+    # 청크가 질문자 것인지 알 수 없어 담당 업무가 있어도 '근거 없음'으로 답한다.
+    assert mock_generate.await_args.kwargs["is_personal"] is True
 
 
 @pytest.mark.asyncio
@@ -103,11 +140,12 @@ async def test_answer_question_does_not_filter_by_assignee_for_non_personal_ques
         patch(
             "llm_rag_assistant.app.services.chat_service.generate_answer",
             new=AsyncMock(return_value="답변"),
-        ),
+        ) as mock_generate,
     ):
         await answer_question(pool, project_id=5, question="프로젝트 전체 업무 현황 알려줘", user_id=42)
 
     mock_search.assert_awaited_once_with(pool, 5, [0.1], top_k=5, assignee_id=None)
+    assert mock_generate.await_args.kwargs["is_personal"] is False
 
 
 @pytest.mark.parametrize(
@@ -247,3 +285,434 @@ def test_is_personal_intent_detects_curly_quoted_compact_forms(question: str) ->
     forms should still be recognized as personal intent. Regression test for missing
     curly quote support in _COMPACT_PERSONAL_TASK_PATTERN leading boundary."""
     assert _is_personal_intent(question) is True
+
+
+def test_answer_cache_key_scopes_schema_project_assignee_and_exact_question() -> None:
+    baseline = _answer_cache_key(project_id=5, assignee_id=None, question="동일 질문")
+
+    assert baseline == _answer_cache_key(project_id=5, assignee_id=None, question="동일 질문")
+    assert baseline != _answer_cache_key(project_id=6, assignee_id=None, question="동일 질문")
+    assert baseline != _answer_cache_key(project_id=5, assignee_id=42, question="동일 질문")
+    assert baseline != _answer_cache_key(project_id=5, assignee_id=None, question="동일 질문 ")
+
+    # 현재 값과 반드시 다른 값이어야 한다. 실제 버전을 그대로 쓰면 패치가 무의미해져
+    # 이 검증이 조용히 통과만 한다.
+    with patch("llm_rag_assistant.app.services.chat_service._ANSWER_CACHE_SCHEMA_VERSION", "other-version"):
+        assert baseline != _answer_cache_key(project_id=5, assignee_id=None, question="동일 질문")
+
+    assert baseline != _answer_cache_key(
+        project_id=5,
+        assignee_id=None,
+        question="동일 질문",
+        cache_epoch="1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_answer_question_cache_hit_skips_embedding_search_and_generation() -> None:
+    cached = RagQueryResponse(
+        answer="캐시 답변",
+        sources=[RagSource(source_type="task", source_id=3, content_snippet="근거", similarity=0.9)],
+    )
+    cache = _FakeAsyncRedis({_answer_cache_key(5, None, "질문"): cached.model_dump_json()})
+
+    with (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.get_async_redis_client",
+            return_value=cache,
+        ),
+        patch("llm_rag_assistant.app.services.chat_service.embed_text", new=AsyncMock()) as embed,
+        patch("llm_rag_assistant.app.services.chat_service.search_similar_chunks", new=AsyncMock()) as search,
+        patch("llm_rag_assistant.app.services.chat_service.generate_answer", new=AsyncMock()) as generate,
+    ):
+        result = await answer_question(object(), project_id=5, question="질문")
+
+    assert result == cached
+    embed.assert_not_awaited()
+    search.assert_not_awaited()
+    generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_answer_question_project_epoch_change_bypasses_stale_cached_answer() -> None:
+    stale = RagQueryResponse(answer="삭제 전 답변", sources=[])
+    cache = _FakeAsyncRedis(
+        {
+            "rag_epoch:5": "2",
+            _answer_cache_key(5, None, "질문", cache_epoch="1"): stale.model_dump_json(),
+        }
+    )
+
+    with (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.get_async_redis_client",
+            return_value=cache,
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="삭제 후 답변"),
+        ),
+    ):
+        result = await answer_question(object(), project_id=5, question="질문")
+
+    assert result.answer == "삭제 후 답변"
+    assert cache.set_calls[0][0] == _answer_cache_key(5, None, "질문", cache_epoch="2")
+
+
+@pytest.mark.asyncio
+async def test_answer_question_rechecks_epoch_before_returning_cache_hit() -> None:
+    stale = RagQueryResponse(answer="권한 변경 전 답변", sources=[])
+    cache = _FakeAsyncRedis(
+        {_answer_cache_key(5, None, "질문", cache_epoch="1"): stale.model_dump_json()}
+    )
+    epoch_reads = iter(("1", "2", "2"))
+    original_get = cache.get
+
+    async def get_with_epoch_change(key: str) -> str | None:
+        if key == "rag_epoch:5":
+            return next(epoch_reads)
+        return await original_get(key)
+
+    cache.get = get_with_epoch_change
+    with (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.get_async_redis_client",
+            return_value=cache,
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="권한 변경 후 답변"),
+        ),
+    ):
+        result = await answer_question(object(), project_id=5, question="질문")
+
+    assert result.answer == "권한 변경 후 답변"
+
+
+@pytest.mark.asyncio
+async def test_answer_question_cache_miss_is_stored_for_1800_seconds_and_reused() -> None:
+    cache = _FakeAsyncRedis()
+
+    with (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.get_async_redis_client",
+            return_value=cache,
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ) as embed,
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=[]),
+        ) as search,
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="새 답변"),
+        ) as generate,
+    ):
+        first = await answer_question(object(), project_id=5, question="질문")
+        second = await answer_question(object(), project_id=5, question="질문")
+
+    assert first == second
+    assert cache.set_calls[0][2] == 1800
+    embed.assert_awaited_once()
+    search.assert_awaited_once()
+    generate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_answer_question_uses_effective_personal_assignee_in_cache_scope() -> None:
+    cache = _FakeAsyncRedis()
+
+    with (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.get_async_redis_client",
+            return_value=cache,
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=[]),
+        ) as search,
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="답변"),
+        ),
+    ):
+        await answer_question(object(), 5, "내가 담당한 업무 알려줘", user_id=42)
+        await answer_question(object(), 5, "프로젝트 전체 업무 현황 알려줘", user_id=42)
+
+    assert {call[0] for call in cache.set_calls} == {
+        _answer_cache_key(5, 42, "내가 담당한 업무 알려줘"),
+        _answer_cache_key(5, None, "프로젝트 전체 업무 현황 알려줘"),
+    }
+    assert search.await_args_list[0].kwargs["assignee_id"] == 42
+    assert search.await_args_list[1].kwargs["assignee_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_answer_question_deletes_corrupt_cache_and_recomputes(caplog: pytest.LogCaptureFixture) -> None:
+    key = _answer_cache_key(5, None, "민감한 질문 원문")
+    cache = _FakeAsyncRedis({key: '{"answer": "민감한 캐시 값"}'})
+
+    with (
+        caplog.at_level(logging.WARNING),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.get_async_redis_client",
+            return_value=cache,
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="복구 답변"),
+        ),
+    ):
+        result = await answer_question(object(), 5, "민감한 질문 원문")
+
+    assert result.answer == "복구 답변"
+    assert cache.deleted_keys == [key]
+    assert "RAG 답변 캐시 역직렬화 실패" in caplog.text
+    assert "민감한 질문 원문" not in caplog.text
+    assert "민감한 캐시 값" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_point", ["client", "get", "set", "delete"])
+async def test_answer_question_cache_failures_warn_and_fail_open(
+    failure_point: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    connection_detail_sentinel = "redis://fastapi:secret-password@private-redis:6379/0"
+    cache = _FakeAsyncRedis()
+    key = _answer_cache_key(5, None, "로그 금지 질문")
+    if failure_point == "delete":
+        cache.store[key] = "invalid-json"
+
+    if failure_point != "client":
+        failing_method = AsyncMock(side_effect=ConnectionError(connection_detail_sentinel))
+        setattr(cache, failure_point, failing_method)
+
+    client = (
+        Mock(side_effect=ConnectionError(connection_detail_sentinel))
+        if failure_point == "client"
+        else Mock(return_value=cache)
+    )
+
+    with (
+        caplog.at_level(logging.WARNING),
+        patch("llm_rag_assistant.app.services.chat_service.get_async_redis_client", client),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="정상 답변"),
+        ),
+    ):
+        result = await answer_question(object(), 5, "로그 금지 질문")
+
+    assert result.answer == "정상 답변"
+    assert "RAG 답변 캐시" in caplog.text
+    assert "로그 금지 질문" not in caplog.text
+    assert "정상 답변" not in caplog.text
+    assert connection_detail_sentinel not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_answer_question_enriches_search_results_with_facts() -> None:
+    """검색 결과를 사실 조회로 보강한 뒤 생성에 넘겨야 마감일 질문에 답할 수 있다."""
+    pool = object()
+    rows = [{"source_type": "task", "source_id": 12, "content": "로그인 API 구현", "similarity": 0.9}]
+    enriched = [{**rows[0], "facts": {"due_date": "2026-08-01", "status": "진행중", "priority": "high"}}]
+
+    with (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=rows),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.enrich_with_facts",
+            new=AsyncMock(return_value=enriched),
+        ) as mock_enrich,
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="2026-08-01 마감입니다"),
+        ) as mock_generate,
+    ):
+        result = await answer_question(pool, project_id=5, question="로그인 API 마감일은?")
+
+    mock_enrich.assert_awaited_once_with(pool, 5, rows)
+    assert mock_generate.await_args.args[1] == enriched
+    assert result.answer == "2026-08-01 마감입니다"
+
+
+@pytest.mark.asyncio
+async def test_answer_question_snippet_uses_original_content_not_facts() -> None:
+    """출처 스니펫은 청크 원문 기준이어야 한다. 사실 문자열이 섞이면 출처 표시가 오염된다."""
+    enriched = [
+        {
+            "source_type": "task",
+            "source_id": 12,
+            "content": "로그인 API 구현",
+            "similarity": 0.9,
+            "facts": {"due_date": "2026-08-01", "status": "진행중", "priority": "high"},
+        }
+    ]
+
+    with (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=enriched),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.enrich_with_facts",
+            new=AsyncMock(return_value=enriched),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="답변"),
+        ),
+    ):
+        result = await answer_question(object(), project_id=5, question="질문")
+
+    assert result.sources[0].content_snippet == "로그인 API 구현"
+
+
+def test_answer_cache_schema_version_bumped_for_facts_in_prompt() -> None:
+    """프롬프트 구성이 바뀌었으므로 버전을 올리지 않으면 배포 후 30분간 이전 답변이 반환된다."""
+    assert _ANSWER_CACHE_SCHEMA_VERSION == "v4"
+
+
+_MULTITURN_HISTORY = [
+    {"role": "user", "content": "내 업무가 뭐야?"},
+    {"role": "assistant", "content": "로그인 API 구현 업무가 있습니다"},
+]
+
+
+def _pipeline_patches(rewrite_return: str):
+    """멀티턴 파이프라인 테스트 공통 패치. rewrite_question을 고정 반환으로 스텁한다."""
+    return (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.rewrite_question",
+            new=AsyncMock(return_value=rewrite_return),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.embed_text",
+            new=AsyncMock(return_value=[0.1]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.search_similar_chunks",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "llm_rag_assistant.app.services.chat_service.generate_answer",
+            new=AsyncMock(return_value="답변"),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_rewritten_question_is_used_for_embedding() -> None:
+    """후속 질문은 재작성된 독립 질문으로 임베딩해야 엉뚱한 청크가 검색되지 않는다."""
+    rewrite, embed_patch, search, generate = _pipeline_patches("로그인 API 구현 업무의 마감일은?")
+
+    with rewrite as mock_rewrite, embed_patch as embed, search, generate:
+        embed.return_value = [0.1]
+        await answer_question(
+            object(), project_id=5, question="그 업무는 언제까지야?", history=_MULTITURN_HISTORY
+        )
+
+    mock_rewrite.assert_awaited_once_with(_MULTITURN_HISTORY, "그 업무는 언제까지야?")
+    assert embed.await_args.args[0] == "로그인 API 구현 업무의 마감일은?"
+
+
+@pytest.mark.asyncio
+async def test_rewritten_question_drives_personal_intent_detection() -> None:
+    """원문은 비개인화("그건")여도 재작성이 개인화 질문이면 assignee 필터가 걸려야 한다."""
+    rewrite, embed_patch, search_patch, generate = _pipeline_patches("내 담당 업무의 마감일은?")
+
+    with rewrite, embed_patch, search_patch as search, generate:
+        await answer_question(
+            object(),
+            project_id=5,
+            question="그건 언제까지야?",
+            user_id=42,
+            history=_MULTITURN_HISTORY,
+        )
+
+    assert search.await_args.kwargs["assignee_id"] == 42
+
+
+@pytest.mark.asyncio
+async def test_cache_key_is_scoped_by_rewritten_question() -> None:
+    """같은 원문이라도 히스토리가 달라 재작성이 달라지면 캐시 키도 달라야 한다."""
+    cache = _FakeAsyncRedis()
+    rewrite, embed_patch, search, generate = _pipeline_patches("로그인 API 구현 업무의 마감일은?")
+
+    with (
+        patch(
+            "llm_rag_assistant.app.services.chat_service.get_async_redis_client",
+            return_value=cache,
+        ),
+        rewrite,
+        embed_patch,
+        search,
+        generate,
+    ):
+        await answer_question(
+            object(), project_id=5, question="그 업무는 언제까지야?", history=_MULTITURN_HISTORY
+        )
+
+    assert cache.set_calls[0][0] == _answer_cache_key(5, None, "로그인 API 구현 업무의 마감일은?")
+
+
+@pytest.mark.asyncio
+async def test_rewrite_is_skipped_without_history() -> None:
+    """히스토리가 없으면 재작성 LLM을 호출하지 않아 첫 질문이 이유 없이 느려지지 않는다."""
+    rewrite, embed_patch, search, generate = _pipeline_patches("사용되지 않아야 함")
+
+    with rewrite as mock_rewrite, embed_patch as embed, search, generate:
+        await answer_question(object(), project_id=5, question="내 업무가 뭐야?")
+
+    mock_rewrite.assert_not_awaited()
+    assert embed.await_args.args[0] == "내 업무가 뭐야?"

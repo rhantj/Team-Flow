@@ -24,6 +24,7 @@ export function TaskDueDatePopup({ task, projectId, onClose, onChanged }: TaskDu
     setError(null);
     try {
       await updateTask(task.id, { dueDate }, projectId);
+      alert("변경이 완료되었습니다.");
       onChanged(dueDate);
     } catch {
       setError("마감일 변경에 실패했습니다. 잠시 후 다시 시도해주세요.");

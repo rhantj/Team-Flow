@@ -1,44 +1,36 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { FileAudio, FileText, GitCommit, GitMerge, GitPullRequest, MessageSquare, Package, Plus, RefreshCw, Search, Sparkles, TrendingUp, Zap } from "lucide-react";
+import { CheckCircle2, Search, Sparkles, TrendingUp, Zap, RefreshCw } from "lucide-react";
 import { BackBtn } from "../../../global/component/BackBtn";
 import { DetailStatCard } from "../../../global/component/DetailStatCard";
 import { useAuth } from "../../../global/hooks/useAuth";
 import { useDashboardActivities } from "../../libs/hooks/useDashboardActivities";
 import {
+  ACTIVITY_ICONS,
   activityMessage,
   activityTypeLabel,
   formatRelativeTime,
   normalizeActivityType,
-  type DashboardActivityType,
 } from "../../libs/utils/activityDisplay";
 import { resolveMemberDisplay } from "../../libs/utils/memberDisplay";
 
-const TYPE_FILTERS = ["전체", "업무", "GitHub", "회의록", "AI", "산출물", "댓글"] as const;
-
-const ACTIVITY_ICONS: Record<DashboardActivityType, { icon: any; color: string; bg: string }> = {
-  commit: { icon: GitCommit, color: "#6B7280", bg: "#F4F6FA" },
-  pr: { icon: GitPullRequest, color: "#3B5BDB", bg: "#EEF1FB" },
-  merge: { icon: GitMerge, color: "#10B981", bg: "#ECFDF5" },
-  task_create: { icon: Plus, color: "#7048E8", bg: "rgba(112,72,232,0.1)" },
-  task_update: { icon: RefreshCw, color: "#3B5BDB", bg: "#EEF1FB" },
-  meeting: { icon: FileAudio, color: "#7048E8", bg: "rgba(112,72,232,0.1)" },
-  ai: { icon: Sparkles, color: "#7048E8", bg: "rgba(112,72,232,0.15)" },
-  deliverable: { icon: Package, color: "#10B981", bg: "#ECFDF5" },
-  comment: { icon: MessageSquare, color: "#8892A4", bg: "#F4F6FA" },
-  file: { icon: FileText, color: "#F59E0B", bg: "#FFFBEB" },
-};
+const TYPE_FILTERS = ["전체", "업무 생성", "상태 변경", "담당자 변경", "업무 수정", "업무 삭제", "체크리스트"] as const;
 
 function matchesTypeFilter(type: string, filter: string) {
   if (filter === "전체") return true;
   const normalized = normalizeActivityType(type);
-  if (filter === "업무") return normalized === "task_create" || normalized === "task_update";
-  if (filter === "GitHub") return normalized === "commit" || normalized === "pr" || normalized === "merge";
-  if (filter === "회의록") return normalized === "meeting";
-  if (filter === "AI") return normalized === "ai";
-  if (filter === "산출물") return normalized === "deliverable" || normalized === "file";
-  if (filter === "댓글") return normalized === "comment";
+  if (filter === "업무 생성") return normalized === "TASK_CREATED";
+  if (filter === "상태 변경") return normalized === "STATUS_CHANGED";
+  if (filter === "담당자 변경") return normalized === "ASSIGNEE_CHANGED";
+  if (filter === "업무 수정") return normalized === "TASK_UPDATED";
+  if (filter === "업무 삭제") return normalized === "TASK_DELETED";
+  if (filter === "체크리스트") return normalized === "CHECKLIST_CREATED" || normalized === "CHECKLIST_COMPLETED";
   return true;
+}
+
+function isChecklistActivity(type: string) {
+  const normalized = normalizeActivityType(type);
+  return normalized === "CHECKLIST_CREATED" || normalized === "CHECKLIST_COMPLETED";
 }
 
 function isToday(iso: string | null | undefined) {
@@ -80,9 +72,9 @@ export function ActivityPage() {
   }, [activities, memberFilter, search, typeFilter]);
 
   const todayCount = activities.filter(a => isToday(a.createdAt)).length;
-  const weekCount = activities.filter(a => withinDays(a.createdAt, 5)).length;
-  const taskCount = activities.filter(a => matchesTypeFilter(a.type, "업무")).length;
-  const aiCount = activities.filter(a => normalizeActivityType(a.type) === "ai").length;
+  const weekCount = activities.filter(a => withinDays(a.createdAt, 7)).length;
+  const taskCount = activities.filter(a => !isChecklistActivity(a.type)).length;
+  const checklistCount = activities.filter(a => isChecklistActivity(a.type)).length;
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-4" style={{ fontFamily: "'Inter','Noto Sans KR',sans-serif" }}>
@@ -106,9 +98,9 @@ export function ActivityPage() {
 
       <div className="grid grid-cols-4 gap-3">
         <DetailStatCard label="오늘 활동" value={loading ? "..." : todayCount} sub="오늘 기준" color="#3B5BDB" icon={Zap} />
-        <DetailStatCard label="이번 주 전체" value={loading ? "..." : weekCount} sub="최근 5일 기준" color="#7048E8" icon={TrendingUp} />
-        <DetailStatCard label="업무 활동" value={loading ? "..." : taskCount} sub="생성/변경" color="#10B981" icon={RefreshCw} />
-        <DetailStatCard label="AI 생성" value={loading ? "..." : aiCount} sub="자동 생성 항목" color="#7048E8" icon={Sparkles} />
+        <DetailStatCard label="이번 주 전체" value={loading ? "..." : weekCount} sub="최근 7일 기준" color="#7048E8" icon={TrendingUp} />
+        <DetailStatCard label="업무 활동" value={loading ? "..." : taskCount} sub="생성/변경/삭제" color="#10B981" icon={RefreshCw} />
+        <DetailStatCard label="체크리스트 활동" value={loading ? "..." : checklistCount} sub="생성/완료" color="#059669" icon={CheckCircle2} />
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">

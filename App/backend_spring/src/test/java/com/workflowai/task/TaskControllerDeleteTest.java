@@ -12,6 +12,7 @@ import com.workflowai.activity.ActivityService;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.NotificationService;
 import com.workflowai.project.ProjectMemberRepository;
+import com.workflowai.project.ProjectRepository;
 import com.workflowai.rag.RagIngestService;
 import com.workflowai.security.UserPrincipal;
 import com.workflowai.user.UserRepository;
@@ -51,6 +52,9 @@ class TaskControllerDeleteTest {
     private ProjectMemberRepository projectMemberRepository;
 
     @Mock
+    private ProjectRepository projectRepository;
+
+    @Mock
     private RagIngestService ragIngestService;
 
     private MockMvc mockMvc;
@@ -60,7 +64,7 @@ class TaskControllerDeleteTest {
         mockMvc = MockMvcBuilders
             .standaloneSetup(new TaskController(
                 taskRepository, userRepository, demoDataService, activityService,
-                notificationService, projectMemberRepository, ragIngestService
+                notificationService, projectMemberRepository, projectRepository, ragIngestService
             ))
             .build();
         SecurityContextHolder.getContext().setAuthentication(
@@ -93,5 +97,7 @@ class TaskControllerDeleteTest {
 
         // existingTask()의 담당자는 3L, currentActorId()는 mock "1" -> 1L 이라 서로 다르므로 알림 발생
         verify(notificationService).notify(eq(3L), eq("TASK_DELETED"), any(), any(), eq("task"), any());
+        verify(ragIngestService).recordDeleteSourceIntent(1L, "task", 42L);
+        verify(ragIngestService).deleteSourceBestEffort(1L, "task", 42L);
     }
 }

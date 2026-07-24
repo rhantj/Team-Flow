@@ -10,6 +10,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.workflowai.dashboard.DTO.DashboardSummaryResponse;
 import com.workflowai.dashboard.DTO.DelayRiskDto;
 import com.workflowai.dashboard.DTO.ProgressDetailResponse;
+import com.workflowai.dashboard.DTO.WorkloadScoreMemberDto;
+import com.workflowai.dashboard.DTO.WorkloadScoreResponseDto;
 import com.workflowai.dashboard.service.DashboardService;
 import com.workflowai.security.UserPrincipal;
 import java.util.List;
@@ -107,5 +109,35 @@ class DashboardControllerTest {
         mockMvc.perform(post("/api/v1/projects/demo-project/dashboard/delay-risk/refresh"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.hasPredictions").value(true));
+    }
+
+    @Test
+    void getWorkloadScoreReturnsDataFromService() throws Exception {
+        WorkloadScoreResponseDto response = new WorkloadScoreResponseDto(
+            "1.0", 1L, "db", "MAD (소규모 팀)",
+            List.of(new WorkloadScoreMemberDto("5", 12, 0.4, 88.5, true, "과부하 의심", 1.8, 1.2, 3)),
+            null, 0.62
+        );
+        when(dashboardService.getWorkloadScore(eq("demo-project"))).thenReturn(response);
+
+        DashboardController controller = new DashboardController(dashboardService);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        mockMvc.perform(get("/api/v1/projects/demo-project/dashboard/workload-score"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.members[0].anomaly_type").value("과부하 의심"))
+            .andExpect(jsonPath("$.data.members[0].overload_score").value(88.5));
+    }
+
+    @Test
+    void getWorkloadScoreReturns503WhenServiceFails() throws Exception {
+        when(dashboardService.getWorkloadScore(eq("demo-project"))).thenThrow(new RuntimeException("boom"));
+
+        DashboardController controller = new DashboardController(dashboardService);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        mockMvc.perform(get("/api/v1/projects/demo-project/dashboard/workload-score"))
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.error.code").value("WORKLOAD_SCORE_UNAVAILABLE"));
     }
 }
