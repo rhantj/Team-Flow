@@ -26,6 +26,7 @@ vi.mock("../libs/utils/checklistApi", () => ({
 
 vi.mock("../../global/api/projectsApi", () => ({
   getProjectMembers: vi.fn(),
+  getProject: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("../../global/hooks/useAuth", () => ({

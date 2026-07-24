@@ -16,6 +16,7 @@ import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.NotificationService;
 import com.workflowai.project.ProjectMember;
 import com.workflowai.project.ProjectMemberRepository;
+import com.workflowai.project.ProjectRepository;
 import com.workflowai.project.ProjectRole;
 import com.workflowai.rag.RagIngestService;
 import com.workflowai.security.UserPrincipal;
@@ -57,6 +58,9 @@ class TaskControllerCompletionApprovalTest {
     private ProjectMemberRepository projectMemberRepository;
 
     @Mock
+    private ProjectRepository projectRepository;
+
+    @Mock
     private RagIngestService ragIngestService;
 
     private MockMvc mockMvc;
@@ -66,7 +70,7 @@ class TaskControllerCompletionApprovalTest {
         mockMvc = MockMvcBuilders
             .standaloneSetup(new TaskController(
                 taskRepository, userRepository, demoDataService, activityService,
-                notificationService, projectMemberRepository, ragIngestService
+                notificationService, projectMemberRepository, projectRepository, ragIngestService
             ))
             .build();
     }

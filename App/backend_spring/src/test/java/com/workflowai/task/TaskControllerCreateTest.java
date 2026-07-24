@@ -12,13 +12,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.workflowai.activity.ActivityService;
 import com.workflowai.common.DemoDataService;
+import com.workflowai.common.GlobalExceptionHandler;
 import com.workflowai.notification.NotificationService;
+import com.workflowai.project.Project;
 import com.workflowai.project.ProjectMemberRepository;
 import com.workflowai.project.ProjectRepository;
 import com.workflowai.rag.RagIngestService;
 import com.workflowai.security.UserPrincipal;
 import com.workflowai.user.UserRepository;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -67,6 +70,7 @@ class TaskControllerCreateTest {
                 taskRepository, userRepository, demoDataService, activityService,
                 notificationService, projectMemberRepository, projectRepository, ragIngestService
             ))
+            .setControllerAdvice(new GlobalExceptionHandler())
             .build();
         SecurityContextHolder.getContext().setAuthentication(
             new UsernamePasswordAuthenticationToken(
@@ -107,6 +111,7 @@ class TaskControllerCreateTest {
         when(taskRepository.findTopByProjectIdAndStatusOrderByPositionDesc(anyLong(), any()))
             .thenReturn(java.util.Optional.empty());
         when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(projectRepository.findById(1L)).thenReturn(Optional.of(new Project("데모", "team", "설명")));
 
         mockMvc.perform(post("/api/v1/projects/demo-project/tasks")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -121,6 +126,7 @@ class TaskControllerCreateTest {
     @Test
     void rejectsStartDateAfterDueDate() throws Exception {
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
+        when(projectRepository.findById(1L)).thenReturn(Optional.of(new Project("데모", "team", "설명")));
 
         mockMvc.perform(post("/api/v1/projects/demo-project/tasks")
                 .contentType(MediaType.APPLICATION_JSON)
