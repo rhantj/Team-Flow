@@ -72,7 +72,9 @@ async def test_member_is_blocked_before_card_for_leader_tool() -> None:
 
 
 @pytest.mark.asyncio
-async def test_leader_passes_permission_check() -> None:
+async def test_leader_tool_blocked_as_unsupported_even_for_leader() -> None:
+    """실행기가 아직 팀장 도구를 수행하지 못한다. 권한을 통과해도 카드를 만들지 않는다
+    (누르면 프론트가 거부하는 계약 불일치 방지)."""
     from llm_rag_assistant.app.graph.assistant_graph import start_command
 
     plan = [Action(tool="set_due_date", task_ref="WF-250", args={"date": "2026-08-10"})]
@@ -84,7 +86,9 @@ async def test_leader_passes_permission_check() -> None:
     ):
         outcome = await start_command(object(), _state("마감일 지정해줘", role="LEADER"))
 
-    assert outcome.type == "confirm"
+    assert outcome.type == "done"
+    assert outcome.card is None
+    assert "지원하지 않" in outcome.message
 
 
 @pytest.mark.asyncio
@@ -181,6 +185,29 @@ async def test_resume_with_failure_reports_it() -> None:
 
     assert resumed.type == "done"
     assert "업무를 찾을 수 없습니다" in resumed.message
+
+
+@pytest.mark.asyncio
+async def test_resume_rejects_mismatched_step_id() -> None:
+    """대기 중인 단계와 다른 step_id로 온 결과는 그래프를 진행시키지 않는다
+    (잘못됐거나 재전송된 결과 방어)."""
+    from llm_rag_assistant.app.graph.assistant_graph import resume_command, start_command
+
+    plan = [Action(tool="change_status", task_ref="WF-250", args={"to": "done"})]
+    with patch(
+        "llm_rag_assistant.app.graph.assistant_graph.plan_actions", new=AsyncMock(return_value=plan)
+    ), patch(
+        "llm_rag_assistant.app.graph.assistant_graph.resolve_task_ref",
+        new=AsyncMock(return_value=TaskMatch(task_id=37, title="업무")),
+    ):
+        started = await start_command(object(), _state("WF-250 완료로 바꿔줘"))
+        resumed = await resume_command(
+            started.thread_id, {"step_id": "9-deadbeef", "ok": True}
+        )
+
+    assert resumed.type == "done"
+    assert "일치하지 않" in resumed.message or "이미 처리" in resumed.message
+    assert resumed.card is None
 
 
 @pytest.mark.asyncio

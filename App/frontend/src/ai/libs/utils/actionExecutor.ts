@@ -49,6 +49,8 @@ export async function executeAction(card: ActionCard, projectId: number): Promis
       }
       case "toggle_checklist": {
         const itemText = String(card.args.item ?? "").trim();
+        // 빈 문자열이면 label.includes("")가 항상 참이 되어 첫 항목을 잘못 토글한다.
+        if (!itemText) return { ok: false, error: "체크리스트 항목이 지정되지 않았습니다." };
         const done = card.args.done === true;
         const items = await fetchChecklist(taskId, projectId);
         const target = items.find(item => item.label.includes(itemText));

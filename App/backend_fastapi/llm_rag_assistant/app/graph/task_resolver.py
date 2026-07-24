@@ -14,6 +14,10 @@ _TITLE_MAX_LEN = 60
 # 1등과 2등의 유사도 차이가 이보다 작으면 "확실하다"고 볼 수 없어 사용자에게 되묻는다.
 # 임의로 하나를 골랐다가 엉뚱한 업무를 수정하는 것이 되묻는 것보다 훨씬 나쁘다.
 _AMBIGUITY_MARGIN = 0.05
+# similarity = 1 - 코사인거리(정규화 임베딩, ~[0,1]). 이 값 미만이면 관련성이 바닥이라
+# 단일 결과라도 실제 업무로 확정하지 않고 "못 찾음"으로 처리한다(엉뚱한 업무 조작 방지).
+# 정상 매칭은 보통 0.5 이상이라 보수적으로 잡은 노이즈 하한이다.
+_MIN_SIMILARITY = 0.3
 
 
 class TaskCandidate(BaseModel):
@@ -64,6 +68,10 @@ async def resolve_task_ref(pool, project_id: int, task_ref: str) -> TaskMatch:
         unique.append(row)
 
     top = unique[0]
+    # 최상위 후보조차 관련성이 바닥이면 확정도 되묻기도 하지 않고 못 찾음으로 처리한다.
+    if top.get("similarity", 0.0) < _MIN_SIMILARITY:
+        return TaskMatch()
+
     if len(unique) > 1 and (top["similarity"] - unique[1]["similarity"]) < _AMBIGUITY_MARGIN:
         return TaskMatch(
             candidates=[

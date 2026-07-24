@@ -87,3 +87,19 @@ async def test_returns_nothing_when_search_fails() -> None:
 
     assert match.task_id is None
     assert match.candidates == []
+
+
+@pytest.mark.asyncio
+async def test_rejects_single_low_similarity_result() -> None:
+    """단일 결과라도 관련성이 바닥이면 확정하지 않는다(엉뚱한 업무 조작 방지)."""
+    rows = [_row(37, "전혀 다른 업무", 0.12)]
+    with patch(
+        "llm_rag_assistant.app.graph.task_resolver.embed_text", new=AsyncMock(return_value=[0.1])
+    ), patch(
+        "llm_rag_assistant.app.graph.task_resolver.search_similar_chunks",
+        new=AsyncMock(return_value=rows),
+    ):
+        match = await resolve_task_ref(object(), 1, "로그인 업무")
+
+    assert match.task_id is None
+    assert match.candidates == []

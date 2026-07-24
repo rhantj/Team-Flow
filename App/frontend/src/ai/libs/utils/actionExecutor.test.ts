@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { executeAction } from "./actionExecutor";
 import { updateTaskPosition } from "../../../board/libs/utils/taskApi";
 import { createTaskComment } from "../../../board/libs/utils/taskCommentApi";
+import { fetchChecklist, updateChecklistItem } from "../../../board/libs/utils/checklistApi";
 import type { ActionCard } from "../types/command";
 
 vi.mock("../../../board/libs/utils/taskApi", () => ({ updateTaskPosition: vi.fn() }));
@@ -70,5 +71,33 @@ describe("executeAction", () => {
 
     expect(result.ok).toBe(false);
     expect(updateTaskPosition).not.toHaveBeenCalled();
+  });
+
+  it("toggles the matching checklist item", async () => {
+    vi.mocked(fetchChecklist).mockResolvedValue([
+      { id: 1, label: "코드 리뷰", done: false },
+      { id: 2, label: "테스트 작성", done: false },
+    ] as never);
+    vi.mocked(updateChecklistItem).mockResolvedValue({} as never);
+
+    const result = await executeAction(
+      card({ tool: "toggle_checklist", args: { item: "테스트", done: true } }),
+      1
+    );
+
+    expect(result.ok).toBe(true);
+    expect(updateChecklistItem).toHaveBeenCalledWith("37", 2, { done: true }, 1);
+  });
+
+  it("refuses an empty checklist item instead of matching the first one", async () => {
+    // item이 빈 문자열이면 label.includes("")가 항상 참이라 첫 항목을 잘못 토글할 수 있다.
+    const result = await executeAction(
+      card({ tool: "toggle_checklist", args: { item: "", done: true } }),
+      1
+    );
+
+    expect(result.ok).toBe(false);
+    expect(fetchChecklist).not.toHaveBeenCalled();
+    expect(updateChecklistItem).not.toHaveBeenCalled();
   });
 });
