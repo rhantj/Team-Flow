@@ -1,4 +1,4 @@
-import { updateTaskPosition } from "../../../board/libs/utils/taskApi";
+import { updateTaskPosition, updateTask } from "../../../board/libs/utils/taskApi";
 import { createTaskComment } from "../../../board/libs/utils/taskCommentApi";
 import { fetchChecklist, updateChecklistItem } from "../../../board/libs/utils/checklistApi";
 import type { TaskStatus } from "../../../board/libs/types/task";
@@ -62,8 +62,18 @@ export async function executeAction(card: ActionCard, projectId: number): Promis
         await updateChecklistItem(taskId, matches[0].id, { done }, projectId);
         return { ok: true };
       }
+      case "set_due_date": {
+        const date = String(card.args.date ?? "").trim();
+        // 그래프(state.py)와 같은 형식 검증. 백엔드를 우회한 잘못된 값이 나가지 않게 한다.
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          return { ok: false, error: "마감일 형식이 올바르지 않습니다." };
+        }
+        await updateTask(taskId, { dueDate: date }, projectId);
+        return { ok: true };
+      }
       default:
-        // 팀장 전용 도구는 3단계에서 추가한다. 그때까지 카드가 오더라도 실행하지 않는다.
+        // 나머지 팀장 전용 도구(rename_task·change_assignee·delete_task)는 아직 미구현이다.
+        // 그래프 SUPPORTED_TOOLS에도 없어 카드 자체가 오지 않지만, 방어적으로 거부한다.
         return { ok: false, error: "아직 지원하지 않는 작업입니다." };
     }
   } catch (error) {

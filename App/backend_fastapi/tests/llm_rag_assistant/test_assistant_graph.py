@@ -73,8 +73,28 @@ async def test_member_is_blocked_before_card_for_leader_tool() -> None:
 
 @pytest.mark.asyncio
 async def test_leader_tool_blocked_as_unsupported_even_for_leader() -> None:
-    """실행기가 아직 팀장 도구를 수행하지 못한다. 권한을 통과해도 카드를 만들지 않는다
+    """실행기가 아직 수행 못 하는 팀장 도구는 권한을 통과해도 카드를 만들지 않는다
     (누르면 프론트가 거부하는 계약 불일치 방지)."""
+    from llm_rag_assistant.app.graph.assistant_graph import start_command
+
+    # change_assignee는 아직 실행기 미구현이라 SUPPORTED_TOOLS에 없다.
+    plan = [Action(tool="change_assignee", task_ref="WF-250", args={"assignee_name": "김철수"})]
+    with patch(
+        "llm_rag_assistant.app.graph.assistant_graph.plan_actions", new=AsyncMock(return_value=plan)
+    ), patch(
+        "llm_rag_assistant.app.graph.assistant_graph.resolve_task_ref",
+        new=AsyncMock(return_value=TaskMatch(task_id=37, title="업무")),
+    ):
+        outcome = await start_command(object(), _state("담당자 바꿔줘", role="LEADER"))
+
+    assert outcome.type == "done"
+    assert outcome.card is None
+    assert "지원하지 않" in outcome.message
+
+
+@pytest.mark.asyncio
+async def test_leader_can_set_due_date() -> None:
+    """set_due_date는 팀장 전용이지만 이제 실행기가 지원한다. 팀장은 확인 카드를 받는다."""
     from llm_rag_assistant.app.graph.assistant_graph import start_command
 
     plan = [Action(tool="set_due_date", task_ref="WF-250", args={"date": "2026-08-10"})]
@@ -82,13 +102,15 @@ async def test_leader_tool_blocked_as_unsupported_even_for_leader() -> None:
         "llm_rag_assistant.app.graph.assistant_graph.plan_actions", new=AsyncMock(return_value=plan)
     ), patch(
         "llm_rag_assistant.app.graph.assistant_graph.resolve_task_ref",
-        new=AsyncMock(return_value=TaskMatch(task_id=37, title="업무")),
+        new=AsyncMock(return_value=TaskMatch(task_id=50, title="FS-3 대시보드/지연 위험도 WF-195")),
     ):
-        outcome = await start_command(object(), _state("마감일 지정해줘", role="LEADER"))
+        outcome = await start_command(object(), _state("마감일 8월 10일로 지정해줘", role="LEADER"))
 
-    assert outcome.type == "done"
-    assert outcome.card is None
-    assert "지원하지 않" in outcome.message
+    assert outcome.type == "confirm"
+    assert outcome.card is not None
+    assert outcome.card.tool == "set_due_date"
+    assert outcome.card.task_id == 50
+    assert outcome.card.args["date"] == "2026-08-10"
 
 
 @pytest.mark.asyncio

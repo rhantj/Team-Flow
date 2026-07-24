@@ -11,10 +11,11 @@ MEMBER_TOOLS: frozenset[str] = frozenset({"change_status", "add_comment", "toggl
 LEADER_TOOLS: frozenset[str] = frozenset({"rename_task", "set_due_date", "change_assignee", "delete_task"})
 ALL_TOOLS: frozenset[str] = MEMBER_TOOLS | LEADER_TOOLS
 
-# 프론트 실행기(actionExecutor.ts)가 실제로 수행할 수 있는 도구. 팀장 전용 도구는 실행기
-# 미구현이라, 그래프가 확인 카드를 만들어도 실행 단계에서 거부돼 "카드는 떴는데 안 되는" 계약
-# 불일치가 생긴다. 이 집합에 없는 도구는 prepare에서 차단한다. 실행기에 도구를 추가하면 여기도 넓힌다.
-SUPPORTED_TOOLS: frozenset[str] = MEMBER_TOOLS
+# 프론트 실행기(actionExecutor.ts)가 실제로 수행할 수 있는 도구. 이 집합에 없는 도구는
+# 그래프가 확인 카드를 만들어도 실행 단계에서 거부돼 "카드는 떴는데 안 되는" 계약 불일치가
+# 생기므로 prepare에서 차단한다. 실행기에 도구를 추가하면 여기도 반드시 함께 넓힌다.
+# set_due_date는 팀장 전용(LEADER_TOOLS)이라 멤버는 권한 단계에서 먼저 막힌다.
+SUPPORTED_TOOLS: frozenset[str] = MEMBER_TOOLS | frozenset({"set_due_date"})
 
 _VALID_STATUSES: frozenset[str] = frozenset({"todo", "inprogress", "blocked", "done"})
 _DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")

@@ -35,8 +35,14 @@ def test_requires_leader_flags_only_leader_tools() -> None:
 
 
 def test_supported_tools_are_a_subset_of_all_tools() -> None:
-    # 실행기가 수행 가능한 도구는 전체 도구의 부분집합이어야 한다(현재는 멤버 도구).
+    # 실행기가 수행 가능한 도구는 전체 도구의 부분집합이어야 한다.
     assert SUPPORTED_TOOLS <= MEMBER_TOOLS | LEADER_TOOLS
+
+
+def test_set_due_date_is_supported_but_still_leader_only() -> None:
+    # set_due_date는 실행기가 지원하지만 여전히 팀장 전용이다(멤버는 권한 단계에서 막힌다).
+    assert "set_due_date" in SUPPORTED_TOOLS
+    assert requires_leader("set_due_date") is True
 
 
 def test_action_rejects_empty_task_ref() -> None:

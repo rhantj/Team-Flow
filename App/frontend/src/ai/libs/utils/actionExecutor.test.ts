@@ -1,11 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { executeAction } from "./actionExecutor";
-import { updateTaskPosition } from "../../../board/libs/utils/taskApi";
+import { updateTaskPosition, updateTask } from "../../../board/libs/utils/taskApi";
 import { createTaskComment } from "../../../board/libs/utils/taskCommentApi";
 import { fetchChecklist, updateChecklistItem } from "../../../board/libs/utils/checklistApi";
 import type { ActionCard } from "../types/command";
 
-vi.mock("../../../board/libs/utils/taskApi", () => ({ updateTaskPosition: vi.fn() }));
+vi.mock("../../../board/libs/utils/taskApi", () => ({ updateTaskPosition: vi.fn(), updateTask: vi.fn() }));
 vi.mock("../../../board/libs/utils/taskCommentApi", () => ({ createTaskComment: vi.fn() }));
 vi.mock("../../../board/libs/utils/checklistApi", () => ({
   fetchChecklist: vi.fn(),
@@ -118,6 +118,28 @@ describe("executeAction", () => {
 
     expect(result.ok).toBe(true);
     expect(updateChecklistItem).toHaveBeenCalledWith("37", 1, { done: true }, 1);
+  });
+
+  it("sets the due date via the task update API", async () => {
+    vi.mocked(updateTask).mockResolvedValue({} as never);
+
+    const result = await executeAction(
+      card({ tool: "set_due_date", args: { date: "2026-08-10" } }),
+      1
+    );
+
+    expect(result.ok).toBe(true);
+    expect(updateTask).toHaveBeenCalledWith("37", { dueDate: "2026-08-10" }, 1);
+  });
+
+  it("refuses a malformed due date without calling the API", async () => {
+    const result = await executeAction(
+      card({ tool: "set_due_date", args: { date: "8월 10일" } }),
+      1
+    );
+
+    expect(result.ok).toBe(false);
+    expect(updateTask).not.toHaveBeenCalled();
   });
 
   it("refuses an empty checklist item instead of matching the first one", async () => {
