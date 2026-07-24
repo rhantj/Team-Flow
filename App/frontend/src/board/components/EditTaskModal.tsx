@@ -4,6 +4,7 @@ import { CATEGORIES } from "../libs/mock/tasks";
 import { getCat } from "../libs/utils/taskService";
 import { updateTask, DEMO_PROJECT_ID } from "../libs/utils/taskApi";
 import { useAuth } from "../../global/hooks/useAuth";
+import { useProject } from "../../global/hooks/useProject";
 import type { MemberResponse } from "../../global/api/projectsApi";
 import type { Priority, Task } from "../libs/types/task";
 
@@ -16,11 +17,13 @@ interface EditTaskModalProps {
 
 export function EditTaskModal({ task, projectMembers, onClose, onUpdated }: EditTaskModalProps) {
   const { currentProjectId } = useAuth();
+  const project = useProject(currentProjectId);
   const [selCat, setSelCat] = useState("");
   const [customCat, setCustomCat] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [assigneeId, setAssigneeId] = useState("");
+  const [startDate, setStartDate] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [priority, setPriority] = useState<Priority>("medium");
   const [submitting, setSubmitting] = useState(false);
@@ -34,6 +37,7 @@ export function EditTaskModal({ task, projectMembers, onClose, onUpdated }: Edit
     setTitle(task.title);
     setDescription(task.description ?? "");
     setAssigneeId(task.assignee ?? "");
+    setStartDate(task.startDate ?? "");
     setDueDate(task.dueDate);
     setPriority(task.priority);
     setError(null);
@@ -54,13 +58,14 @@ export function EditTaskModal({ task, projectMembers, onClose, onUpdated }: Edit
         title: title.trim(),
         category,
         assigneeId,
+        startDate: startDate || undefined,
         dueDate: dueDate || undefined,
         priority,
         description: description.trim() || undefined,
       }, currentProjectId ?? DEMO_PROJECT_ID);
       onUpdated(updated);
-    } catch {
-      setError("수정에 실패했습니다. 잠시 후 다시 시도해주세요.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "수정에 실패했습니다. 잠시 후 다시 시도해주세요.");
     } finally {
       setSubmitting(false);
     }
@@ -113,7 +118,7 @@ export function EditTaskModal({ task, projectMembers, onClose, onUpdated }: Edit
                 />
               )}
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className="text-xs font-semibold text-foreground block mb-1.5">담당자</label>
                 <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className="w-full rounded-xl border border-border bg-input-background px-4 py-2.5 text-sm outline-none focus:border-blue-400">
@@ -122,8 +127,12 @@ export function EditTaskModal({ task, projectMembers, onClose, onUpdated }: Edit
                 </select>
               </div>
               <div>
+                <label className="text-xs font-semibold text-foreground block mb-1.5">시작일</label>
+                <input type="date" min={project?.startDate ?? undefined} max={dueDate || project?.deadline || undefined} value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full rounded-xl border border-border bg-input-background px-4 py-2.5 text-sm outline-none focus:border-blue-400" />
+              </div>
+              <div>
                 <label className="text-xs font-semibold text-foreground block mb-1.5">마감일</label>
-                <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full rounded-xl border border-border bg-input-background px-4 py-2.5 text-sm outline-none focus:border-blue-400" />
+                <input type="date" min={startDate || project?.startDate || undefined} max={project?.deadline ?? undefined} value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full rounded-xl border border-border bg-input-background px-4 py-2.5 text-sm outline-none focus:border-blue-400" />
               </div>
             </div>
             <div>

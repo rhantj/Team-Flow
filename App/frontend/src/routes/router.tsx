@@ -44,6 +44,7 @@ export const router = createBrowserRouter([
           { path: "dashboard/workload", element: <WorkloadPage /> },
           { path: "dashboard/activity", element: <ActivityPage /> },
           { path: "board", element: <BoardView /> },
+          { path: "roadmap", element: <Navigate to="/dashboard" replace /> },
           { path: "meetings", element: <MeetingsView /> },
           { path: "deliverables", element: <DeliverablesView /> },
           {

@@ -118,6 +118,7 @@ CREATE TABLE milestones (
     id         BIGSERIAL PRIMARY KEY,
     project_id BIGINT NOT NULL,
     title      VARCHAR(200) NOT NULL,
+    start_date DATE,
     due_date   DATE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_milestones_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -132,6 +133,7 @@ CREATE TABLE tasks (
     category     VARCHAR(50)  NOT NULL,
     status       VARCHAR(20)  NOT NULL,
     assignee_id  BIGINT NULL,
+    start_date   DATE,
     due_date     DATE,
     priority     VARCHAR(20),
     description  TEXT,
@@ -147,6 +149,9 @@ COMMENT ON COLUMN tasks.category IS '기획/프론트엔드/백엔드/AI-ML 등 
 COMMENT ON COLUMN tasks.status IS '할 일/진행 중/보류-블로커/완료';
 COMMENT ON COLUMN tasks.assignee_id IS '미배정 가능';
 COMMENT ON COLUMN tasks.position IS '같은 status 안에서의 칸반 카드 순서(오름차순). 컬럼 간 값 비교는 하지 않음';
+
+CREATE INDEX idx_tasks_project_milestone ON tasks(project_id, milestone_id);
+CREATE INDEX idx_milestones_project_dates ON milestones(project_id, start_date, due_date);
 
 CREATE TRIGGER trg_tasks_updated_at
     BEFORE UPDATE ON tasks

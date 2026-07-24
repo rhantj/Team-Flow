@@ -1,6 +1,8 @@
 package com.workflowai.project;
 
 import com.workflowai.rag.RagIngestService;
+import com.workflowai.dashboard.entity.Milestone;
+import com.workflowai.dashboard.repository.MilestoneRepository;
 import com.workflowai.task.Task;
 import com.workflowai.task.TaskRepository;
 import com.workflowai.user.User;
@@ -32,6 +34,7 @@ public class ProjectService {
     private final ProjectMemberRepository projectMemberRepository;
     private final UserRepository userRepository;
     private final TaskRepository taskRepository;
+    private final MilestoneRepository milestoneRepository;
     private final TransactionOperations transactionOperations;
     private final RagIngestService ragIngestService;
 
@@ -40,6 +43,7 @@ public class ProjectService {
         ProjectMemberRepository projectMemberRepository,
         UserRepository userRepository,
         TaskRepository taskRepository,
+        MilestoneRepository milestoneRepository,
         TransactionOperations transactionOperations,
         RagIngestService ragIngestService
     ) {
@@ -47,6 +51,7 @@ public class ProjectService {
         this.projectMemberRepository = projectMemberRepository;
         this.userRepository = userRepository;
         this.taskRepository = taskRepository;
+        this.milestoneRepository = milestoneRepository;
         this.transactionOperations = transactionOperations;
         this.ragIngestService = ragIngestService;
     }
@@ -163,6 +168,26 @@ public class ProjectService {
         LocalDate effectiveDeadline = request.deadline() != null ? request.deadline() : project.getDeadline();
         if (effectiveStart != null && effectiveDeadline != null && effectiveStart.isAfter(effectiveDeadline)) {
             throw new IllegalArgumentException("시작일은 종료일보다 이전이어야 합니다.");
+        }
+        if (request.startDate() != null || request.deadline() != null) {
+            for (Milestone milestone : milestoneRepository.findByProjectIdOrderByDueDateAsc(projectId)) {
+                ProjectSchedulePolicy.validate(
+                    effectiveStart,
+                    effectiveDeadline,
+                    milestone.getStartDate(),
+                    milestone.getDueDate(),
+                    "마일스톤"
+                );
+            }
+            for (Task task : taskRepository.findByProjectIdOrderByStatusAscPositionAsc(projectId)) {
+                ProjectSchedulePolicy.validate(
+                    effectiveStart,
+                    effectiveDeadline,
+                    task.getStartDate(),
+                    task.getDueDate(),
+                    "업무"
+                );
+            }
         }
         if (request.midCheckDate() != null) {
             project.setMidCheckDate(request.midCheckDate());

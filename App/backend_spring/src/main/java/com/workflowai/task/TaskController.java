@@ -4,8 +4,11 @@ import com.workflowai.activity.ActivityService;
 import com.workflowai.common.ApiResponse;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.NotificationService;
+import com.workflowai.project.Project;
 import com.workflowai.project.ProjectMemberRepository;
+import com.workflowai.project.ProjectRepository;
 import com.workflowai.project.ProjectRole;
+import com.workflowai.project.ProjectSchedulePolicy;
 import com.workflowai.rag.RagIngestService;
 import com.workflowai.security.CurrentUser;
 import com.workflowai.user.User;
@@ -63,6 +66,7 @@ public class TaskController {
     private final ActivityService activityService;
     private final NotificationService notificationService;
     private final ProjectMemberRepository projectMemberRepository;
+    private final ProjectRepository projectRepository;
     private final RagIngestService ragIngestService;
 
     public TaskController(
@@ -72,6 +76,7 @@ public class TaskController {
         ActivityService activityService,
         NotificationService notificationService,
         ProjectMemberRepository projectMemberRepository,
+        ProjectRepository projectRepository,
         RagIngestService ragIngestService
     ) {
         this.taskRepository = taskRepository;
@@ -80,6 +85,7 @@ public class TaskController {
         this.activityService = activityService;
         this.notificationService = notificationService;
         this.projectMemberRepository = projectMemberRepository;
+        this.projectRepository = projectRepository;
         this.ragIngestService = ragIngestService;
     }
 
@@ -145,11 +151,22 @@ public class TaskController {
         }
 
         Long projectDbId = demoDataService.resolveProjectId(projectId);
+        LocalDate startDate;
+        try {
+            startDate = parseDate(request.startDate());
+        } catch (DateTimeParseException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_START_DATE", "startDate는 YYYY-MM-DD 형식이어야 합니다."));
+        }
         LocalDate dueDate;
         try {
             dueDate = parseDate(request.dueDate());
         } catch (DateTimeParseException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_DUE_DATE", "dueDate는 YYYY-MM-DD 형식이어야 합니다."));
+        }
+        if (startDate != null || dueDate != null) {
+            Project project = projectRepository.findById(projectDbId)
+                .orElseThrow(() -> new IllegalArgumentException("프로젝트를 찾을 수 없습니다."));
+            ProjectSchedulePolicy.validate(project, startDate, dueDate, "업무");
         }
 
         Long assigneeId;
@@ -165,10 +182,12 @@ public class TaskController {
         String category = defaultString(request.category(), "other");
         Task task = taskRepository.save(new Task(
             projectDbId,
+            null,
             request.title(),
             category,
             status,
             assigneeId,
+            startDate,
             dueDate,
             request.priority(),
             request.description(),
@@ -273,16 +292,30 @@ public class TaskController {
             return ResponseEntity.status(404).body(ApiResponse.fail("TASK_NOT_FOUND", "업무를 찾을 수 없습니다."));
         }
 
+        LocalDate startDate;
+        try {
+            startDate = parseDate(request.startDate());
+        } catch (DateTimeParseException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_START_DATE", "startDate는 YYYY-MM-DD 형식이어야 합니다."));
+        }
         LocalDate dueDate;
         try {
             dueDate = parseDate(request.dueDate());
         } catch (DateTimeParseException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_DUE_DATE", "dueDate는 YYYY-MM-DD 형식이어야 합니다."));
         }
+        LocalDate effectiveStartDate = startDate != null ? startDate : task.getStartDate();
+        LocalDate effectiveDueDate = dueDate != null ? dueDate : task.getDueDate();
+        if (request.startDate() != null || request.dueDate() != null) {
+            Project project = projectRepository.findById(projectDbId)
+                .orElseThrow(() -> new IllegalArgumentException("프로젝트를 찾을 수 없습니다."));
+            ProjectSchedulePolicy.validate(project, effectiveStartDate, effectiveDueDate, "업무");
+        }
 
         String titleBefore = task.getTitle();
         String categoryBefore = task.getCategory();
         Long assigneeBefore = task.getAssigneeId();
+        LocalDate startDateBefore = task.getStartDate();
         LocalDate dueDateBefore = task.getDueDate();
         String priorityBefore = task.getPriority();
         String descriptionBefore = task.getDescription();
@@ -293,13 +326,22 @@ public class TaskController {
         } catch (NumberFormatException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("INVALID_ASSIGNEE_ID", "assigneeId 형식이 올바르지 않습니다."));
         }
-        task.applyUpdate(request.title(), request.category(), newAssigneeId, dueDate, request.priority(), request.description());
+        task.applyUpdate(
+            request.title(),
+            request.category(),
+            newAssigneeId,
+            startDate,
+            dueDate,
+            request.priority(),
+            request.description()
+        );
         taskRepository.save(task);
 
         Long actorId = currentActorId();
         boolean assigneeChanged = !Objects.equals(assigneeBefore, task.getAssigneeId());
         boolean otherFieldsChanged = !Objects.equals(titleBefore, task.getTitle())
             || !Objects.equals(categoryBefore, task.getCategory())
+            || !Objects.equals(startDateBefore, task.getStartDate())
             || !Objects.equals(dueDateBefore, task.getDueDate())
             || !Objects.equals(priorityBefore, task.getPriority())
             || !Objects.equals(descriptionBefore, task.getDescription());

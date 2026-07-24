@@ -35,6 +35,9 @@ public class Task {
     @Column(name = "assignee_id")
     private Long assigneeId;
 
+    @Column(name = "start_date")
+    private LocalDate startDate;
+
     @Column(name = "due_date")
     private LocalDate dueDate;
 
@@ -78,11 +81,33 @@ public class Task {
         Long createdBy,
         double position
     ) {
+        this(projectId, null, title, category, status, assigneeId, null, dueDate, priority,
+            description, sourceType, sourceMeetingId, createdBy, position);
+    }
+
+    public Task(
+        Long projectId,
+        Long milestoneId,
+        String title,
+        String category,
+        String status,
+        Long assigneeId,
+        LocalDate startDate,
+        LocalDate dueDate,
+        String priority,
+        String description,
+        String sourceType,
+        Long sourceMeetingId,
+        Long createdBy,
+        double position
+    ) {
         this.projectId = projectId;
+        this.milestoneId = milestoneId;
         this.title = title;
         this.category = category;
         this.status = status;
         this.assigneeId = assigneeId;
+        this.startDate = startDate;
         this.dueDate = dueDate;
         this.priority = priority;
         this.description = description;
@@ -120,6 +145,10 @@ public class Task {
 
     public Long getAssigneeId() {
         return assigneeId;
+    }
+
+    public LocalDate getStartDate() {
+        return startDate;
     }
 
     public LocalDate getDueDate() {
@@ -160,14 +189,32 @@ public class Task {
         this.position = position;
     }
 
+    public void moveToMilestone(Long milestoneId) {
+        this.milestoneId = milestoneId;
+    }
+
+    public void updatePlanningDates(LocalDate startDate, LocalDate dueDate) {
+        this.startDate = startDate;
+        this.dueDate = dueDate;
+    }
+
     /**
      * null인 필드는 변경하지 않는다(부분 수정). updated_at은 DB 트리거(trg_tasks_updated_at)가 갱신한다.
      * 담당자 미배정/마감일 삭제처럼 "명시적으로 null로 비우기"는 아직 어떤 프론트 화면에서도 호출하지 않으므로 지원하지 않는다.
      */
-    public void applyUpdate(String title, String category, Long assigneeId, LocalDate dueDate, String priority, String description) {
+    public void applyUpdate(
+        String title,
+        String category,
+        Long assigneeId,
+        LocalDate startDate,
+        LocalDate dueDate,
+        String priority,
+        String description
+    ) {
         if (title != null) this.title = title;
         if (category != null) this.category = category;
         if (assigneeId != null) this.assigneeId = assigneeId;
+        if (startDate != null) this.startDate = startDate;
         if (dueDate != null) this.dueDate = dueDate;
         if (priority != null) this.priority = priority;
         if (description != null) this.description = description;

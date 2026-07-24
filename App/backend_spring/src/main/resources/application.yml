@@ -52,6 +52,7 @@ spring:
     enabled: ${SPRING_FLYWAY_ENABLED:false}
     # Flyway는 기본 비활성화다. 명시적으로 켠 기존 DB에서는 schema_history 부재로 기동 실패하지 않게 baseline을 기본 허용한다.
     baseline-on-migrate: ${SPRING_FLYWAY_BASELINE_ON_MIGRATE:true}
+    baseline-version: ${SPRING_FLYWAY_BASELINE_VERSION:20260721.1}
     locations: classpath:db/migration
 
 workflow:

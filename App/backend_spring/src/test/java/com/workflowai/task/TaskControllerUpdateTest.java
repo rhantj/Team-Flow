@@ -13,7 +13,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.workflowai.activity.ActivityService;
 import com.workflowai.common.DemoDataService;
 import com.workflowai.notification.NotificationService;
+import com.workflowai.project.Project;
 import com.workflowai.project.ProjectMemberRepository;
+import com.workflowai.project.ProjectRepository;
 import com.workflowai.rag.RagIngestService;
 import com.workflowai.security.UserPrincipal;
 import com.workflowai.user.UserRepository;
@@ -54,6 +56,9 @@ class TaskControllerUpdateTest {
     private ProjectMemberRepository projectMemberRepository;
 
     @Mock
+    private ProjectRepository projectRepository;
+
+    @Mock
     private RagIngestService ragIngestService;
 
     private MockMvc mockMvc;
@@ -63,7 +68,7 @@ class TaskControllerUpdateTest {
         mockMvc = MockMvcBuilders
             .standaloneSetup(new TaskController(
                 taskRepository, userRepository, demoDataService, activityService,
-                notificationService, projectMemberRepository, ragIngestService
+                notificationService, projectMemberRepository, projectRepository, ragIngestService
             ))
             .build();
         SecurityContextHolder.getContext().setAuthentication(
@@ -90,6 +95,8 @@ class TaskControllerUpdateTest {
     void updatesTaskFields() throws Exception {
         when(demoDataService.resolveProjectId("demo-project")).thenReturn(1L);
         when(taskRepository.findById(anyLong())).thenReturn(Optional.of(existingTask()));
+        when(projectRepository.findById(1L))
+            .thenReturn(Optional.of(new Project("프로젝트", "team", LocalDate.of(2026, 8, 7), "")));
         when(taskRepository.save(any(Task.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         mockMvc.perform(patch("/api/v1/projects/demo-project/tasks/42")
