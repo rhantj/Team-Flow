@@ -14,6 +14,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.io.IOException;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -335,10 +336,17 @@ public class MeController {
      * 지워서 남의 아바타 파일을 삭제하는 사고를 막기 위해서다. avatars 디렉터리를 벗어나는
      * 경로 방어는 StorageService.delete가 담당한다.
      * 정리가 실패하거나 거부되면 요청 자체는 여전히 성공으로 응답한다(DB는 이미 정확한
-     * 상태이므로).
+     * 상태이므로) — relativePath가 손상/변조로 파일시스템이 허용하지 않는 문자를 담고 있어
+     * Path.of()가 InvalidPathException(unchecked)을 던지는 경우도 여기서 흡수한다.
      */
     private void deleteAvatarFile(Long userId, String relativePath) {
-        String fileName = Path.of(relativePath).getFileName().toString();
+        String fileName;
+        try {
+            fileName = Path.of(relativePath).getFileName().toString();
+        } catch (InvalidPathException e) {
+            log.warn("아바타 정리 거부: userId={} 경로 형식이 올바르지 않음 ({})", userId, relativePath, e);
+            return;
+        }
         if (!fileName.startsWith(userId + "-")) {
             log.warn("아바타 정리 거부: userId={} 소유가 아닌 파일명 ({})", userId, relativePath);
             return;

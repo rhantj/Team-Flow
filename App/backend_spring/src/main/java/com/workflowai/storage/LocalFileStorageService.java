@@ -2,6 +2,7 @@ package com.workflowai.storage;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import org.slf4j.Logger;
@@ -58,7 +59,12 @@ public class LocalFileStorageService implements StorageService {
                 return false;
             }
             return Files.deleteIfExists(target);
-        } catch (IOException e) {
+        } catch (InvalidPathException | IOException e) {
+            // relativePath는 DB에 저장된 값을 그대로 받는다 — 손상/변조로 파일시스템이 허용하지
+            // 않는 문자(예: NUL)가 섞여 있으면 Path.of()가 InvalidPathException(unchecked)을
+            // 던진다. 이걸 잡지 않으면 삭제 실패가 호출부까지 예외로 전파돼, DB는 이미 정확히
+            // 갱신됐는데도 요청 자체가 500으로 실패해버린다 — 삭제는 best-effort이지 요청 성공의
+            // 필요조건이 아니므로 여기서 흡수하고 false만 돌려준다.
             log.warn("파일 삭제 실패: path={}", relativePath, e);
             return false;
         }

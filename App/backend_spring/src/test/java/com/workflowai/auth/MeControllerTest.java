@@ -203,6 +203,27 @@ class MeControllerTest {
     }
 
     @Test
+    void uploadAvatar_succeedsEvenWhenOldAvatarPathIsMalformed() throws Exception {
+        authenticateAs(1L);
+        User user = existingUser();
+        // DB에 저장된 이전 경로가 손상/변조로 파일시스템이 허용하지 않는 문자(NUL, 코드 포인트
+        // 0)를 담고 있는 경우를 흉내낸다 — Path.of()가 InvalidPathException(unchecked)을
+        // 던지는 상황이라, 이전 파일 정리에 실패하더라도 요청 자체는 여전히 성공해야 한다(DB는
+        // 새 경로로 이미 정확히 갱신됐으므로). 소스 코드에 제어 문자를 직접 적지 않도록
+        // 런타임에 문자를 조립한다.
+        char nulChar = (char) 0;
+        user.setProfileImagePath("avatars/1-bad" + nulChar + "name.png");
+        when(userRepository.findById(eq(1L))).thenReturn(Optional.of(user));
+        when(userRepository.updateProfileImagePathIfUnchanged(eq(1L), any(), any())).thenReturn(1);
+
+        MockMultipartFile validPng = new MockMultipartFile("file", "avatar.png", "image/png", pngBytes());
+
+        mockMvc.perform(multipart("/api/v1/me/avatar").file(validPng))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.profileImageUrl").exists());
+    }
+
+    @Test
     void uploadAvatar_returnsConflictWhenPathChangedConcurrently() throws Exception {
         authenticateAs(1L);
         User user = existingUser();
