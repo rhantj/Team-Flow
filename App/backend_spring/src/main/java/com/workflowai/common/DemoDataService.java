@@ -70,7 +70,7 @@ public class DemoDataService implements ApplicationRunner {
         for (DemoMember member : DEMO_MEMBERS) {
             User user = userRepository.findByProviderAndProviderId(DEMO_USER_PROVIDER, member.mockId())
                 .orElseGet(() -> userRepository.save(
-                    new User("demo-user-" + member.mockId() + "@workflow.ai", member.name(), DEMO_USER_PROVIDER, member.mockId())
+                    new User("demo-user-" + member.mockId() + "@workflow.ai", member.name(), DEMO_USER_PROVIDER, member.mockId(), null)
                 ));
             if (!user.getName().equals(member.name())) {
                 log.info("기존 데모 사용자 이름은 보존합니다. providerId={}, existing={}, roster={}", member.mockId(), user.getName(), member.name());

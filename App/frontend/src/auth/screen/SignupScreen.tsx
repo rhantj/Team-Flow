@@ -1,5 +1,5 @@
 import { useState, type ChangeEvent } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import {
   AlertTriangle,
   ArrowRight,
@@ -24,18 +24,37 @@ import { tokenStore } from "../../global/api/tokenStore";
 
 const demoAuthEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_AUTH === "true";
 
+// 비밀번호는 여기 포함하지 않는다 — router의 location.state는 브라우저 세션 히스토리에
+// 남아, 세션 복원 기능이나 개발자 도구를 통해 나중에도 들여다볼 수 있다. 이름/이메일처럼
+// 화면에 그대로 노출되는 값과 달리 비밀번호를 그런 곳에 실어 보내면 안 된다.
+interface SignupDraft {
+  name: string;
+  email: string;
+  isProfessor: boolean;
+  professorNo: string;
+}
+
 export function SignupScreen() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { loginWithGoogle, refreshMe } = useAuth();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  // /signup/terms에서 돌아올 때 location.state로 이전에 입력하던 값(draft)과 약관 동의 여부를
+  // 넘겨받는다 — 약관 보기 때문에 화면이 언마운트됐다 다시 마운트돼도 입력하던 내용이
+  // 사라지지 않게 하기 위해서다.
+  const navState = location.state as { agreed?: boolean; draft?: SignupDraft } | null;
+  const [name, setName] = useState(navState?.draft?.name ?? "");
+  const [email, setEmail] = useState(navState?.draft?.email ?? "");
+  // 비밀번호는 draft로 복원하지 않는다(위 SignupDraft 설명 참고) — 약관 보기를 눌렀다 돌아오면
+  // 매번 다시 입력해야 한다.
   const [pw, setPw] = useState("");
   const [pwConfirm, setPwConfirm] = useState("");
   const [showPw, setShowPw] = useState(false);
-  const [agreed, setAgreed] = useState(false);
+  // 일반적인 클릭으로는 체크할 수 없다 — /signup/terms에서 약관을 확인하고 돌아올 때만
+  // agreed: true 상태로 마운트되며, 그 외에는 이 컴포넌트 내부에서 값을 바꿀 방법이 없다.
+  const [agreed] = useState(navState?.agreed ?? false);
   const [loading, setLoading] = useState(false);
-  const [isProfessor, setIsProfessor] = useState(false);
-  const [professorNo, setProfessorNo] = useState("");
+  const [isProfessor, setIsProfessor] = useState(navState?.draft?.isProfessor ?? false);
+  const [professorNo, setProfessorNo] = useState(navState?.draft?.professorNo ?? "");
   const [certificateName, setCertificateName] = useState("");
   const [approvalSubmitted, setApprovalSubmitted] = useState(false);
   const [signupError, setSignupError] = useState<string | null>(null);
@@ -77,6 +96,9 @@ export function SignupScreen() {
           password: pw,
           name: name.trim(),
           roleType: isProfessor ? "REVIEWER" : "MEMBER",
+          // 서버가 다시 검증하고 users.terms_agreed_at에 남긴다 — 이 값만 믿지 않는다
+          // (AuthService.signup 참고).
+          termsAgreed: agreed,
         }),
       });
 
@@ -259,18 +281,43 @@ export function SignupScreen() {
                 )}
               </div>
 
-              <label className="flex items-start gap-2 mt-5 mb-6 cursor-pointer select-none">
+              <div className="flex items-start gap-2 mt-5 mb-6">
+                {/* 일반적인 클릭으로는 체크할 수 없다 — 약관 보기를 통해 상세 약관을 확인하고
+                    돌아와야만 켜진다(SignupScreen 상단 agreed 초기화 참고). onClick이 없는
+                    순수 상태 표시라 div로 두되, role/aria-checked로 스크린 리더에도 현재
+                    동의 상태와 "조작 불가"임을 전달한다. */}
                 <div
-                  onClick={() => setAgreed(v => !v)}
-                  className={`w-4 h-4 rounded border flex items-center justify-center transition-all mt-0.5 cursor-pointer shrink-0 ${agreed ? "border-blue-500 bg-blue-500" : "border-border"}`}
+                  role="checkbox"
+                  aria-checked={agreed}
+                  aria-disabled="true"
+                  title="약관 보기를 통해 확인 후 자동으로 체크됩니다"
+                  className={`w-4 h-4 rounded border flex items-center justify-center mt-0.5 shrink-0 ${
+                    agreed ? "border-blue-500 bg-blue-500" : "border-border bg-muted cursor-not-allowed"
+                  }`}
                 >
                   {agreed && <Check className="w-3 h-3 text-white" />}
                 </div>
                 <span className="text-xs text-muted-foreground leading-relaxed">
-                  <button className="font-semibold text-blue-600 hover:text-blue-700">이용약관</button> 및{" "}
-                  <button className="font-semibold text-blue-600 hover:text-blue-700">개인정보처리방침</button>에 동의합니다.
+                  <button
+                    type="button"
+                    onClick={() =>
+                      navigate("/signup/terms", {
+                        // 비밀번호는 넘기지 않는다 — SignupDraft 선언부 설명 참고.
+                        state: { draft: { name, email, isProfessor, professorNo } },
+                      })
+                    }
+                    className="font-semibold text-blue-600 hover:text-blue-700"
+                  >
+                    약관 보기
+                  </button>
+                  를 통해 이용약관 및 개인정보처리방침을 확인하고 동의해주세요.
+                  {agreed && (
+                    <span className="block mt-0.5 text-[11px] text-muted-foreground/80">
+                      약관 확인을 위해 화면을 이동했다 왔습니다 — 비밀번호는 보안을 위해 다시 입력해주세요.
+                    </span>
+                  )}
                 </span>
-              </label>
+              </div>
 
               {signupError && (
                 <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-600">

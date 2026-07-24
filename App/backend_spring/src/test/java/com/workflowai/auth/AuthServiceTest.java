@@ -3,6 +3,7 @@ package com.workflowai.auth;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -43,7 +44,7 @@ class AuthServiceTest {
         when(jwtService.issueRefreshToken(any())).thenReturn("refresh-token");
         when(jwtService.accessTokenTtlSeconds()).thenReturn(1800L);
 
-        SignupResponse response = authService.signup(" New@Example.COM ", "12345678", " 홍길동 ", "MEMBER");
+        SignupResponse response = authService.signup(" New@Example.COM ", "12345678", " 홍길동 ", "MEMBER", true);
 
         ArgumentCaptor<User> savedUser = ArgumentCaptor.forClass(User.class);
         verify(userRepository).saveAndFlush(savedUser.capture());
@@ -52,6 +53,7 @@ class AuthServiceTest {
         assertThat(savedUser.getValue().getProvider()).isEqualTo("local");
         assertThat(savedUser.getValue().getEmail()).isEqualTo("new@example.com");
         assertThat(savedUser.getValue().getName()).isEqualTo("홍길동");
+        assertThat(savedUser.getValue().getTermsAgreedAt()).isNotNull();
 
         assertThat(response.status()).isEqualTo("ACTIVE");
         assertThat(response.tokens()).isNotNull();
@@ -63,7 +65,7 @@ class AuthServiceTest {
         when(userRepository.existsByEmail("prof@example.com")).thenReturn(false);
         when(userRepository.saveAndFlush(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        SignupResponse response = authService.signup("prof@example.com", "12345678", "고교수", "REVIEWER");
+        SignupResponse response = authService.signup("prof@example.com", "12345678", "고교수", "REVIEWER", true);
 
         assertThat(response.status()).isEqualTo("PENDING_REVIEWER_APPROVAL");
         assertThat(response.tokens()).isNull();
@@ -103,7 +105,7 @@ class AuthServiceTest {
     void signup_duplicateEmail_throws() {
         when(userRepository.existsByEmail("dup@example.com")).thenReturn(true);
 
-        assertThatThrownBy(() -> authService.signup("dup@example.com", "12345678", "이름", "MEMBER"))
+        assertThatThrownBy(() -> authService.signup("dup@example.com", "12345678", "이름", "MEMBER", true))
             .isInstanceOf(EmailAlreadyExistsException.class);
     }
 
@@ -112,26 +114,64 @@ class AuthServiceTest {
         when(userRepository.existsByEmail("race@example.com")).thenReturn(false, true);
         when(userRepository.saveAndFlush(any(User.class))).thenThrow(new DataIntegrityViolationException("duplicate email"));
 
-        assertThatThrownBy(() -> authService.signup("race@example.com", "12345678", "이름", "MEMBER"))
+        assertThatThrownBy(() -> authService.signup("race@example.com", "12345678", "이름", "MEMBER", true))
             .isInstanceOf(EmailAlreadyExistsException.class);
     }
 
     @Test
     void signup_shortPassword_throws() {
-        assertThatThrownBy(() -> authService.signup("short@example.com", "1234", "이름", "MEMBER"))
+        assertThatThrownBy(() -> authService.signup("short@example.com", "1234", "이름", "MEMBER", true))
             .isInstanceOf(InvalidSignupInputException.class);
     }
 
     @Test
     void signup_invalidEmail_throws() {
-        assertThatThrownBy(() -> authService.signup("not-an-email", "12345678", "이름", "MEMBER"))
+        assertThatThrownBy(() -> authService.signup("not-an-email", "12345678", "이름", "MEMBER", true))
             .isInstanceOf(InvalidSignupInputException.class);
     }
 
     @Test
     void signup_invalidRoleType_throws() {
-        assertThatThrownBy(() -> authService.signup("role@example.com", "12345678", "이름", "ADMIN"))
+        assertThatThrownBy(() -> authService.signup("role@example.com", "12345678", "이름", "ADMIN", true))
             .isInstanceOf(InvalidSignupInputException.class);
+    }
+
+    @Test
+    void signup_termsNotAgreed_throwsAndDoesNotSaveUser() {
+        assertThatThrownBy(() -> authService.signup("noconsent@example.com", "12345678", "이름", "MEMBER", false))
+            .isInstanceOf(InvalidSignupInputException.class);
+
+        verify(userRepository, never()).saveAndFlush(any(User.class));
+    }
+
+    @Test
+    void signup_termsAgreed_setsTermsAgreedAt() {
+        when(userRepository.existsByEmail("consent@example.com")).thenReturn(false);
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jwtService.issueAccessToken(any())).thenReturn("access-token");
+        when(jwtService.issueRefreshToken(any())).thenReturn("refresh-token");
+        when(jwtService.accessTokenTtlSeconds()).thenReturn(1800L);
+
+        authService.signup("consent@example.com", "12345678", "이름", "MEMBER", true);
+
+        ArgumentCaptor<User> savedUser = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).saveAndFlush(savedUser.capture());
+        assertThat(savedUser.getValue().getTermsAgreedAt()).isNotNull();
+    }
+
+    @Test
+    void signup_termsAgreedNull_succeedsButDoesNotSetTermsAgreedAt() {
+        when(userRepository.existsByEmail("nullconsent@example.com")).thenReturn(false);
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jwtService.issueAccessToken(any())).thenReturn("access-token");
+        when(jwtService.issueRefreshToken(any())).thenReturn("refresh-token");
+        when(jwtService.accessTokenTtlSeconds()).thenReturn(1800L);
+
+        authService.signup("nullconsent@example.com", "12345678", "이름", "MEMBER", null);
+
+        ArgumentCaptor<User> savedUser = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).saveAndFlush(savedUser.capture());
+        assertThat(savedUser.getValue().getTermsAgreedAt()).isNull();
     }
 
     @Test

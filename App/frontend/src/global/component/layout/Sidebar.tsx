@@ -4,6 +4,7 @@ import { Check, ChevronDown, Hash, Plus, Sparkles, Settings, Shield, PanelLeftCl
 import { NAV_ITEMS } from "../../lib/constants/nav";
 import type { Tab } from "../../../board/libs/types/task";
 import { useAuth } from "../../hooks/useAuth";
+import { API_ORIGIN } from "../../api/apiClient";
 import type { ProjectRoleKo } from "../../api/authTypes";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
@@ -238,8 +239,10 @@ export function Sidebar({ active, onSelect, onAI, collapsed, onToggleCollapsed, 
       {/* User */}
       <div className="p-3 border-t" style={{ borderColor: "var(--sidebar-border)" }}>
         <div className={`flex items-center gap-2.5 px-2 py-1.5 ${collapsed ? "justify-center" : ""}`}>
-          <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-semibold shrink-0" style={{ background: "#3B5BDB" }}>
-            {(user?.name || "사용자").charAt(0)}
+          <div className="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center text-white text-sm font-semibold shrink-0" style={{ background: "#3B5BDB" }}>
+            {user?.profileImageUrl ? (
+              <img src={`${API_ORIGIN}${user.profileImageUrl}`} alt={user.name} className="w-full h-full object-cover" />
+            ) : (user?.name || "사용자").charAt(0)}
           </div>
           {!collapsed && (
             <div className="flex-1 min-w-0">
@@ -247,7 +250,13 @@ export function Sidebar({ active, onSelect, onAI, collapsed, onToggleCollapsed, 
               <div className="text-[10px]" style={{ color: "var(--muted-foreground)" }}>{role}</div>
             </div>
           )}
-          {!collapsed && <Settings className="w-4 h-4 cursor-pointer shrink-0" style={{ color: "var(--muted-foreground)" }} />}
+          {!collapsed && (
+            <Settings
+              onClick={() => navigate("/mypage/edit")}
+              className="w-4 h-4 cursor-pointer shrink-0 hover:opacity-80 transition-opacity"
+              style={{ color: "var(--muted-foreground)" }}
+            />
+          )}
         </div>
       </div>
     </div>

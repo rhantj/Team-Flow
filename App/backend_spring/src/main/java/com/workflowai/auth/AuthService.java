@@ -4,6 +4,7 @@ import com.workflowai.security.JwtService;
 import com.workflowai.user.User;
 import com.workflowai.user.UserRepository;
 import io.jsonwebtoken.Claims;
+import java.time.LocalDateTime;
 import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -51,7 +52,7 @@ public class AuthService {
 
         User user = userRepository.findByProviderAndProviderId(PROVIDER_GOOGLE, userInfo.sub())
             .orElseGet(() -> userRepository.save(
-                new User(userInfo.email(), userInfo.name(), PROVIDER_GOOGLE, userInfo.sub())
+                new User(userInfo.email(), userInfo.name(), PROVIDER_GOOGLE, userInfo.sub(), null)
             ));
 
         return issueTokens(user);
@@ -66,7 +67,7 @@ public class AuthService {
 
     /** 이메일/비밀번호 회원가입. REVIEWER는 토큰을 발급하지 않고 승인 대기 상태로만 계정을 만든다. */
     @Transactional
-    public SignupResponse signup(String email, String password, String name, String roleType) {
+    public SignupResponse signup(String email, String password, String name, String roleType, Boolean termsAgreed) {
         String normalizedEmail = normalizeEmail(email);
         String normalizedName = normalizeName(name);
         String normalizedRoleType = normalizeRoleType(roleType);
@@ -79,6 +80,12 @@ public class AuthService {
         if (password == null || password.length() < MIN_PASSWORD_LENGTH) {
             throw new InvalidSignupInputException("비밀번호는 " + MIN_PASSWORD_LENGTH + "자 이상이어야 합니다.");
         }
+        // 하위 호환성: termsAgreed가 없는(null) 요청은 구버전 클라이언트로 간주해 통과시키되
+        // DB에는 동의 시각을 기록하지 않는다(null 유지). 명시적으로 false를 보낸 경우에만
+        // 동의 거부로 판단해 가입을 막는다 — "누락"과 "명시적 거부"를 다르게 취급한다.
+        if (Boolean.FALSE.equals(termsAgreed)) {
+            throw new InvalidSignupInputException("이용약관 및 개인정보처리방침에 동의해주세요.");
+        }
         if (userRepository.existsByEmail(normalizedEmail)) {
             throw new EmailAlreadyExistsException();
         }
@@ -86,6 +93,9 @@ public class AuthService {
         String passwordHash = passwordEncoder.encode(password);
         boolean isReviewerApplication = ROLE_TYPE_REVIEWER.equals(normalizedRoleType);
         User newUser = new User(normalizedEmail, normalizedName, PROVIDER_LOCAL, normalizedEmail, passwordHash);
+        if (Boolean.TRUE.equals(termsAgreed)) {
+            newUser.setTermsAgreedAt(LocalDateTime.now());
+        }
         if (isReviewerApplication) {
             newUser.setReviewerStatus(REVIEWER_STATUS_PENDING);
         }
@@ -137,7 +147,7 @@ public class AuthService {
     private AuthTokenResponse issueTokens(User user) {
         String accessToken = jwtService.issueAccessToken(user);
         String refreshToken = jwtService.issueRefreshToken(user);
-        UserSummary summary = new UserSummary(user.getId(), user.getEmail(), user.getName());
+        UserSummary summary = UserSummary.from(user);
         return new AuthTokenResponse(accessToken, refreshToken, jwtService.accessTokenTtlSeconds(), summary);
     }
 

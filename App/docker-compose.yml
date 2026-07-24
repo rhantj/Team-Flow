@@ -82,6 +82,11 @@ services:
       SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:-jdbc:postgresql://db:5432/workflow}
       SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-root}
+      # 로컬 개발 DB는 언제든 버리고 새로 만들 수 있으니 기본으로 켜서 Flyway baseline 동작을
+      # 검증하는 용도로 쓴다. 운영(OCI)에서는 docker-compose.prod.yml이 이 값을 다시 false로
+      # 덮어써 기본 비활성화한다 — 실제 운영 DB에서 baseline이 의도대로 동작하는지 검증하기
+      # 전에는 자동으로 켜지지 않아야 한다 (DEPLOY_OCI.md 8절 "Flyway 최초 활성화 전 검증" 참고).
+      SPRING_FLYWAY_ENABLED: ${SPRING_FLYWAY_ENABLED:-true}
       WORKFLOW_AI_FASTAPI_URL: http://backend-fastapi:8000
       RAG_INTERNAL_API_KEY: ${RAG_INTERNAL_API_KEY}
       JWT_SECRET: ${JWT_SECRET}
@@ -97,6 +102,9 @@ services:
       SUPABASE_STORAGE_BUCKET: ${SUPABASE_STORAGE_BUCKET:-task-results}
     ports:
       - '8080:8080'
+    volumes:
+      # 업로드 파일(프로필 사진 등)이 컨테이너 재빌드 후에도 유지되도록 named volume에 저장한다.
+      - uploads-data:/app/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -182,4 +190,5 @@ services:
 
 volumes:
   db-data:
+  uploads-data:
   redis-data:

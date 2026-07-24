@@ -36,6 +36,15 @@ export default defineConfig({
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv'],
 
+  server: {
+    // Docker(Windows) 바인드 마운트에서는 네이티브 fs 이벤트가 컨테이너까지 전달되지 않아
+    // Vite가 호스트에서 수정한 파일 변경을 못 잡는 경우가 있다. 폴링으로 강제 감지한다.
+    watch: {
+      usePolling: true,
+      interval: 300,
+    },
+  },
+
   test: {
     environment: 'jsdom',
     globals: true,

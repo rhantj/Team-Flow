@@ -229,7 +229,9 @@ public class AuthController {
     public ResponseEntity<ApiResponse<SignupResponse>> signup(@Valid @RequestBody SignupRequest request) {
         try {
             return ResponseEntity.ok(ApiResponse.ok(
-                authService.signup(request.email(), request.password(), request.name(), request.roleType())
+                authService.signup(
+                    request.email(), request.password(), request.name(), request.roleType(), request.termsAgreed()
+                )
             ));
         } catch (EmailAlreadyExistsException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.fail("EMAIL_ALREADY_EXISTS", e.getMessage()));

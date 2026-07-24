@@ -2,6 +2,9 @@ import { tokenStore } from "./tokenStore";
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080/api/v1";
 
+// 업로드된 파일(/uploads/...)은 /api/v1 하위가 아니라 서버 루트에서 정적으로 서빙되므로 origin만 필요하다.
+export const API_ORIGIN = new URL(API_BASE_URL, window.location.origin).origin;
+
 export const AUTH_LOGOUT_EVENT = "workflow-ai:auth-logout";
 
 export interface ApiEnvelope<T> {

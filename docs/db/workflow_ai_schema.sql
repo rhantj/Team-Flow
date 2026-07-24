@@ -36,24 +36,28 @@ CREATE TABLE users (
     name            VARCHAR(100) NOT NULL,
     provider        VARCHAR(20)  NOT NULL,
     provider_id     VARCHAR(255) NOT NULL,
-    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     password_hash   VARCHAR(255),
     reviewer_status VARCHAR(20),
-    affiliation     VARCHAR(100),
-    field           JSONB NOT NULL DEFAULT '[]',
-    github_username VARCHAR(100),
+    affiliation        VARCHAR(100),
+    field_tags         JSONB NOT NULL DEFAULT '[]'::jsonb,
+    github_username    VARCHAR(100),
+    profile_image_path VARCHAR(255),
+    terms_agreed_at    TIMESTAMP,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_users_email UNIQUE (email),
     CONSTRAINT uq_users_provider UNIQUE (provider, provider_id)
 );
 COMMENT ON TABLE users IS '사용자';
-COMMENT ON COLUMN users.provider IS 'google 등 OAuth 제공자';
-COMMENT ON COLUMN users.provider_id IS 'OAuth sub (불변 식별자)';
-COMMENT ON COLUMN users.password_hash IS '로컬(이메일/비밀번호) 회원가입 계정만 사용. BCrypt 해시. Google/데모 계정은 NULL.';
+COMMENT ON COLUMN users.provider IS 'google 등 OAuth 제공자 또는 local(이메일/비밀번호 가입)';
+COMMENT ON COLUMN users.provider_id IS 'OAuth sub(불변 식별자) 또는 local 계정의 경우 email과 동일';
+COMMENT ON COLUMN users.password_hash IS 'BCrypt 해시. provider=local 계정만 값이 있고 OAuth 계정은 NULL';
 COMMENT ON COLUMN users.reviewer_status IS 'REVIEWER로 가입 신청한 계정만 사용: PENDING(승인 대기)/APPROVED(승인 완료). NULL이면 심사자 신청 이력 없음.';
 COMMENT ON COLUMN users.affiliation IS '소속 (예: 컴퓨터공학과 3학년)';
-COMMENT ON COLUMN users.field IS '전공/관심 분야 태그 배열 (예: ["백엔드", "인프라"])';
+COMMENT ON COLUMN users.field_tags IS '전공/관심 분야 태그 배열 (예: ["백엔드", "인프라"])';
 COMMENT ON COLUMN users.github_username IS 'GitHub 아이디만 저장한다 (URL 아님)';
+COMMENT ON COLUMN users.profile_image_path IS '업로드된 프로필 사진의 uploads 디렉토리 기준 상대 경로 (예: avatars/5.png)';
+COMMENT ON COLUMN users.terms_agreed_at IS '이메일/비밀번호 회원가입 시 이용약관에 동의한 시각. Google OAuth/데모 계정은 이 절차를 거치지 않아 NULL';
 
 CREATE TRIGGER trg_users_updated_at
     BEFORE UPDATE ON users

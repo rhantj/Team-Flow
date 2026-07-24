@@ -7,6 +7,10 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "users")
@@ -30,8 +34,31 @@ public class User {
     @Column(name = "password_hash", length = 255)
     private String passwordHash;
 
+    @Column(length = 100)
+    private String affiliation;
+
+    // 이 컬럼은 이전에 "field"(VARCHAR)였는데, 다중 태그를 지원하기 위해 field_tags(JSONB)로
+    // 완전히 대체했다(레거시 field 컬럼은 삭제됨, docs/db/migrations/011 참고).
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "field_tags", nullable = false)
+    private List<String> field = new ArrayList<>();
+
+    @Column(name = "github_username", length = 100)
+    private String githubUsername;
+
+    @Column(name = "profile_image_path", length = 255)
+    private String profileImagePath;
+
     @Column(name = "reviewer_status", length = 20)
     private String reviewerStatus;
+
+    // 이메일/비밀번호 회원가입(로컬 계정)에서만 채워진다 — 실제로 이 유저가 회원가입 시점에
+    // 이용약관/개인정보처리방침 화면을 거쳐 동의했는지 감사 목적으로 남긴다. Google OAuth/데모
+    // 로그인으로 만들어진 계정은 이 화면을 거치지 않으므로 null로 남는다. 프론트엔드 체크박스
+    // 상태만 믿지 않고 AuthService가 서버에서 다시 검증한 뒤 이 값을 채운다 — 버그나 API를
+    // 직접 호출하는 우회 경로로 동의 없이 계정이 만들어지는 것을 막기 위해서다.
+    @Column(name = "terms_agreed_at")
+    private LocalDateTime termsAgreedAt;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -42,17 +69,16 @@ public class User {
     protected User() {
     }
 
-    public User(String email, String name, String provider, String providerId) {
+    public User(String email, String name, String provider, String providerId, String passwordHash) {
         this.email = email;
         this.name = name;
         this.provider = provider;
         this.providerId = providerId;
+        this.passwordHash = passwordHash;
     }
 
-    /** 로컬(이메일/비밀번호) 회원가입 계정용. */
-    public User(String email, String name, String provider, String providerId, String passwordHash) {
-        this(email, name, provider, providerId);
-        this.passwordHash = passwordHash;
+    public User(String email, String name, String provider, String providerId) {
+        this(email, name, provider, providerId, null);
     }
 
     @jakarta.persistence.PrePersist
@@ -95,12 +121,56 @@ public class User {
         return passwordHash;
     }
 
+    public void setPasswordHash(String passwordHash) {
+        this.passwordHash = passwordHash;
+    }
+
+    public String getAffiliation() {
+        return affiliation;
+    }
+
+    public void setAffiliation(String affiliation) {
+        this.affiliation = affiliation;
+    }
+
+    public List<String> getField() {
+        return field;
+    }
+
+    public void setField(List<String> field) {
+        this.field = field;
+    }
+
+    public String getGithubUsername() {
+        return githubUsername;
+    }
+
+    public void setGithubUsername(String githubUsername) {
+        this.githubUsername = githubUsername;
+    }
+
+    public String getProfileImagePath() {
+        return profileImagePath;
+    }
+
+    public void setProfileImagePath(String profileImagePath) {
+        this.profileImagePath = profileImagePath;
+    }
+
     public String getReviewerStatus() {
         return reviewerStatus;
     }
 
     public void setReviewerStatus(String reviewerStatus) {
         this.reviewerStatus = reviewerStatus;
+    }
+
+    public LocalDateTime getTermsAgreedAt() {
+        return termsAgreedAt;
+    }
+
+    public void setTermsAgreedAt(LocalDateTime termsAgreedAt) {
+        this.termsAgreedAt = termsAgreedAt;
     }
 
     public LocalDateTime getCreatedAt() {

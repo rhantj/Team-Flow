@@ -9,6 +9,7 @@ import {
   Calendar, Layers, ArrowRight, AlertCircle, Users, RefreshCw,
   Link2, Target, Award
 } from "lucide-react";
+import { API_ORIGIN } from "../../global/api/apiClient";
 import { StatusBadge } from "../../global/component/StatusBadge";
 import { DelivBadge } from "../../deliverables/components/DelivBadge";
 import { SectionTitle } from "../../global/component/SectionTitle";
@@ -22,6 +23,7 @@ import {
 import { useMyTasks } from "../libs/hooks/useMyTasks";
 import { getDueToday, getDueThisWeek } from "../libs/utils/taskWidgets";
 import { getDoneCount, getInProgressCount, getBlockedCount, getTasksByStatus, formatDueDate } from "../../board/libs/utils/taskService";
+import type { TaskStatus } from "../../board/libs/types/task";
 
 // ─── local types ──────────────────────────────────────────────────────────────
 export type MyPageRole = "member" | "reviewer";
@@ -35,15 +37,21 @@ const EVAL_STATUS_META: Record<EvalStatus, { label: string; cls: string }> = {
 };
 
 // ─── Member My Page ───────────────────────────────────────────────────────────
-function MemberMyPage({ name, email, onLogout, projectId, userId }: { name: string; email: string; onLogout: () => void; projectId: number | null; userId: number | null }) {
+function MemberMyPage({ name, email, affiliation, field, github, profileImageUrl, onLogout, projectId, userId }: {
+  name: string; email: string; affiliation: string; field: string[]; github: string; profileImageUrl: string | null;
+  onLogout: () => void; projectId: number | null; userId: number | null;
+}) {
+  const navigate = useNavigate();
   const [taskView, setTaskView] = useState<"all"|"today"|"week">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | TaskStatus>("all");
   const [showScore, setShowScore] = useState(false);
   const initials = name ? name[0] : MEMBER_USER.initials;
 
   const { tasks: myTasks, loadState, reload } = useMyTasks(projectId, userId);
   const dueToday = getDueToday(myTasks);
   const dueThisWeek = getDueThisWeek(myTasks);
-  const visibleTasks = taskView === "today" ? dueToday : taskView === "week" ? dueThisWeek : myTasks;
+  const deadlineFilteredTasks = taskView === "today" ? dueToday : taskView === "week" ? dueThisWeek : myTasks;
+  const visibleTasks = statusFilter === "all" ? deadlineFilteredTasks : deadlineFilteredTasks.filter(t => t.status === statusFilter);
   const todayNotDone = dueToday.filter(t => t.status !== "done");
   const thisWeekNotDone = dueThisWeek.filter(t => t.status !== "done");
 
@@ -62,11 +70,13 @@ function MemberMyPage({ name, email, onLogout, projectId, userId }: { name: stri
         <div className="h-16" style={{ background:"linear-gradient(135deg,#7048E8,#4F6EF7)" }} />
         <div className="px-6 pb-5">
           <div className="flex items-end justify-between -mt-8 mb-4">
-            <div className="w-16 h-16 rounded-2xl border-4 border-white flex items-center justify-center text-white font-bold text-xl" style={{ background: MEMBER_USER.color }}>
-              {initials}
+            <div className="w-16 h-16 rounded-2xl border-4 border-white overflow-hidden flex items-center justify-center text-white font-bold text-xl" style={{ background: MEMBER_USER.color }}>
+              {profileImageUrl ? (
+                <img src={`${API_ORIGIN}${profileImageUrl}`} alt={name} className="w-full h-full object-cover" />
+              ) : initials}
             </div>
             <div className="flex items-center gap-2">
-              <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><Settings className="w-3.5 h-3.5" />설정</button>
+              <button onClick={() => navigate("/mypage/edit")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><Settings className="w-3.5 h-3.5" />설정</button>
               <button onClick={onLogout} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 border border-red-200 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"><LogOut className="w-3.5 h-3.5" />로그아웃</button>
             </div>
           </div>
@@ -77,20 +87,42 @@ function MemberMyPage({ name, email, onLogout, projectId, userId }: { name: stri
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 border border-purple-200">팀원</span>
               </div>
               <div className="text-xs text-muted-foreground">{email}</div>
-              <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-                <span>{MEMBER_USER.affiliation}</span>
-                <span className="text-border">·</span>
-                <span className="font-medium text-blue-600">{MEMBER_USER.field}</span>
+              <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-2 text-xs text-muted-foreground">
+                <span>{affiliation}</span>
+                {field.length > 0 && (
+                  <>
+                    <span className="text-border">·</span>
+                    <div className="flex flex-wrap gap-1">
+                      {field.map(tag => (
+                        <span key={tag} className="font-medium text-blue-600 bg-blue-50 rounded-full px-2 py-0.5">{tag}</span>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
             <div className="text-right">
               <div className="text-xs text-muted-foreground mb-1">참여 프로젝트</div>
               <div className="text-sm font-semibold text-foreground">{MEMBER_USER.project}</div>
-              <div className="flex items-center gap-1.5 mt-1.5 justify-end">
-                <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                <span className="text-[10px] text-emerald-600 font-medium">GitHub 연결됨</span>
-                <span className="text-[10px] text-muted-foreground">({MEMBER_USER.github})</span>
-              </div>
+              {github ? (
+                <div className="flex items-center gap-1.5 mt-1.5 justify-end">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                  <span className="text-[10px] text-emerald-600 font-medium">GitHub 연결됨</span>
+                  <a
+                    href={`https://github.com/${github}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-muted-foreground hover:text-blue-600 hover:underline"
+                  >
+                    ({github})
+                  </a>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 mt-1.5 justify-end">
+                  <div className="w-2 h-2 rounded-full bg-muted-foreground/40" />
+                  <span className="text-[10px] text-muted-foreground font-medium">GitHub 연결안됨</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -107,7 +139,7 @@ function MemberMyPage({ name, email, onLogout, projectId, userId }: { name: stri
             <strong className="text-foreground">TF-07 관리자 대시보드 통계 모듈</strong>을 오늘 완료하면 이번 주 마감 업무를 모두 처리할 수 있습니다. PR 제출 전 팀장에게 리뷰를 요청하세요.
           </div>
         </div>
-        <button className="text-xs font-semibold px-2.5 py-1 rounded-lg shrink-0 transition-opacity hover:opacity-80" style={{ background:"rgba(112,72,232,0.15)", color:"#7048E8" }}>
+        <button onClick={() => navigate("/board")} className="text-xs font-semibold px-2.5 py-1 rounded-lg shrink-0 transition-opacity hover:opacity-80" style={{ background:"rgba(112,72,232,0.15)", color:"#7048E8" }}>
           자세히
         </button>
       </div>
@@ -133,21 +165,27 @@ function MemberMyPage({ name, email, onLogout, projectId, userId }: { name: stri
           <>
             {/* Left: task status (2/3) */}
             <div className="col-span-2 space-y-4">
-              {/* Stat cards */}
-              <div className="grid grid-cols-4 gap-3">
+              {/* Stat cards / 상태 필터 탭 */}
+              <div className="grid grid-cols-5 gap-3">
                 {[
-                  { label:"완료", value: taskCounts.done,      color:"#10B981", Icon: CheckCircle2 },
-                  { label:"진행 중", value: taskCounts.inprogress, color:"#3B5BDB", Icon: Clock },
-                  { label:"블로커", value: taskCounts.blocked,    color:"#EF4444", Icon: AlertTriangle },
-                  { label:"대기",   value: taskCounts.todo,       color:"#8892A4", Icon: Layers },
+                  { key:"all" as const,        label:"전체",    value: myTasks.length,      color:"#7048E8", Icon: BarChart3 },
+                  { key:"done" as const,       label:"완료",    value: taskCounts.done,      color:"#10B981", Icon: CheckCircle2 },
+                  { key:"inprogress" as const, label:"진행 중", value: taskCounts.inprogress, color:"#3B5BDB", Icon: Clock },
+                  { key:"blocked" as const,    label:"블로커",  value: taskCounts.blocked,    color:"#EF4444", Icon: AlertTriangle },
+                  { key:"todo" as const,       label:"대기",    value: taskCounts.todo,       color:"#8892A4", Icon: Layers },
                 ].map(s => (
-                  <div key={s.label} className="bg-card rounded-xl p-4 border border-border shadow-sm text-center">
+                  <button
+                    key={s.key}
+                    onClick={() => setStatusFilter(s.key)}
+                    className={`bg-card rounded-xl p-4 border shadow-sm text-center transition-all ${statusFilter === s.key ? "" : "border-border hover:border-slate-300"}`}
+                    style={statusFilter === s.key ? { borderColor: s.color, boxShadow: `0 0 0 2px ${s.color}` } : undefined}
+                  >
                     <div className="w-8 h-8 rounded-lg flex items-center justify-center mx-auto mb-2" style={{ background:`${s.color}15` }}>
                       <s.Icon className="w-4 h-4" style={{ color: s.color }} />
                     </div>
                     <div className="text-xl font-bold text-foreground">{s.value}</div>
                     <div className="text-[10px] text-muted-foreground">{s.label}</div>
-                  </div>
+                  </button>
                 ))}
               </div>
 
@@ -175,7 +213,7 @@ function MemberMyPage({ name, email, onLogout, projectId, userId }: { name: stri
                         <div className="text-[10px] text-muted-foreground mt-0.5">{task.category} · 마감 {formatDueDate(task.dueDate)}</div>
                       </div>
                       <StatusBadge status={task.status} />
-                      <button className="text-[10px] font-medium text-blue-600 hover:text-blue-700 shrink-0">상태 변경</button>
+                      <button onClick={() => navigate("/board")} className="text-[10px] font-medium text-blue-600 hover:text-blue-700 shrink-0">상태 변경</button>
                     </div>
                   ))}
                 </div>
@@ -191,7 +229,11 @@ function MemberMyPage({ name, email, onLogout, projectId, userId }: { name: stri
                     <div className="text-xs text-muted-foreground text-center py-3">오늘 마감인 업무가 없습니다.</div>
                   ) : (
                     todayNotDone.map(task => (
-                      <div key={task.id} className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/50">
+                      <div
+                        key={task.id}
+                        onClick={() => navigate(`/board?taskId=${task.id}`)}
+                        className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/50 cursor-pointer hover:bg-muted transition-colors"
+                      >
                         <div className="w-4 h-4 rounded border border-border flex items-center justify-center shrink-0">
                           {task.status==="done" && <Check className="w-2.5 h-2.5 text-emerald-500" />}
                         </div>
@@ -210,7 +252,11 @@ function MemberMyPage({ name, email, onLogout, projectId, userId }: { name: stri
                     thisWeekNotDone.map(task => {
                       const isDueToday = todayNotDone.some(t => t.id === task.id);
                       return (
-                        <div key={task.id} className="flex items-center justify-between text-xs">
+                        <div
+                          key={task.id}
+                          onClick={() => navigate(`/board?taskId=${task.id}`)}
+                          className="flex items-center justify-between text-xs cursor-pointer hover:text-blue-600 transition-colors"
+                        >
                           <span className="text-foreground truncate flex-1">{task.title}</span>
                           <span className={`font-bold ml-2 shrink-0 ${isDueToday?"text-amber-600":"text-muted-foreground"}`}>{formatDueDate(task.dueDate)}</span>
                         </div>
@@ -285,7 +331,10 @@ function MemberMyPage({ name, email, onLogout, projectId, userId }: { name: stri
 // ─── Reviewer My Page ─────────────────────────────────────────────────────────
 type ReviewerPanelTab = "summary" | "deliverables" | "contrib" | "ai-evidence" | "score";
 
-function ReviewerMyPage({ name, email, onLogout }: { name: string; email: string; onLogout: () => void }) {
+function ReviewerMyPage({ name, email, profileImageUrl, onLogout }: {
+  name: string; email: string; profileImageUrl: string | null; onLogout: () => void;
+}) {
+  const navigate = useNavigate();
   const initials = name ? name[0] : REVIEWER_USER.initials;
   const [selectedTeam, setSelectedTeam] = useState("T1");
   const [panelTab, setPanelTab] = useState<ReviewerPanelTab>("summary");
@@ -314,8 +363,10 @@ function ReviewerMyPage({ name, email, onLogout }: { name: string; email: string
       {/* ── Reviewer Profile ── */}
       <div className="shrink-0 px-6 pt-5 pb-4 border-b border-border">
         <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-white font-bold text-xl shrink-0" style={{ background: REVIEWER_USER.color }}>
-            {initials}
+          <div className="w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center text-white font-bold text-xl shrink-0" style={{ background: REVIEWER_USER.color }}>
+            {profileImageUrl ? (
+              <img src={`${API_ORIGIN}${profileImageUrl}`} alt={name} className="w-full h-full object-cover" />
+            ) : initials}
           </div>
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-0.5">
@@ -325,7 +376,7 @@ function ReviewerMyPage({ name, email, onLogout }: { name: string; email: string
             <div className="text-xs text-muted-foreground">{email}</div>
           </div>
           <div className="flex items-center gap-2">
-            <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><Settings className="w-3.5 h-3.5" />설정</button>
+            <button onClick={() => navigate("/mypage/edit")} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border bg-card text-foreground rounded-lg hover:bg-muted transition-colors"><Settings className="w-3.5 h-3.5" />설정</button>
             <button onClick={onLogout} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 border border-red-200 bg-red-50 rounded-lg"><LogOut className="w-3.5 h-3.5" />로그아웃</button>
           </div>
         </div>
@@ -401,7 +452,7 @@ function ReviewerMyPage({ name, email, onLogout }: { name: string; email: string
               <div className="text-sm font-bold text-foreground">{team.name}</div>
               <div className="flex items-center gap-2">
                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${EVAL_STATUS_META[team.evalStatus].cls}`}>{EVAL_STATUS_META[team.evalStatus].label}</span>
-                <button className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700"><Shield className="w-3 h-3" />대시보드 열람</button>
+                <button onClick={() => navigate("/dashboard")} className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700"><Shield className="w-3 h-3" />대시보드 열람</button>
                 <button className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground border border-border px-2 py-1 rounded-lg hover:bg-muted transition-colors"><FileText className="w-3 h-3" />PDF 다운로드</button>
               </div>
             </div>
@@ -588,12 +639,21 @@ export function MyPage() {
   const role: MyPageRole = projectRoles[0]?.role === "심사자" ? "reviewer" : "member";
   const name = user?.name ?? "";
   const email = user?.email ?? "";
+  // 사용자가 정보를 입력한 적이 없으면(null) 데모용 목업으로 보여주되, 일부러 빈 값으로
+  // 지운 경우("" 또는 [])까지 목업으로 덮어 보여주면 지운 게 그대로 남아 보이는 것처럼 오인되므로
+  // null/undefined일 때만 목업으로 대체한다.
+  const affiliation = user?.affiliation ?? MEMBER_USER.affiliation;
+  const field = user?.field ?? [];
+  // GitHub은 "연결됨" 상태 자체를 표시하는 값이라, 목업으로 대체하면 실제로 연결하지 않은
+  // 사용자에게 거짓 연결 상태를 보여주게 된다 — 절대 목업으로 대체하지 않는다.
+  const github = user?.githubUsername ?? "";
+  const profileImageUrl = user?.profileImageUrl ?? null;
   const handleLogout = () => {
     logout();
     navigate("/login", { replace: true });
   };
 
   return role === "member"
-    ? <MemberMyPage name={name} email={email} onLogout={handleLogout} projectId={currentProjectId} userId={user?.id ?? null} />
-    : <ReviewerMyPage name={name} email={email} onLogout={handleLogout} />;
+    ? <MemberMyPage name={name} email={email} affiliation={affiliation} field={field} github={github} profileImageUrl={profileImageUrl} onLogout={handleLogout} projectId={currentProjectId} userId={user?.id ?? null} />
+    : <ReviewerMyPage name={name} email={email} profileImageUrl={profileImageUrl} onLogout={handleLogout} />;
 }
